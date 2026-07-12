@@ -321,7 +321,7 @@ struct VideoDetailView: View {
         let container = context.container
         let config = makeBoxConfig(baseURL: boxBaseURL, chatModel: chatModel, whisperModel: whisperModel)
         Task {
-            let runner = PipelineRunner(deps: ImportController.makeDeps(config: config), container: container)
+            let runner = PipelineRunner(deps: PipelineCenter.makeDeps(config: config), container: container)
             await runner.processAll { _, _ in }
             await MainActor.run { isRerunning = false }
         }

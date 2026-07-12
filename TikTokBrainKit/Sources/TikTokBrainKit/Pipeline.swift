@@ -85,10 +85,14 @@ public actor PipelineRunner {
     }
 
     /// Drains the queue, reporting `(completed, total)` after each video is processed.
+    /// Respects task cancellation between videos so background-time expiration can
+    /// stop the loop cleanly (the in-flight video finishes; the rest stay pending).
     public func processAll(progress: @Sendable (Int, Int) -> Void) async {
         let total = (try? pendingCount()) ?? 0
         var completed = 0
-        while (try? await processNext()) == true {
+        // `completed < total` bounds the pass: parked (awaitingBox) videos are
+        // retried at most once per pass instead of looping while the box is down.
+        while !Task.isCancelled, completed < total, (try? await processNext()) == true {
             completed += 1
             progress(completed, total)
         }
@@ -96,7 +100,7 @@ public actor PipelineRunner {
 
     // MARK: - Queue selection
 
-    private func pendingCount() throws -> Int {
+    public func pendingCount() throws -> Int {
         let videos = try ModelContext(container).fetch(FetchDescriptor<Video>())
         return videos.reduce(into: 0) { count, video in
             if isPending(video) { count += 1 }
@@ -109,9 +113,13 @@ public actor PipelineRunner {
         return try context.fetch(descriptor).first { isPending($0) }
     }
 
-    /// A video still needs processing while its first stage has never started.
+    /// A video still needs processing while its first stage has never started, or
+    /// while any stage is parked awaiting the box (throttled / box unreachable) —
+    /// parked videos re-run on the next pass instead of requiring a manual re-run.
     private func isPending(_ video: Video) -> Bool {
-        stageStates(video)[PipelineStage.enrich.rawValue] == .pending
+        let stages = stageStates(video)
+        if stages[PipelineStage.enrich.rawValue] == .pending { return true }
+        return stages.values.contains(.awaitingBox)
     }
 
     // MARK: - Per-video pipeline

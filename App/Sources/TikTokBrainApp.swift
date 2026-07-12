@@ -24,16 +24,29 @@ struct TikTokBrainApp: App {
             fatalError("Could not create the SwiftData container: \(error)")
         }
         SampleData.seedIfRequested(container)
+        // Background continuation: register before launch completes, then hand the
+        // center its container so resume works without any screen being open.
+        PipelineCenter.registerBackgroundTask()
+        PipelineCenter.shared.configure(container: container)
         #if DEBUG
         assert(MindMapEngine.selfTest(), "MindMapEngine self-test failed")
         #endif
     }
+
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
         }
         .modelContainer(container)
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active: PipelineCenter.shared.appBecameActive()
+            case .background: PipelineCenter.shared.appEnteredBackground()
+            default: break
+            }
+        }
     }
 }
 

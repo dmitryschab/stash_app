@@ -44,91 +44,6 @@ enum BoxStatus {
     }
 }
 
-// MARK: - Controller
-
-@MainActor
-@Observable
-final class ImportController {
-    var progress: (done: Int, total: Int)?
-    var isImporting = false
-    var boxStatus: BoxStatus = .unknown
-    var lastError: String?
-    var lastSummary: String?
-
-    /// A lightweight reachability probe: any answer (even an error response) means the box is
-    /// up; only a transport-level `unreachable` means it is offline.
-    func pingBox(config: BoxConfig) async {
-        boxStatus = .checking
-        let analyzer = AnalyzerClient(config: config)
-        do {
-            _ = try await analyzer.analyze(meta: VideoMeta(caption: "ping"), transcript: nil, ocrText: nil)
-            boxStatus = .online
-        } catch let error as BoxError {
-            switch error {
-            case .unreachable:
-                boxStatus = .offline
-            case .badResponse(let status) where status == 401 || status == 403:
-                // Reaching the box with a bad token is NOT online — surface it.
-                boxStatus = .offline
-            default:
-                boxStatus = .online  // it answered; model hiccups still count as reachable
-            }
-        } catch {
-            boxStatus = .offline
-        }
-    }
-
-    func runImport(url: URL, container: ModelContainer, config: BoxConfig) async {
-        guard !isImporting else { return }
-        isImporting = true
-        lastError = nil
-        defer { isImporting = false; progress = nil }
-
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
-        let bookmarks: [Bookmark]
-        do {
-            let parser = ExportParser()
-            if url.hasDirectoryPath {
-                bookmarks = try parser.parse(zipAt: url)
-            } else {
-                bookmarks = try parser.parse(jsonData: Data(contentsOf: url))
-            }
-        } catch {
-            lastError = "Could not read the export: \(error.localizedDescription)"
-            return
-        }
-
-        let runner = PipelineRunner(deps: Self.makeDeps(config: config), container: container)
-        let newCount: Int
-        do {
-            newCount = try await runner.ingest(bookmarks: bookmarks)
-        } catch {
-            lastError = "Could not save bookmarks: \(error.localizedDescription)"
-            return
-        }
-
-        progress = (0, newCount)
-        await runner.processAll { done, total in
-            Task { @MainActor [weak self] in self?.progress = (done, total) }
-        }
-        lastSummary = "Imported \(bookmarks.count) bookmarks · \(newCount) new"
-    }
-
-    /// Builds the pipeline from the Kit's concrete clients. Shared with the per-video re-run.
-    static func makeDeps(config: BoxConfig) -> PipelineDeps {
-        PipelineDeps(
-            enricher: Enricher(),
-            media: MediaFetcher(),
-            transcriber: TranscriberClient(config: config),
-            analyzer: AnalyzerClient(config: config),
-            musicResolver: MusicLinkResolver(),
-            ocr: { try await FrameReader().recognizeText(in: $0) }
-        )
-    }
-}
-
 // MARK: - Box config storage
 
 /// Default box configuration: the cloud pipeline API. The bearer token is compiled
@@ -157,7 +72,7 @@ struct ImportView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var videos: [Video]
-    @State private var controller = ImportController()
+    private var controller = PipelineCenter.shared
     @State private var showImporter = false
     @State private var showSettings = false
     @State private var showConnect = false
@@ -199,7 +114,7 @@ struct ImportView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConnect) { ConnectFlowView() }
         .sheet(isPresented: $showGuide) { DataDownloadGuideView() }
-        .task { await controller.pingBox(config: config) }
+        .task { await controller.pingBox() }
     }
 
     // MARK: - Sections
@@ -312,7 +227,7 @@ struct ImportView: View {
                 .foregroundStyle(controller.boxStatus.color)
             }
             Button {
-                Task { await controller.pingBox(config: config) }
+                Task { await controller.pingBox() }
             } label: {
                 Micro(text: "Check again", size: 10, tracking: 1.4, color: .stashInk)
                     .padding(.horizontal, 13)
@@ -376,9 +291,7 @@ struct ImportView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-            let container = context.container
-            let boxConfig = config
-            Task { await controller.runImport(url: url, container: container, config: boxConfig) }
+            Task { await controller.runImport(url: url) }
         case .failure(let error):
             controller.lastError = error.localizedDescription
         }
