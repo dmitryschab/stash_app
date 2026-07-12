@@ -138,12 +138,112 @@ resource "aws_security_group" "box" {
   }
 }
 
+# Durable cloud-import work delivery and state. These resources are deliberately
+# separate from the public API so an API or worker restart cannot lose a job.
+resource "aws_sqs_queue" "import_dead_letter" {
+  name                      = "${var.name}-import-dlq"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_sqs_queue" "import" {
+  name                       = "${var.name}-import"
+  visibility_timeout_seconds = 300
+  message_retention_seconds  = 1209600
+  sqs_managed_sse_enabled    = true
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.import_dead_letter.arn
+    maxReceiveCount     = 5
+  })
+}
+
+resource "aws_dynamodb_table" "imports" {
+  name         = "${var.name}-imports"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "PK"
+  range_key    = "SK"
+
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "SK"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+}
+
+data "aws_iam_policy_document" "box_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "box" {
+  name               = "${var.name}-role"
+  assume_role_policy = data.aws_iam_policy_document.box_assume_role.json
+}
+
+resource "aws_iam_instance_profile" "box" {
+  name = "${var.name}-profile"
+  role = aws_iam_role.box.name
+}
+
+data "aws_iam_policy_document" "import_access" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "sqs:ChangeMessageVisibility",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:ReceiveMessage",
+      "sqs:SendMessage",
+    ]
+    resources = [aws_sqs_queue.import.arn, aws_sqs_queue.import_dead_letter.arn]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:TransactWriteItems",
+      "dynamodb:UpdateItem",
+    ]
+    resources = [aws_dynamodb_table.imports.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "import_access" {
+  name   = "${var.name}-import-access"
+  role   = aws_iam_role.box.id
+  policy = data.aws_iam_policy_document.import_access.json
+}
+
 resource "aws_instance" "box" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = data.aws_subnets.default.ids[0]
   key_name               = aws_key_pair.box.key_name
   vpc_security_group_ids = [aws_security_group.box.id]
+  iam_instance_profile   = aws_iam_instance_profile.box.name
 
   root_block_device {
     volume_size = 20 # within the 30 GB EBS free-tier allowance
@@ -206,4 +306,16 @@ output "public_ip" {
 
 output "ssh_command" {
   value = "ssh -i ${local_sensitive_file.private_key.filename} ubuntu@${aws_eip.box.public_ip}"
+}
+
+output "import_table_name" {
+  value = aws_dynamodb_table.imports.name
+}
+
+output "import_queue_url" {
+  value = aws_sqs_queue.import.url
+}
+
+output "import_dead_letter_queue_url" {
+  value = aws_sqs_queue.import_dead_letter.url
 }
