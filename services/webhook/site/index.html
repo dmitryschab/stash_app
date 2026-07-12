@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash — your TikTok favourites, organized automatically</title>
+<meta name="description" content="Stash turns the TikTok videos you save into a searchable personal library. It reads only your Favourites and discards everything else.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234f46e5' d='M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --surface: #ffffff;
+    --text: #1b1b22;
+    --muted: #5b5b68;
+    --border: #e6e6ec;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --ok: #0f8a5f;
+    --ok-soft: #e6f5ee;
+    --radius: 14px;
+    --maxw: 940px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101014;
+      --surface: #17171d;
+      --text: #ecedf2;
+      --muted: #a2a2b0;
+      --border: #26262f;
+      --accent: #8b83ff;
+      --accent-soft: #1e1c34;
+      --ok: #4bd39a;
+      --ok-soft: #14251d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+  header {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 62px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 1.12rem; letter-spacing: -0.01em; }
+  .brand svg { width: 22px; height: 22px; display: block; }
+  .navlinks a { color: var(--muted); font-size: 0.95rem; margin-left: 20px; }
+  .navlinks a:hover { color: var(--text); text-decoration: none; }
+  .hero { padding: 76px 0 40px; }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3rem);
+    line-height: 1.12;
+    letter-spacing: -0.025em;
+    margin: 0 0 18px;
+    max-width: 18ch;
+  }
+  .lede { font-size: clamp(1.06rem, 2.4vw, 1.28rem); color: var(--muted); max-width: 56ch; margin: 0 0 30px; }
+  .pill {
+    display: inline-block; font-size: 0.82rem; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--accent); background: var(--accent-soft);
+    padding: 5px 12px; border-radius: 999px; margin-bottom: 22px;
+  }
+  section { padding: 30px 0; }
+  h2 { font-size: 1.35rem; letter-spacing: -0.015em; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 24px; max-width: 60ch; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .step {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px 20px;
+  }
+  .step .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent);
+    font-weight: 700; font-size: 0.95rem; margin-bottom: 12px;
+  }
+  .step h3 { margin: 0 0 5px; font-size: 1.05rem; }
+  .step p { margin: 0; color: var(--muted); font-size: 0.96rem; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px;
+  }
+  .card h3 { margin: 0 0 5px; font-size: 1.03rem; }
+  .card p { margin: 0; color: var(--muted); font-size: 0.96rem; }
+  .privacy-note {
+    background: var(--ok-soft); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 26px 24px; display: flex; gap: 16px; align-items: flex-start;
+  }
+  .privacy-note svg { width: 26px; height: 26px; flex: 0 0 auto; color: var(--ok); margin-top: 2px; }
+  .privacy-note h2 { margin: 0 0 8px; }
+  .privacy-note p { margin: 0; color: var(--muted); max-width: 62ch; }
+  .privacy-note strong { color: var(--text); font-weight: 600; }
+  footer {
+    border-top: 1px solid var(--border); background: var(--surface);
+    margin-top: 40px; padding: 34px 0;
+  }
+  .foot { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: center; justify-content: space-between; }
+  .foot .links a { color: var(--muted); margin-right: 20px; font-size: 0.95rem; }
+  .foot .links a:hover { color: var(--text); text-decoration: none; }
+  .foot .meta { color: var(--muted); font-size: 0.9rem; }
+  @media (max-width: 720px) {
+    .steps, .cards { grid-template-columns: 1fr; }
+    .hero { padding: 52px 0 24px; }
+    .navlinks a:first-child { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--accent)" d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
+      Stash
+    </div>
+    <nav class="navlinks">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="hero">
+      <span class="pill">Personal library for your saved videos</span>
+      <h1>Your TikTok favourites, organized automatically</h1>
+      <p class="lede">Stash turns the videos you save on TikTok into a searchable personal library. You keep bookmarking as you always have, and everything quietly falls into place.</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section>
+      <h2>How it works</h2>
+      <p class="sub">Three quiet steps. After the first one, you never have to think about it again.</p>
+      <div class="steps">
+        <div class="step">
+          <span class="n">1</span>
+          <h3>Connect TikTok</h3>
+          <p>Sign in once with TikTok. Stash asks only to read your Favourites, and you can disconnect at any time.</p>
+        </div>
+        <div class="step">
+          <span class="n">2</span>
+          <h3>Save as usual</h3>
+          <p>Bookmark any video you want to keep. That single tap is your only action, and it stays right inside TikTok.</p>
+        </div>
+        <div class="step">
+          <span class="n">3</span>
+          <h3>Browse your library</h3>
+          <p>Stash reads the videos you saved and sorts them into a tidy, searchable library you can come back to.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>What Stash makes for you</h2>
+      <p class="sub">Each saved video becomes something you can actually use, grouped by what it is.</p>
+      <div class="cards">
+        <div class="card">
+          <h3>Recipe cards</h3>
+          <p>Cooking videos become clean recipe cards with ingredients and steps, ready when you are.</p>
+        </div>
+        <div class="card">
+          <h3>Track list</h3>
+          <p>Music you saved is collected into a running track list, so a song you liked is never lost again.</p>
+        </div>
+        <div class="card">
+          <h3>How-to summaries</h3>
+          <p>Coding and how-to videos become short summaries with the links you need to follow along.</p>
+        </div>
+        <div class="card">
+          <h3>Grouped by topic</h3>
+          <p>Everything else is gathered into topics, so your library stays easy to search and skim.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="privacy-note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <div>
+          <h2>Reads only your favourites, keeps nothing else</h2>
+          <p>Your only action is bookmarking a video. Stash reads <strong>only your Favourites</strong> and <strong>discards everything else</strong> in your TikTok data the moment it arrives. Your library lives with you, and you can delete any of it whenever you like.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div class="links">
+      <a href="/privacy">Privacy policy</a>
+      <a href="/terms">Terms of service</a>
+      <a href="mailto:dmitryschab@gmail.com">Contact</a>
+    </div>
+    <div class="meta">Stash · <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a></div>
+  </div>
+</footer>
+</body>
+</html>

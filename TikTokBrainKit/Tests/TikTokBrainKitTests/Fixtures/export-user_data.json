@@ -1,0 +1,12 @@
+{
+  "Activity": {
+    "Favorite Videos": {
+      "FavoriteVideoList": [
+        {"Date": "2026-07-04 12:00:00", "Link": "https://www.tiktokv.com/share/video/7234567890123456789/"},
+        {"Date": "2026-07-03 09:30:00", "Link": "https://www.tiktokv.com/share/video/7234567890123456789/"},
+        {"Date": "2026-06-30 08:00:00", "Link": "https://www.tiktokv.com/share/video/7111111111111111111/"}
+      ]
+    },
+    "Like List": {"ItemFavoriteList": [{"Date": "2026-06-01 00:00:00", "Link": "https://x/should-not-appear"}]}
+  }
+}

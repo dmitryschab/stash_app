@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — Stash</title>
+<meta name="description" content="How Stash handles your data: it accesses your TikTok archive solely to obtain your Favourite Videos and discards everything else on receipt.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234f46e5' d='M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --surface: #ffffff;
+    --text: #1b1b22;
+    --muted: #5b5b68;
+    --border: #e6e6ec;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --radius: 14px;
+    --maxw: 760px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101014;
+      --surface: #17171d;
+      --text: #ecedf2;
+      --muted: #a2a2b0;
+      --border: #26262f;
+      --accent: #8b83ff;
+      --accent-soft: #1e1c34;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text); background: var(--bg); line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+  header { border-bottom: 1px solid var(--border); background: var(--surface); }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 62px; max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 1.12rem; letter-spacing: -0.01em; }
+  .brand svg { width: 22px; height: 22px; display: block; }
+  .navlinks a { color: var(--muted); font-size: 0.95rem; margin-left: 20px; }
+  .navlinks a:hover { color: var(--text); text-decoration: none; }
+  article { padding: 48px 0 20px; }
+  h1 { font-size: clamp(1.8rem, 4vw, 2.3rem); letter-spacing: -0.02em; margin: 0 0 6px; }
+  .updated { color: var(--muted); font-size: 0.95rem; margin: 0 0 32px; }
+  h2 { font-size: 1.2rem; letter-spacing: -0.01em; margin: 32px 0 8px; }
+  p { margin: 0 0 14px; }
+  .intro { color: var(--muted); }
+  .callout {
+    background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 20px; margin: 8px 0 24px;
+  }
+  .callout p { margin: 0; }
+  dl { margin: 0; }
+  dt { font-weight: 600; margin-top: 14px; }
+  dd { margin: 2px 0 0; color: var(--muted); }
+  footer { border-top: 1px solid var(--border); background: var(--surface); margin-top: 44px; padding: 30px 0; }
+  .foot { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
+  .foot .links a { color: var(--muted); margin-right: 20px; font-size: 0.95rem; }
+  .foot .links a:hover { color: var(--text); text-decoration: none; }
+  .foot .meta { color: var(--muted); font-size: 0.9rem; }
+  @media (max-width: 720px) { article { padding: 32px 0 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="brand" href="/" style="color:inherit">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--accent)" d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
+      Stash
+    </a>
+    <nav class="navlinks">
+      <a href="/">Home</a>
+      <a href="/terms">Terms</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <article>
+      <h1>Privacy policy</h1>
+      <p class="updated">Last updated 10 July 2026 · Controller: Dmitrijs Šabeļņiks (individual developer) · Contact: <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a></p>
+
+      <p class="intro">Stash is a personal tool that organizes the TikTok videos you have saved to your own Favourites into a searchable library. This policy explains, plainly, what Stash accesses, what it keeps, and the rights you have over your data.</p>
+
+      <h2>What we access</h2>
+      <p>With your explicit authorisation via TikTok Login, Stash accesses your TikTok data archive <strong>solely to obtain your Favourite Videos</strong> — the videos you have bookmarked. We do not use any other category of your TikTok data.</p>
+
+      <h2>What we keep</h2>
+      <p>We keep only your Favourite Videos list and the organized library Stash builds from it: titles, summaries, categories, and links.</p>
+      <div class="callout">
+        <p>We <strong>discard all other data</strong> contained in the TikTok archive immediately on receipt. Messages, watch history, profile, wallet, and every other category are never stored — they are dropped in memory before anything is written to storage, and the archive itself is deleted right after your favourites are extracted.</p>
+      </div>
+
+      <h2>Why we process it</h2>
+      <p>To provide the service you asked for: an organized, searchable library of the TikTok videos you saved. The lawful basis is performing a service at your request and your consent, which you may withdraw at any time.</p>
+
+      <h2>Where it is processed</h2>
+      <p>Your favourites are processed in <strong>your own environment</strong> — your device and a model service under your control. Stash is a single-user personal tool; there is no shared, multi-tenant datastore of TikTok content. Your data is not sold and is not shared with third parties.</p>
+
+      <h2>How long we keep it</h2>
+      <p>For as long as you keep it in Stash. You can delete individual items or wipe everything from within the app at any time. Disconnecting TikTok revokes the ongoing grant and stops all future transfers.</p>
+
+      <h2>Your rights</h2>
+      <p>Under the GDPR you have the right to access, export, correction, deletion, and withdrawal of consent for your data.</p>
+      <dl>
+        <dt>Access and export</dt>
+        <dd>You see all stored data directly in the app; it is your own library, and you can export it at any time.</dd>
+        <dt>Deletion</dt>
+        <dd>Delete any item or wipe all Stash data from within the app. A deletion request to <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a> is honoured within 30 days.</dd>
+        <dt>Revocation</dt>
+        <dd>Revoke Stash's access from TikTok's own settings whenever you choose.</dd>
+      </dl>
+      <p>You may also lodge a complaint with your local data-protection authority. In Latvia this is the Data State Inspectorate (Datu valsts inspekcija, <a href="https://www.dvi.gov.lv" rel="noopener">www.dvi.gov.lv</a>).</p>
+
+      <h2>Contact</h2>
+      <p>For any question about this policy or your data, contact <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a>. We respond within 30 days.</p>
+
+      <h2>Changes</h2>
+      <p>We will post any changes to this policy on this page with an updated date.</p>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/terms">Terms of service</a>
+      <a href="mailto:dmitryschab@gmail.com">Contact</a>
+    </div>
+    <div class="meta">Stash · <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a></div>
+  </div>
+</footer>
+</body>
+</html>

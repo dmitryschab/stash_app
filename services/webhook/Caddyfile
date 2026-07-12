@@ -1,0 +1,14 @@
+stash.dmitrijs.dev {
+	encode gzip
+	handle /webhook/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle /health {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		root * /var/www/stash
+		try_files {path} {path}.html {path}/
+		file_server
+	}
+}
