@@ -189,6 +189,9 @@ class DynamoImportStore:
         self._mark_fast_pass(import_id)
         return True
 
+    def get_video(self, import_id: str, video_id: str) -> dict[str, Any] | None:
+        return self._get(self._key(import_id, f"VIDEO#{video_id}"))
+
     def _mark_fast_pass(self, import_id: str) -> None:
         key = self._key(import_id, "META")
         if hasattr(self.table, "update_item"):

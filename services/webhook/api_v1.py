@@ -145,6 +145,60 @@ def _bedrock_token() -> str:
     return _token_cache["token"]
 
 
+ANALYSIS_SYSTEM_PROMPT = """
+You classify a short video into a single strict JSON object. Respond with ONLY the JSON
+object, with category, title, summary, and topics fields. Category must be one of
+recipe, music, coding, or other. Always answer in English. Use empty strings or arrays
+when information is missing. Never output placeholder prose. If caption and transcript
+are empty, use title \"Saved video\" and summarize that no caption or audio was available.
+""".strip()
+
+
+def build_analysis_prompt(metadata: dict) -> str:
+    """Build the caption-first prompt shared by the API proxy and cloud worker."""
+    parts = []
+    if metadata.get("caption"):
+        parts.append(f"Caption: {metadata['caption']}")
+    if metadata.get("hashtags"):
+        parts.append(f"Hashtags: {', '.join(metadata['hashtags'])}")
+    if metadata.get("author"):
+        parts.append(f"Author: {metadata['author']}")
+    if metadata.get("track"):
+        sound = metadata["track"]
+        if metadata.get("artist"):
+            sound += f" by {metadata['artist']}"
+        parts.append(f"Sound: {sound}")
+    return "\n".join(parts) if parts else "(no metadata available)"
+
+
+def analyze_metadata(metadata: dict) -> dict:
+    """Run the existing Bedrock analyzer directly for a worker fast pass."""
+    response = requests.post(
+        BEDROCK_URL,
+        headers={"Authorization": f"Bearer {_bedrock_token()}", "Content-Type": "application/json"},
+        json={
+            "model": BEDROCK_MODEL,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": build_analysis_prompt(metadata)},
+            ],
+        },
+        timeout=120,
+    )
+    if response.status_code != 200:
+        error = requests.HTTPError(f"bedrock {response.status_code}", response=response)
+        raise error
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return json.loads(content)
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise ValueError("invalid analyzer response") from error
+
+
 @router.post("/chat/completions")
 def chat_completions(body: dict, authorization: str | None = Header(None)):
     require_auth(authorization)
