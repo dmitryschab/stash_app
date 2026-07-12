@@ -12,9 +12,13 @@ from cloud_import_worker import HandleResult, PipelineError, handle_message
 class FakeQueue:
     def __init__(self):
         self.deleted = []
+        self.extended = []
 
     def delete(self, receipt_handle):
         self.deleted.append(receipt_handle)
+
+    def extend_visibility(self, receipt_handle, timeout_seconds=300):
+        self.extended.append((receipt_handle, timeout_seconds))
 
 
 class FakeStore:
@@ -137,3 +141,4 @@ def test_success_deletes_only_after_store_completion():
     assert result == HandleResult(deleted=True, retryable=False)
     assert len(store.completed_results) == 1
     assert queue.deleted == ["receipt-1"]
+    assert queue.extended == [("receipt-1", 300)]

@@ -42,6 +42,9 @@ def handle_message(message: dict, store, pipeline, queue) -> HandleResult:
     if not store.claim_video(import_id, video_id):
         _delete(queue, message)
         return HandleResult(deleted=True, retryable=False)
+    receipt = message.get("receiptHandle")
+    if receipt and hasattr(queue, "extend_visibility"):
+        queue.extend_visibility(receipt, timeout_seconds=300)
 
     url = message.get("url")
     if not url and hasattr(store, "get_video"):

@@ -266,12 +266,58 @@ class DynamoImportStore:
         if not item or item.get("state") not in {VideoState.RUNNING.value, VideoState.RETRYABLE.value}:
             return False
         if retryable:
-            item.update(state=VideoState.RETRYABLE.value, errorCode=code, updatedAt=_now())
-            self.table.put_item(Item=item)
+            now = _now()
+            if hasattr(self.table, "update_item"):
+                try:
+                    self.table.update_item(
+                        Key=key,
+                        UpdateExpression="SET #state = :retryable, errorCode = :code, updatedAt = :updated",
+                        ConditionExpression="#state IN (:running, :retryable)",
+                        ExpressionAttributeNames={"#state": "state"},
+                        ExpressionAttributeValues={":retryable": VideoState.RETRYABLE.value, ":running": VideoState.RUNNING.value, ":code": code, ":updated": now},
+                    )
+                except Exception as error:
+                    if _is_conditional_failure(error):
+                        return False
+                    raise
+            else:
+                item.update(state=VideoState.RETRYABLE.value, errorCode=code, updatedAt=now)
+                self.table.put_item(Item=item)
             return True
         meta = self._get(self._key(import_id, "META"))
         if not meta or item.get("state") != VideoState.RUNNING.value:
             return False
+        now = _now()
+        if self._client is not None and hasattr(self._client, "transact_write_items"):
+            operations = [
+                {
+                    "Update": {
+                        "TableName": self.table_name,
+                        "Key": key,
+                        "UpdateExpression": "SET #state = :failed, errorCode = :code, updatedAt = :updated",
+                        "ConditionExpression": "#state = :running",
+                        "ExpressionAttributeNames": {"#state": "state"},
+                        "ExpressionAttributeValues": {":failed": VideoState.FAILED.value, ":running": VideoState.RUNNING.value, ":code": code, ":updated": now},
+                    }
+                },
+                {
+                    "Update": {
+                        "TableName": self.table_name,
+                        "Key": self._key(import_id, "META"),
+                        "UpdateExpression": "SET fastDone = fastDone + :one, partialFailures = partialFailures + :one, updatedAt = :updated",
+                        "ConditionExpression": "fastDone < total",
+                        "ExpressionAttributeValues": {":one": 1, ":updated": now},
+                    }
+                },
+            ]
+            try:
+                self._transact(operations)
+            except Exception as error:
+                if _is_conditional_failure(error):
+                    return False
+                raise
+            self._try_finalize(import_id)
+            return True
         item.update(state=VideoState.FAILED.value, errorCode=code, updatedAt=_now())
         meta["fastDone"] = int(meta.get("fastDone", 0)) + 1
         meta["partialFailures"] = int(meta.get("partialFailures", 0)) + 1
