@@ -4,3 +4,5 @@ requests
 pydantic
 aws-bedrock-token-generator
 yt-dlp
+boto3
+pytest
