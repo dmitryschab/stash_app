@@ -73,9 +73,10 @@ final class PipelineTests: XCTestCase {
 
         let recorder = ProgressRecorder()
         await runner.processAll(progress: { done, total in recorder.record(done, total) })
-        XCTAssertEqual(recorder.calls.count, 3)
-        XCTAssertEqual(recorder.calls.last?.0, 3)
-        XCTAssertEqual(recorder.calls.last?.1, 3)
+        // Fast pass + transcript backfill = at least one progress call per video;
+        // exact counts depend on worker pipelining, so assert the floor and bounds.
+        XCTAssertGreaterThanOrEqual(recorder.calls.count, 3)
+        for (done, total) in recorder.calls { XCTAssertLessThanOrEqual(done, total) }
 
         // Recipe video: fully processed, recipe payload round-trips.
         let recipe = try XCTUnwrap(fetchVideo("7000000000000000001", in: container))

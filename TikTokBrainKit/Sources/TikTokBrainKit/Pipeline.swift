@@ -79,22 +79,45 @@ public actor PipelineRunner {
     public func processNext() async throws -> Bool {
         let context = ModelContext(container)
         guard let video = try nextPendingVideo(in: context) else { return false }
+        inFlight.insert(video.videoID)
+        defer { inFlight.remove(video.videoID) }
         await process(video)
         try context.save()
         return true
     }
 
-    /// Drains the queue, reporting `(completed, total)` after each video is processed.
-    /// Respects task cancellation between videos so background-time expiration can
-    /// stop the loop cleanly (the in-flight video finishes; the rest stay pending).
-    public func processAll(progress: @Sendable (Int, Int) -> Void) async {
-        let total = (try? pendingCount()) ?? 0
-        var completed = 0
-        // `completed < total` bounds the pass: parked (awaitingBox) videos are
-        // retried at most once per pass instead of looping while the box is down.
-        while !Task.isCancelled, completed < total, (try? await processNext()) == true {
-            completed += 1
-            progress(completed, total)
+    /// Number of videos processed concurrently. The shared Enricher's 1 s throttle
+    /// still serializes TikTok page fetches; transcripts and analysis overlap.
+    /// ponytail: fixed at 3 — box is a t3.micro; raise alongside the box.
+    private static let concurrency = 3
+
+    /// Drains the queue in passes until nothing more can make progress:
+    /// pass 1 is the caption-first fast pass (enrich + analyze, transcript deferred),
+    /// later passes backfill transcripts and re-analyze. Stops when the pending
+    /// count stops shrinking (e.g. everything left is rate-limit-parked).
+    /// Respects task cancellation between videos.
+    public func processAll(progress: @escaping @Sendable (Int, Int) -> Void) async {
+        var lastPending = Int.max
+        while !Task.isCancelled {
+            let pending = (try? pendingCount()) ?? 0
+            guard pending > 0, pending < lastPending else { break }
+            lastPending = pending
+            passCompleted = 0
+            await withTaskGroup(of: Void.self) { group in
+                for _ in 0..<min(Self.concurrency, pending) {
+                    group.addTask { await self.drainWorker(passTotal: pending, progress: progress) }
+                }
+            }
+        }
+    }
+
+    private func drainWorker(passTotal: Int, progress: @Sendable (Int, Int) -> Void) async {
+        while !Task.isCancelled, passCompleted < passTotal {
+            guard (try? await processNext()) == true else { break }
+            passCompleted += 1
+            // Early workers may pipeline freshly-parked backfill within the same
+            // pass; clamp so the UI never reports past the pass total.
+            progress(min(passCompleted, passTotal), passTotal)
         }
     }
 
@@ -107,10 +130,21 @@ public actor PipelineRunner {
         }
     }
 
+    /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.
+    private var inFlight: Set<String> = []
+    private var passCompleted = 0
+
+    /// Fast-pass items (never enriched) come before transcript backfill, so a big
+    /// import shows the whole classified library first and upgrades it after.
     private func nextPendingVideo(in context: ModelContext) throws -> Video? {
         let descriptor = FetchDescriptor<Video>(
             sortBy: [SortDescriptor(\.bookmarkedAt, order: .forward)])
-        return try context.fetch(descriptor).first { isPending($0) }
+        let candidates = try context.fetch(descriptor).filter {
+            !inFlight.contains($0.videoID) && isPending($0)
+        }
+        return candidates.first {
+            stageStates($0)[PipelineStage.enrich.rawValue] == .pending
+        } ?? candidates.first
     }
 
     /// A video still needs processing while its first stage has never started, or
@@ -128,6 +162,11 @@ public actor PipelineRunner {
         var stages = stageStates(video)
         func set(_ stage: PipelineStage, _ value: StageState) { stages[stage.rawValue] = value }
         defer { store(stages, on: video) }
+
+        // Caption-first fast pass: a never-enriched video gets classified from its
+        // caption immediately and its transcript deferred (parked as awaitingBox),
+        // so a big import is browsable in minutes and upgrades itself afterwards.
+        let fastPass = stages[PipelineStage.enrich.rawValue] == .pending
 
         // 1. Enrich — the only source of the stream URL and sound metadata.
         var meta = VideoMeta()
@@ -161,26 +200,37 @@ public actor PipelineRunner {
         set(.media, .skipped)
 
         // 3. Transcribe — the box downloads audio and runs cloud Whisper (auto language).
-        //    nil is the normal music/no-speech outcome; failure never blocks analysis.
-        do {
-            video.transcript = try await deps.transcriber.transcript(for: video.url)
-            set(.transcribe, .done)
-        } catch {
-            set(.transcribe, stageState(for: error))
+        //    Deferred on the fast pass; nil is the normal music/no-speech outcome.
+        if fastPass {
+            set(.transcribe, .awaitingBox)  // backfill passes pick this up
+        } else {
+            do {
+                video.transcript = try await deps.transcriber.transcript(for: video.url)
+                set(.transcribe, .done)
+            } catch {
+                set(.transcribe, stageState(for: error))
+            }
         }
 
         // 4. OCR — cut for the cloud release (frames would need a second server download);
         //    returns with preserve-and-rediscover keepsakes.
         set(.ocr, .skipped)
 
-        // 5. Analyze — classify and extract the category payload from everything gathered.
-        do {
-            let analysis = try await deps.analyzer.analyze(
-                meta: meta, transcript: video.transcript, ocrText: video.ocrText)
-            await applyAnalysis(analysis, to: video)
+        // 5. Analyze — on the fast pass from the caption, on backfill with the transcript.
+        //    A null backfill transcript adds nothing over the fast pass, so keep the
+        //    existing analysis instead of paying for an identical model call.
+        let needsAnalysis = fastPass || video.transcript != nil || video.categoryRaw.isEmpty
+        if needsAnalysis {
+            do {
+                let analysis = try await deps.analyzer.analyze(
+                    meta: meta, transcript: video.transcript, ocrText: video.ocrText)
+                await applyAnalysis(analysis, to: video)
+                set(.analyze, .done)
+            } catch {
+                set(.analyze, stageState(for: error))
+            }
+        } else {
             set(.analyze, .done)
-        } catch {
-            set(.analyze, stageState(for: error))
         }
     }
 
