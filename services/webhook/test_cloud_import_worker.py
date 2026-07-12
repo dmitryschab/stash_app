@@ -107,6 +107,18 @@ def test_duplicate_delivery_does_not_call_provider():
     assert queue.deleted == ["receipt-1"]
 
 
+def test_running_duplicate_is_left_for_redelivery():
+    store = FakeStore(claimed=False)
+    store.get_video = lambda *_args: {"state": "running", "url": "https://www.tiktok.com/@x/video/123"}
+    queue = FakeQueue()
+    pipeline = SimpleNamespace(process=lambda *_args: pytest.fail("provider called"))
+
+    result = handle_message(message(), store, pipeline, queue)
+
+    assert result == HandleResult(deleted=False, retryable=True)
+    assert queue.deleted == []
+
+
 def test_transient_failure_keeps_message_for_retry():
     store = FakeStore()
     queue = FakeQueue()

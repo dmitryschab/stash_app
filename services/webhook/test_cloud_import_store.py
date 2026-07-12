@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from cloud_import_models import BookmarkInput, CreateImportRequest, VideoResult
 from cloud_import_store import DynamoImportStore
@@ -25,6 +25,23 @@ class FakeTable:
             if item_pk == pk and sort_key.startswith(prefix)
         ]
         return {"Items": sorted(items, key=lambda item: item["SK"])}
+
+
+class CaptureClient:
+    def __init__(self):
+        self.transactions = []
+
+    def transact_write_items(self, *, TransactItems):
+        self.transactions.append(TransactItems)
+
+
+class UpdateCaptureTable(FakeTable):
+    def __init__(self):
+        super().__init__()
+        self.updates = []
+
+    def update_item(self, **kwargs):
+        self.updates.append(kwargs)
 
 
 def request(video_ids=("1", "2")):
@@ -80,3 +97,43 @@ def test_results_are_ordered_by_video_id():
 
     page = store.list_results(created.import_id)
     assert [item.video_id for item in page.results] == ["1", "2"]
+
+
+def test_total_is_aliased_in_dynamodb_conditions():
+    table = FakeTable()
+    store = DynamoImportStore(table=table, installation_id="test-group")
+    created = store.create_import(request(("1",)))
+    store.claim_video(created.import_id, "1")
+
+    client = CaptureClient()
+    store._client = client
+    assert store.complete_video(created.import_id, VideoResult(videoID="1")) is True
+    completion_meta = client.transactions[-1][1]["Update"]
+    assert completion_meta["ExpressionAttributeNames"]["#total"] == "total"
+    assert "#total" in completion_meta["ConditionExpression"]
+
+    table = UpdateCaptureTable()
+    store = DynamoImportStore(table=table, installation_id="test-group")
+    import_id = "import-finalize"
+    table.put_item(
+        Item={
+            "PK": f"IMPORT#{import_id}",
+            "SK": "META",
+            "state": "fast_pass",
+            "fastDone": 1,
+            "total": 1,
+        }
+    )
+    store._try_finalize(import_id)
+    assert table.updates[0]["ExpressionAttributeNames"]["#total"] == "total"
+
+
+def test_stale_running_video_can_be_reclaimed_after_worker_restart():
+    table = FakeTable()
+    store = DynamoImportStore(table=table, installation_id="test-group")
+    created = store.create_import(request(("1",)))
+    key = (f"IMPORT#{created.import_id}", "VIDEO#1")
+    table.items[key]["state"] = "running"
+    table.items[key]["updatedAt"] = (datetime.now(timezone.utc) - timedelta(seconds=301)).isoformat()
+
+    assert store.claim_video(created.import_id, "1") is True

@@ -6,12 +6,13 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
+
+from cloud_import_aws import instance_role_session
 
 from cloud_import_models import (
     CreateImportRequest,
@@ -30,6 +31,9 @@ class CreateImportResult:
     created: bool
     accepted: int
     duplicates: int = 0
+
+
+CLAIM_LEASE_SECONDS = 300
 
 
 def _now() -> str:
@@ -55,6 +59,16 @@ def _is_conditional_failure(error: Exception) -> bool:
     return error.__class__.__name__ in {"ConditionalCheckFailed", "ConditionalCheckFailedException"}
 
 
+def _is_stale_claim(updated_at: str | None) -> bool:
+    if not updated_at:
+        return False
+    try:
+        claimed_at = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return False
+    return claimed_at < datetime.now(timezone.utc) - timedelta(seconds=CLAIM_LEASE_SECONDS)
+
+
 class DynamoImportStore:
     def __init__(
         self,
@@ -65,9 +79,7 @@ class DynamoImportStore:
         dynamodb_resource=None,
     ):
         if table is None:
-            resource = dynamodb_resource or boto3.resource(
-                "dynamodb", region_name=os.environ.get("AWS_REGION", "eu-north-1")
-            )
+            resource = dynamodb_resource or instance_role_session().resource("dynamodb")
             table = resource.Table(table_name or os.environ["STASH_IMPORT_TABLE"])
         self.table = table
         self.table_name = getattr(table, "name", table_name or os.environ.get("STASH_IMPORT_TABLE", ""))
@@ -166,19 +178,28 @@ class DynamoImportStore:
 
     def claim_video(self, import_id: str, video_id: str) -> bool:
         key = self._key(import_id, f"VIDEO#{video_id}")
-        values = {":running": VideoState.RUNNING.value, ":queued": VideoState.QUEUED.value, ":retryable": VideoState.RETRYABLE.value, ":updated": _now()}
+        values = {
+            ":running": VideoState.RUNNING.value,
+            ":queued": VideoState.QUEUED.value,
+            ":retryable": VideoState.RETRYABLE.value,
+            ":updated": _now(),
+            ":stale": (datetime.now(timezone.utc) - timedelta(seconds=CLAIM_LEASE_SECONDS)).isoformat(),
+        }
         try:
             if hasattr(self.table, "update_item"):
                 self.table.update_item(
                     Key=key,
                     UpdateExpression="SET #state = :running, updatedAt = :updated",
-                    ConditionExpression="#state IN (:queued, :retryable)",
+                    ConditionExpression="#state IN (:queued, :retryable) OR (#state = :running AND updatedAt < :stale)",
                     ExpressionAttributeNames={"#state": "state"},
                     ExpressionAttributeValues=values,
                 )
             else:
                 item = self._get(key)
-                if not item or item.get("state") not in {VideoState.QUEUED.value, VideoState.RETRYABLE.value}:
+                if not item or (
+                    item.get("state") not in {VideoState.QUEUED.value, VideoState.RETRYABLE.value}
+                    and not (item.get("state") == VideoState.RUNNING.value and _is_stale_claim(item.get("updatedAt")))
+                ):
                     return False
                 item.update(state=VideoState.RUNNING.value, updatedAt=values[":updated"])
                 self.table.put_item(Item=item)
@@ -234,7 +255,8 @@ class DynamoImportStore:
                     "TableName": self.table_name,
                     "Key": meta_key,
                     "UpdateExpression": "SET fastDone = fastDone + :one, unavailable = unavailable + :unavailable, updatedAt = :updated",
-                    "ConditionExpression": "fastDone < total",
+                    "ConditionExpression": "fastDone < #total",
+                    "ExpressionAttributeNames": {"#total": "total"},
                     "ExpressionAttributeValues": {":one": 1, ":unavailable": 1 if result.unavailable else 0, ":updated": now},
                 }
             },
@@ -305,7 +327,8 @@ class DynamoImportStore:
                         "TableName": self.table_name,
                         "Key": self._key(import_id, "META"),
                         "UpdateExpression": "SET fastDone = fastDone + :one, partialFailures = partialFailures + :one, updatedAt = :updated",
-                        "ConditionExpression": "fastDone < total",
+                        "ConditionExpression": "fastDone < #total",
+                        "ExpressionAttributeNames": {"#total": "total"},
                         "ExpressionAttributeValues": {":one": 1, ":updated": now},
                     }
                 },
@@ -336,8 +359,8 @@ class DynamoImportStore:
                     self.table.update_item(
                         Key=key,
                         UpdateExpression="SET #state = :completed, updatedAt = :updated",
-                        ConditionExpression="fastDone = total AND #state <> :completed",
-                        ExpressionAttributeNames={"#state": "state"},
+                        ConditionExpression="fastDone = #total AND #state <> :completed",
+                        ExpressionAttributeNames={"#state": "state", "#total": "total"},
                         ExpressionAttributeValues={":completed": ImportState.COMPLETED.value, ":updated": _now()},
                     )
                 except Exception as error:

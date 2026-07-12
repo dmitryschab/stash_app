@@ -6,12 +6,12 @@ import json
 import os
 from typing import Any
 
-import boto3
+from cloud_import_aws import instance_role_session
 
 
 class SQSImportQueue:
     def __init__(self, client=None, queue_url: str | None = None):
-        self.client = client or boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "eu-north-1"))
+        self.client = client or instance_role_session().client("sqs")
         self.queue_url = queue_url or os.environ["STASH_IMPORT_QUEUE_URL"]
 
     def enqueue(self, import_id: str, video_id: str) -> dict[str, Any]:

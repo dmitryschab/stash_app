@@ -237,6 +237,14 @@ resource "aws_iam_role_policy" "import_access" {
   policy = data.aws_iam_policy_document.import_access.json
 }
 
+# The API still uses the existing Bedrock user credentials from its environment.
+# Give that user the same narrowly scoped queue/table access as the EC2 role.
+resource "aws_iam_user_policy" "import_access" {
+  name   = "${var.name}-import-access"
+  user   = "stash-box"
+  policy = data.aws_iam_policy_document.import_access.json
+}
+
 resource "aws_instance" "box" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type

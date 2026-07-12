@@ -12,6 +12,7 @@ import requests
 from cloud_import_pipeline import FastPassPipeline, PipelineError
 from cloud_import_queue import SQSImportQueue
 from cloud_import_store import DynamoImportStore
+from cloud_import_models import VideoState
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,9 @@ def handle_message(message: dict, store, pipeline, queue) -> HandleResult:
         _delete(queue, message)
         return HandleResult(deleted=True, retryable=False)
     if not store.claim_video(import_id, video_id):
+        item = store.get_video(import_id, video_id) if hasattr(store, "get_video") else None
+        if item and item.get("state") == VideoState.RUNNING.value:
+            return HandleResult(deleted=False, retryable=True)
         _delete(queue, message)
         return HandleResult(deleted=True, retryable=False)
     receipt = message.get("receiptHandle")
