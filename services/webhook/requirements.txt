@@ -1,2 +1,6 @@
 fastapi
 uvicorn[standard]
+requests
+pydantic
+aws-bedrock-token-generator
+yt-dlp

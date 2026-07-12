@@ -22,6 +22,7 @@ struct WatchSection: View {
     let tint: Color
 
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
+    @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @State private var isSaving = false
     @State private var saveFailed = false
 
@@ -106,7 +107,7 @@ struct WatchSection: View {
         saveFailed = false
         do {
             video.offlineVideoFilename = try await OfflineVideoStore.download(
-                videoID: video.videoID, boxBaseURL: boxBaseURL)
+                videoID: video.videoID, boxBaseURL: boxBaseURL, apiKey: boxApiKey)
             try context.save()
         } catch {
             NSLog("StashOffline: download failed: %@", String(describing: error))
@@ -139,10 +140,11 @@ enum OfflineVideoStore {
     }
 
     /// Asks the model box to yt-dlp the video and stores the returned mp4.
-    static func download(videoID: String, boxBaseURL: String) async throws -> String {
+    static func download(videoID: String, boxBaseURL: String, apiKey: String) async throws -> String {
         guard let base = URL(string: boxBaseURL) else { throw URLError(.badURL) }
         let endpoint = base.appendingPathComponent("tiktok/download/\(videoID)")
         var request = URLRequest(url: endpoint)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 120  // yt-dlp on the box takes 5–20 s per video
 
         let (data, response) = try await URLSession.shared.data(for: request)

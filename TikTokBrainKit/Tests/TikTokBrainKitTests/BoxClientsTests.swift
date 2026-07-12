@@ -166,58 +166,55 @@ final class BoxClientsTests: XCTestCase {
 
     // MARK: Transcriber
 
-    func testTranscriberParsesText() async throws {
+    private var testVideoURL: URL { URL(string: "https://www.tiktok.com/@x/video/7000000000000000001")! }
+
+    func testTranscriberParsesTranscript() async throws {
         BoxStubURLProtocol.stub = .init(
             statusCode: 200,
-            data: try JSONSerialization.data(withJSONObject: ["text": "hello from whisper"])
-        )
-        let audioURL = try makeTempAudioFile()
-        defer { try? FileManager.default.removeItem(at: audioURL) }
+            data: try JSONSerialization.data(withJSONObject: [
+                "transcript": "hello from whisper", "duration": 12.5]))
 
         let client = TranscriberClient(config: boxConfig(), session: makeSession())
-        let text = try await client.transcribe(audioFileURL: audioURL)
+        let text = try await client.transcript(for: testVideoURL)
 
         XCTAssertEqual(text, "hello from whisper")
         XCTAssertEqual(BoxStubURLProtocol.lastRequest?.url?.absoluteString,
-                       "http://localhost:9/v1/audio/transcriptions")
+                       "http://localhost:9/v1/videos/transcript")
     }
 
-    func testTranscriberSendsMultipart() async throws {
+    func testTranscriberSendsJSONBodyWithVideoURL() async throws {
         BoxStubURLProtocol.stub = .init(
             statusCode: 200,
-            data: try JSONSerialization.data(withJSONObject: ["text": "ok"])
-        )
-        let audioURL = try makeTempAudioFile()
-        defer { try? FileManager.default.removeItem(at: audioURL) }
+            data: try JSONSerialization.data(withJSONObject: ["transcript": "ok"]))
 
         let client = TranscriberClient(config: boxConfig(), session: makeSession())
-        _ = try await client.transcribe(audioFileURL: audioURL)
+        _ = try await client.transcript(for: testVideoURL)
 
-        let contentType = BoxStubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Content-Type")
-        XCTAssertEqual(contentType?.hasPrefix("multipart/form-data; boundary="), true)
-
+        XCTAssertEqual(BoxStubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Content-Type"),
+                       "application/json")
+        XCTAssertEqual(BoxStubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"),
+                       "Bearer local")
         let body = try XCTUnwrap(BoxStubURLProtocol.lastRequestBody)
-        let bodyString = String(decoding: body, as: UTF8.self)
-        XCTAssertTrue(bodyString.contains("filename="),
-                      "multipart body should carry the file part filename")
-        XCTAssertTrue(bodyString.contains("name=\"model\""),
-                      "multipart body should contain the model field")
-        XCTAssertTrue(bodyString.contains("test-whisper"),
-                      "multipart body should send the configured whisper model")
-        XCTAssertTrue(bodyString.contains("name=\"language\""),
-                      "multipart body should contain the language field")
-        XCTAssertTrue(bodyString.contains("name=\"response_format\""),
-                      "multipart body should contain the response_format field")
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+        XCTAssertEqual(payload["url"], testVideoURL.absoluteString)
+    }
+
+    func testTranscriberNullTranscriptMeansNoSpeech() async throws {
+        BoxStubURLProtocol.stub = .init(
+            statusCode: 200,
+            data: Data(#"{"transcript": null, "duration": 30.0}"#.utf8))
+
+        let client = TranscriberClient(config: boxConfig(), session: makeSession())
+        let text = try await client.transcript(for: testVideoURL)
+        XCTAssertNil(text)
     }
 
     func testTranscriberBadResponseMapsToBoxError() async throws {
         BoxStubURLProtocol.stub = .init(statusCode: 500, data: Data("boom".utf8))
-        let audioURL = try makeTempAudioFile()
-        defer { try? FileManager.default.removeItem(at: audioURL) }
 
         let client = TranscriberClient(config: boxConfig(), session: makeSession())
         do {
-            _ = try await client.transcribe(audioFileURL: audioURL)
+            _ = try await client.transcript(for: testVideoURL)
             XCTFail("Expected the client to throw")
         } catch let error as BoxError {
             XCTAssertEqual(error, .badResponse(500))

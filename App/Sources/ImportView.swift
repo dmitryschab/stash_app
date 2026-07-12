@@ -64,7 +64,15 @@ final class ImportController {
             _ = try await analyzer.analyze(meta: VideoMeta(caption: "ping"), transcript: nil, ocrText: nil)
             boxStatus = .online
         } catch let error as BoxError {
-            if case .unreachable = error { boxStatus = .offline } else { boxStatus = .online }
+            switch error {
+            case .unreachable:
+                boxStatus = .offline
+            case .badResponse(let status) where status == 401 || status == 403:
+                // Reaching the box with a bad token is NOT online — surface it.
+                boxStatus = .offline
+            default:
+                boxStatus = .online  // it answered; model hiccups still count as reachable
+            }
         } catch {
             boxStatus = .offline
         }
@@ -123,19 +131,23 @@ final class ImportController {
 
 // MARK: - Box config storage
 
-/// Default box configuration. Values are placeholders — the real tailnet URL is entered at
-/// runtime in Settings and never committed.
+/// Default box configuration: the cloud pipeline API. The bearer token is compiled
+/// in from the gitignored generated file (scripts/gen-box-token.sh); Settings can
+/// override everything for local-box development.
 enum BoxDefaults {
-    static let baseURL = "http://box:8000/v1"
-    static let chatModel = "local-chat"
-    static let whisperModel = "whisper-1"
+    static let baseURL = "https://stash.dmitrijs.dev/v1"
+    static let chatModel = "google.gemma-4-26b-a4b"   // pinned server-side; informational
+    static let whisperModel = "whisper-large-v3-turbo" // pinned server-side; informational
+    static let apiKey = BoxToken.value
 }
 
-func makeBoxConfig(baseURL: String, chatModel: String, whisperModel: String) -> BoxConfig {
+func makeBoxConfig(baseURL: String, chatModel: String, whisperModel: String,
+                   apiKey: String = BoxDefaults.apiKey) -> BoxConfig {
     BoxConfig(
         baseURL: URL(string: baseURL) ?? URL(string: "http://localhost:9")!,
         chatModel: chatModel,
-        whisperModel: whisperModel
+        whisperModel: whisperModel,
+        apiKey: apiKey
     )
 }
 
@@ -149,8 +161,10 @@ struct ImportView: View {
     @State private var showImporter = false
     @State private var showSettings = false
     @State private var showConnect = false
+    @State private var showGuide = false
 
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
+    @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
 
@@ -184,6 +198,7 @@ struct ImportView: View {
         ) { handleImport($0) }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConnect) { ConnectFlowView() }
+        .sheet(isPresented: $showGuide) { DataDownloadGuideView() }
         .task { await controller.pingBox(config: config) }
     }
 
@@ -265,11 +280,23 @@ struct ImportView: View {
     }
 
     private var importSection: some View {
-        StashPrimaryButton(title: "Import TikTok export", systemImage: "square.and.arrow.down") {
-            showImporter = true
+        VStack(alignment: .leading, spacing: 10) {
+            StashPrimaryButton(title: "Import TikTok export", systemImage: "square.and.arrow.down") {
+                showImporter = true
+            }
+            .disabled(controller.isImporting)
+            .opacity(controller.isImporting ? 0.5 : 1)
+
+            Button { showGuide = true } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                    Micro(text: "How to get your TikTok data", size: 10, tracking: 1.2, color: .stashInk.opacity(0.7))
+                }
+                .foregroundStyle(Color.stashInk.opacity(0.7))
+            }
+            .buttonStyle(.plain)
         }
-        .disabled(controller.isImporting)
-        .opacity(controller.isImporting ? 0.5 : 1)
     }
 
     private var boxCard: some View {
@@ -338,7 +365,7 @@ struct ImportView: View {
     // MARK: - Helpers
 
     private var config: BoxConfig {
-        makeBoxConfig(baseURL: boxBaseURL, chatModel: chatModel, whisperModel: whisperModel)
+        makeBoxConfig(baseURL: boxBaseURL, chatModel: chatModel, whisperModel: whisperModel, apiKey: boxApiKey)
     }
 
     private func count(_ category: Category) -> Int {
@@ -363,19 +390,24 @@ struct ImportView: View {
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
+    @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Model box") {
+                Section("Stash cloud") {
                     field("Base URL", text: $boxBaseURL, placeholder: BoxDefaults.baseURL, disableAutocaps: true)
+                    LabeledContent("API key") {
+                        SecureField("token", text: $boxApiKey)
+                            .multilineTextAlignment(.trailing)
+                    }
                     field("Chat model", text: $chatModel, placeholder: BoxDefaults.chatModel)
                     field("Whisper model", text: $whisperModel, placeholder: BoxDefaults.whisperModel)
                 }
                 Section {
-                    Text("The model box runs your self-hosted models over Tailscale. Set its base URL and model names here — nothing is stored in the build.")
+                    Text("Analysis and transcription run on the Stash cloud by default. Point the base URL at your own model box for local development — models are pinned server-side either way.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

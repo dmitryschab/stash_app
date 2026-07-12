@@ -37,3 +37,4 @@ pipeline-lab/eval-43/urls.txt
 
 # misc db/artifacts
 **/ruvector.db
+App/Sources/Generated/

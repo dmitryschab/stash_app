@@ -83,12 +83,12 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(recipe.categoryRaw, Category.recipe.rawValue)
         XCTAssertEqual(recipe.author, "noodleworship")
         XCTAssertEqual(recipe.transcript, "boil the noodles")
-        XCTAssertEqual(recipe.ocrText, "MISO RAMEN")
+        XCTAssertNil(recipe.ocrText)  // OCR cut for the cloud release
         let recipeStages = try stages(recipe)
         XCTAssertEqual(recipeStages["enrich"], .done)
-        XCTAssertEqual(recipeStages["media"], .done)
+        XCTAssertEqual(recipeStages["media"], .skipped)  // box owns media now
         XCTAssertEqual(recipeStages["transcribe"], .done)
-        XCTAssertEqual(recipeStages["ocr"], .done)
+        XCTAssertEqual(recipeStages["ocr"], .skipped)
         XCTAssertEqual(recipeStages["analyze"], .done)
         let recipeData = try JSONDecoder().decode(RecipeData.self, from: XCTUnwrap(recipe.recipeJSON))
         XCTAssertEqual(recipeData,
@@ -154,12 +154,12 @@ final class PipelineTests: XCTestCase {
 
         let video = try XCTUnwrap(fetchVideo("7000000000000000009", in: container))
         let s = try stages(video)
-        XCTAssertEqual(s["media"], .done)
+        XCTAssertEqual(s["media"], .skipped)
         XCTAssertEqual(s["transcribe"], .awaitingBox)   // parked, not failed
-        XCTAssertEqual(s["ocr"], .done)
+        XCTAssertEqual(s["ocr"], .skipped)
         XCTAssertEqual(s["analyze"], .done)             // analysis still ran
         XCTAssertNil(video.transcript)                  // no transcript captured
-        XCTAssertEqual(video.ocrText, "SCREEN TEXT")
+        XCTAssertNil(video.ocrText)
         // StubAnalyzer echoes the transcript it received, proving analyze saw `nil`.
         XCTAssertEqual(video.title, "no-transcript")
         XCTAssertEqual(video.categoryRaw, Category.other.rawValue)
@@ -211,9 +211,9 @@ private struct StubMedia: MediaFetching {
 }
 
 private struct StubTranscriber: Transcribing {
-    var transcript: String = "transcript"
+    var transcript: String? = "transcript"
     var unreachable: Bool = false
-    func transcribe(audioFileURL: URL) async throws -> String {
+    func transcript(for videoURL: URL) async throws -> String? {
         if unreachable { throw BoxError.unreachable("(is Tailscale up and the box online?) stub") }
         return transcript
     }

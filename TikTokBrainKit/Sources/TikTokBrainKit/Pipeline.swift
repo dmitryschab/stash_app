@@ -143,42 +143,27 @@ public actor PipelineRunner {
             return
         }
 
-        // 2. Media — audio for transcription + keyframes for OCR.
-        var bundle: MediaBundle?
-        if let streamURL = meta.streamURL {
-            do {
-                bundle = try await deps.media.fetch(streamURL: streamURL)
-                set(.media, .done)
-            } catch {
-                set(.media, stageState(for: error))
-            }
-        } else {
-            set(.media, .skipped)
+        // Thumbnail covers are signed, expiring URLs — grab the bytes now or never.
+        if let cover = meta.thumbnailURL,
+           let local = try? await ThumbnailStore.download(cover, videoID: video.videoID) {
+            video.thumbnailURL = local
         }
 
-        // 3. Transcribe — English-only, best-effort; a missing transcript never blocks analysis.
-        if let audioFileURL = bundle?.audioFileURL {
-            do {
-                video.transcript = try await deps.transcriber.transcribe(audioFileURL: audioFileURL)
-                set(.transcribe, .done)
-            } catch {
-                set(.transcribe, stageState(for: error))
-            }
-        } else {
-            set(.transcribe, .skipped)
+        // 2. Media — retired: TikTok blocks in-app stream downloads; the box owns media.
+        set(.media, .skipped)
+
+        // 3. Transcribe — the box downloads audio and runs cloud Whisper (auto language).
+        //    nil is the normal music/no-speech outcome; failure never blocks analysis.
+        do {
+            video.transcript = try await deps.transcriber.transcript(for: video.url)
+            set(.transcribe, .done)
+        } catch {
+            set(.transcribe, stageState(for: error))
         }
 
-        // 4. OCR — on-device text recognition over the keyframes.
-        if let keyframes = bundle?.keyframes, !keyframes.isEmpty {
-            do {
-                video.ocrText = try await deps.ocr(keyframes)
-                set(.ocr, .done)
-            } catch {
-                set(.ocr, stageState(for: error))
-            }
-        } else {
-            set(.ocr, .skipped)
-        }
+        // 4. OCR — cut for the cloud release (frames would need a second server download);
+        //    returns with preserve-and-rediscover keepsakes.
+        set(.ocr, .skipped)
 
         // 5. Analyze — classify and extract the category payload from everything gathered.
         do {
@@ -225,7 +210,17 @@ public actor PipelineRunner {
 
     /// `BoxError.unreachable` parks a stage for a later retry; anything else is a hard failure.
     private func stageState(for error: Error) -> StageState {
-        if let boxError = error as? BoxError, case .unreachable = boxError { return .awaitingBox }
+        if let boxError = error as? BoxError {
+            switch boxError {
+            case .unreachable:
+                return .awaitingBox
+            case .badResponse(let status) where status == 429 || status >= 500:
+                // Throttled (Groq free tier) or transient upstream failure — retryable.
+                return .awaitingBox
+            default:
+                return .failed
+            }
+        }
         return .failed
     }
 

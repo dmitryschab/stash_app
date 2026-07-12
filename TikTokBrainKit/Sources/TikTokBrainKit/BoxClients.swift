@@ -59,66 +59,42 @@ private extension Data {
 
 // MARK: - TranscriberClient
 
-/// Uploads an audio file to the box's Whisper endpoint and returns the recognized text.
-/// English-only in v1 (`language=en`); callers treat a failure as a best-effort skip.
+/// Asks the box for a transcript of a TikTok video by URL. The box downloads the
+/// audio itself (yt-dlp — TikTok blocks all in-app media fetches), runs cloud
+/// Whisper with language auto-detect, and applies the repetition filter; a nil
+/// transcript is the normal music/no-speech outcome, and `unavailable` marks
+/// deleted/private videos. Downloads + throttling make this the slow call, hence
+/// its own generous timeout.
 public struct TranscriberClient: Transcribing {
     private let config: BoxConfig
     private let session: URLSession
+    private static let transcriptTimeout: TimeInterval = 180
 
     public init(config: BoxConfig, session: URLSession = .shared) {
         self.config = config
         self.session = session
     }
 
-    public func transcribe(audioFileURL: URL) async throws -> String {
-        let request = try makeRequest(audioFileURL: audioFileURL)
+    public func transcript(for videoURL: URL) async throws -> String? {
+        let url = config.baseURL.appendingPathComponent("videos/transcript")
+        var request = URLRequest(url: url, timeoutInterval: Self.transcriptTimeout)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["url": videoURL.absoluteString])
+
         let data = try await BoxHTTP.send(request, on: session)
         do {
-            return try JSONDecoder().decode(TranscriptionResponse.self, from: data).text
+            return try JSONDecoder().decode(TranscriptResponse.self, from: data).transcript
         } catch {
-            throw BoxError.malformedPayload("transcription response: \(error.localizedDescription)")
+            throw BoxError.malformedPayload("transcript response: \(error.localizedDescription)")
         }
     }
 
-    private func makeRequest(audioFileURL: URL) throws -> URLRequest {
-        let url = config.baseURL.appendingPathComponent("audio/transcriptions")
-        var request = URLRequest(url: url, timeoutInterval: boxRequestTimeout)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-
-        let boundary = "Boundary-\(UUID().uuidString)"
-        request.setValue("multipart/form-data; boundary=\(boundary)",
-                         forHTTPHeaderField: "Content-Type")
-        request.httpBody = try multipartBody(audioFileURL: audioFileURL, boundary: boundary)
-        return request
+    private struct TranscriptResponse: Decodable {
+        let transcript: String?
+        let unavailable: Bool?
     }
-
-    private func multipartBody(audioFileURL: URL, boundary: String) throws -> Data {
-        let audioData = try Data(contentsOf: audioFileURL)
-        let filename = audioFileURL.lastPathComponent
-
-        var body = Data()
-        // file part
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-        body.appendString("Content-Type: application/octet-stream\r\n\r\n")
-        body.append(audioData)
-        body.appendString("\r\n")
-        // text fields
-        appendField(&body, boundary: boundary, name: "model", value: config.whisperModel)
-        appendField(&body, boundary: boundary, name: "language", value: "en")
-        appendField(&body, boundary: boundary, name: "response_format", value: "json")
-        body.appendString("--\(boundary)--\r\n")
-        return body
-    }
-
-    private func appendField(_ body: inout Data, boundary: String, name: String, value: String) {
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
-        body.appendString("\(value)\r\n")
-    }
-
-    private struct TranscriptionResponse: Decodable { let text: String }
 }
 
 // MARK: - AnalyzerClient
@@ -196,6 +172,19 @@ public struct AnalyzerClient: Analyzing {
     Include only the payload object that matches the chosen category and set the other two to \
     null. Set "universalLink" to null; the app resolves music links separately. If information \
     is missing, use empty strings or empty arrays rather than inventing details.
+    Rules (validated on an 855-video run — see pipeline-lab/PROMPT.md):
+    - Captions and transcripts may be in any language; ALWAYS answer in English. \
+    Title max 60 characters.
+    - Classify from caption hashtags even when the transcript is empty: #linux #arch \
+    #selfhosted #homelab #docker #python #react #vim -> "coding"; cooking/baking/food -> \
+    "recipe"; a song/lyrics/album -> "music".
+    - Music: if the video is an album/artist RECOMMENDATION LIST (not one song), set \
+    track.title to the list's theme and track.artist to the main artist(s), or "" if several. \
+    For one song, identify title+artist from well-known lyrics — but NEVER invent an artist \
+    you are not confident about; use "" instead of guessing.
+    - NEVER output placeholder text like "No Content Provided"/"Untitled Video". If caption \
+    and transcript are both empty: title "Saved video", summary "No caption or audio was \
+    available for this save."
     """
 
     static func userPrompt(meta: VideoMeta, transcript: String?, ocrText: String?) -> String {
