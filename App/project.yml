@@ -18,6 +18,10 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: Stash
+        # Drive the app version/build from MARKETING_VERSION / CURRENT_PROJECT_VERSION
+        # below; without these the generated Info.plist hardcodes 1.0 (1).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         # Model-box endpoints (Tailscale / local shim) are plain http.
         NSAppTransportSecurity:
