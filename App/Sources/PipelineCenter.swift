@@ -223,7 +223,7 @@ final class PipelineCenter {
             progress = nil
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        progress = (0, 0)
+        progress = try? await runner.processedCounts()
         await runner.processAll { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }

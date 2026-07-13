@@ -85,6 +85,9 @@ struct RootView: View {
         }
     }()
 
+    // Observes import progress so the sync pill shows on every tab, not just Import.
+    private var center = PipelineCenter.shared
+
     var body: some View {
         ZStack(alignment: .bottom) {
             Group {
@@ -97,9 +100,35 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            StashTabBar(selection: $tab)
+            VStack(spacing: 8) {
+                if center.isImporting, let progress = center.progress, progress.total > 0 {
+                    ImportSyncPill(done: progress.done, total: progress.total)
+                }
+                StashTabBar(selection: $tab)
+            }
         }
         .background(Color.stashBackground.ignoresSafeArea())
+    }
+}
+
+/// Slim status pill above the tab bar, shown on every tab while a local import is still
+/// draining in the background — so leaving the Import screen never hides that it's running.
+private struct ImportSyncPill: View {
+    let done: Int
+    let total: Int
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.stashOnInk)
+            Micro(text: "Syncing \(done) of \(total)", size: 9.5, tracking: 0.9, color: .stashOnInk)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 32)
+        .background(Color.stashInk, in: Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+        .padding(.horizontal, 60)
     }
 }
 
