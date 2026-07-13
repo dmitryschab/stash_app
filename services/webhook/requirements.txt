@@ -6,4 +6,4 @@ aws-bedrock-token-generator
 yt-dlp
 boto3
 pytest
-httpx2
+httpx
