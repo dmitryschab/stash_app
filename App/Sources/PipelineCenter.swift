@@ -47,11 +47,14 @@ final class PipelineCenter {
         }
     }
 
+    /// Cloud import is the default everywhere: pressing Import hands the whole library
+    /// to the box, which processes it in the background whether or not the app stays
+    /// open. Debug builds can force the on-device pipeline for local-box work.
     static var cloudImportEnabled: Bool {
         #if DEBUG
-        CloudImportFeatureFlag.isEnabled(debugBuild: true)
+        !UserDefaults.standard.bool(forKey: CloudImportFeatureFlag.forceLocalKey)
         #else
-        false
+        true
         #endif
     }
 
@@ -70,16 +73,16 @@ final class PipelineCenter {
         return PipelineRunner(deps: Self.makeDeps(config: Self.currentConfig()), container: container)
     }
 
-    #if DEBUG
+    /// The cloud-import API lives under the same box base URL and shares the same bearer
+    /// token as the rest of `/v1`, so no separate configuration is needed — Settings can
+    /// still override the base URL/token for local-box development.
     private static func makeCloudClient() -> CloudImportClient? {
-        let defaults = UserDefaults.standard
-        guard cloudImportEnabled,
-              let baseURL = URL(string: defaults.string(forKey: "cloudImportBaseURL") ?? BoxDefaults.baseURL),
-              let token = defaults.string(forKey: "cloudImportToken"),
-              !token.isEmpty else { return nil }
-        return CloudImportClient(baseURL: baseURL, authorization: { token })
+        guard let baseURL = URL(string: UserDefaults.standard.string(forKey: "boxBaseURL") ?? BoxDefaults.baseURL) else { return nil }
+        return CloudImportClient(baseURL: baseURL, authorization: {
+            let key = UserDefaults.standard.string(forKey: "boxApiKey") ?? BoxDefaults.apiKey
+            return key.isEmpty ? BoxDefaults.apiKey : key
+        })
     }
-    #endif
 
     /// Builds the pipeline from the Kit's concrete clients. Shared with the per-video re-run.
     static func makeDeps(config: BoxConfig) -> PipelineDeps {
@@ -95,15 +98,14 @@ final class PipelineCenter {
 
     // MARK: - Import + resume
 
-    /// Fresh import from a picked export file/folder, then drain the queue.
+    /// Fresh import from a picked export file/folder. Cloud submits the whole library to
+    /// the box (background processing); the on-device drain is the debug-only fallback.
     func runImport(url: URL) async {
-        #if DEBUG
         if Self.cloudImportEnabled {
             await runCloudImport(url: url)
-            return
+        } else {
+            await runLocalImport(url: url)
         }
-        #endif
-        await runLocalImport(url: url)
     }
 
     private func runLocalImport(url: URL) async {
@@ -138,10 +140,9 @@ final class PipelineCenter {
         await drainQueue(runner: runner)
     }
 
-    #if DEBUG
     private func runCloudImport(url: URL) async {
         guard !isImporting, let runner = makeRunner(), let client = Self.makeCloudClient() else {
-            lastError = "Enable developer cloud import and configure its token in Settings."
+            lastError = "Cloud import isn't configured — check the box URL and API key in Settings."
             return
         }
         lastError = nil
@@ -166,7 +167,7 @@ final class PipelineCenter {
             lastError = "The export contains no bookmarked videos."
             return
         }
-        guard bookmarks.count <= 50 else {
+        guard bookmarks.count <= CloudImportLimits.maxVideosPerImport else {
             lastError = CloudImportError.tooManyVideos(bookmarks.count).localizedDescription
             return
         }
@@ -198,7 +199,6 @@ final class PipelineCenter {
             lastError = message
         }
     }
-    #endif
 
     /// Continues whatever is pending or parked — no file pick needed. Safe to call
     /// on every foreground/launch; does nothing when idle or already running.
@@ -303,16 +303,13 @@ final class PipelineCenter {
     // MARK: - Cloud import synchronization
 
     func syncCloudImportIfNeeded() {
-        #if DEBUG
         guard Self.cloudImportEnabled, cloudState.importID != nil, !cloudSyncing else { return }
         cloudSyncTask?.cancel()
         cloudSyncTask = Task { [weak self] in
             await self?.syncCloudImport()
         }
-        #endif
     }
 
-    #if DEBUG
     private func persistCloudState() {
         if let data = try? JSONEncoder().encode(cloudState) {
             UserDefaults.standard.set(data, forKey: Self.cloudStateKey)
@@ -374,7 +371,6 @@ final class PipelineCenter {
             await self?.syncCloudImport()
         }
     }
-    #endif
 
     // MARK: - Box reachability probe
 

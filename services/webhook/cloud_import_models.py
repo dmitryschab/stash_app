@@ -85,7 +85,9 @@ class BookmarkInput(ContractModel):
 
 class CreateImportRequest(ContractModel):
     client_import_id: UUID = Field(alias="clientImportID")
-    videos: list[BookmarkInput] = Field(min_length=1, max_length=50)
+    # Whole-library imports: the spec allows up to 1200 videos per import. Larger
+    # libraries need client-side chunking (not built yet — YAGNI until someone hits it).
+    videos: list[BookmarkInput] = Field(min_length=1, max_length=1200)
 
     @model_validator(mode="after")
     def unique_video_ids(self) -> CreateImportRequest:

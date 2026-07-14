@@ -46,16 +46,26 @@ def test_rejects_non_numeric_video_id():
         )
 
 
-def test_rejects_more_than_50_items():
-    item = {
-        "videoID": "1",
-        "url": "https://www.tiktok.com/@x/video/1",
-        "bookmarkedAt": "2026-07-01T00:00:00Z",
-    }
+def test_accepts_whole_library_and_rejects_beyond_cap():
+    def item(index):
+        return {
+            "videoID": str(index),
+            "url": f"https://www.tiktok.com/@x/video/{index}",
+            "bookmarkedAt": "2026-07-01T00:00:00Z",
+        }
+
+    # A 900-video library imports in one request.
+    ok = CreateImportRequest(
+        clientImportID="11111111-1111-4111-8111-111111111111",
+        videos=[item(i) for i in range(1, 901)],
+    )
+    assert len(ok.videos) == 900
+
+    # Beyond the 1200 cap is still rejected.
     with pytest.raises(ValidationError):
         CreateImportRequest(
             clientImportID="11111111-1111-4111-8111-111111111111",
-            videos=[item] * 51,
+            videos=[item(i) for i in range(1, 1202)],
         )
 
 

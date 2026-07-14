@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from cloud_import_models import BookmarkInput, CreateImportRequest, VideoResult
-from cloud_import_store import DynamoImportStore
+from cloud_import_store import MAX_FAST_PASS_ATTEMPTS, DynamoImportStore
 
 
 class FakeTable:
@@ -126,6 +126,39 @@ def test_total_is_aliased_in_dynamodb_conditions():
     )
     store._try_finalize(import_id)
     assert table.updates[0]["ExpressionAttributeNames"]["#total"] == "total"
+
+
+def test_retryable_video_finalizes_after_attempt_budget():
+    # A video that keeps failing transiently must not stall the import forever: once
+    # the attempt budget is spent it fails terminally and the import finalizes.
+    table = FakeTable()
+    store = DynamoImportStore(table=table, installation_id="test-group")
+    created = store.create_import(request(("1",)))
+
+    for _ in range(MAX_FAST_PASS_ATTEMPTS):  # each cycle = one SQS redelivery
+        assert store.claim_video(created.import_id, "1") is True
+        store.fail_video(created.import_id, "1", retryable=True, code="provider_503")
+
+    video = store.get_video(created.import_id, "1")
+    assert video["state"] == "failed"
+    status = store.get_status(created.import_id)
+    assert status.fast_pass.done == 1
+    assert status.partial_failures == 1
+    assert status.state.value == "completed"
+
+
+def test_whole_library_create_writes_every_video_row():
+    # 900 videos exceed DynamoDB's 100-item transaction cap, so create must stage
+    # rows individually rather than in one transaction.
+    table = FakeTable()
+    store = DynamoImportStore(table=table, installation_id="test-group")
+    created = store.create_import(request(tuple(str(i) for i in range(1, 901))))
+
+    assert created.created is True
+    assert created.accepted == 900
+    rows = [key for key in table.items if key[1].startswith("VIDEO#")]
+    assert len(rows) == 900
+    assert store.get_status(created.import_id).fast_pass.total == 900
 
 
 def test_stale_running_video_can_be_reclaimed_after_worker_restart():

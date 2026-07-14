@@ -34,6 +34,10 @@ class CreateImportResult:
 
 
 CLAIM_LEASE_SECONDS = 300
+# Give up on a perpetually-retryable video after this many attempts so the import
+# can finalize instead of looping to the SQS dead-letter queue forever. Kept in
+# step with the queue's redrive maxReceiveCount (infra/aws-box/main.tf).
+MAX_FAST_PASS_ATTEMPTS = 5
 
 
 def _now() -> str:
@@ -127,8 +131,17 @@ class DynamoImportStore:
         if existing:
             return CreateImportResult(existing["importID"], False, int(existing.get("accepted", 0)))
 
-        import_id = str(uuid.uuid4())
+        # Derive the import id from the client id so a client retry after a partial
+        # create resumes onto the same rows instead of orphaning a fresh import each time.
+        import_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"stash-import/{request.client_import_id}"))
         now = _now()
+
+        # Stage the video rows first, one at a time. DynamoDB transactions cap at 100
+        # items, so a 900-video import cannot be one transaction; and the import only
+        # counts as "created" once the client+META anchor below lands, so a crash
+        # mid-stage is safely resumed by the client's retry onto these same rows.
+        self._ensure_videos(import_id, request.videos)
+
         meta = {
             **self._key(import_id, "META"),
             "importID": import_id,
@@ -146,24 +159,9 @@ class DynamoImportStore:
             "accepted": len(request.videos),
             "createdAt": now,
         }
-        video_items = [
-            {
-                **self._key(import_id, f"VIDEO#{video.video_id}"),
-                "videoID": video.video_id,
-                "url": video.url,
-                "bookmarkedAt": video.bookmarked_at.isoformat(),
-                "state": VideoState.QUEUED.value,
-                "updatedAt": now,
-            }
-            for video in request.videos
-        ]
         operations = [
             {"Put": {"TableName": self.table_name, "Item": client_item, "ConditionExpression": "attribute_not_exists(PK)"}},
             {"Put": {"TableName": self.table_name, "Item": meta, "ConditionExpression": "attribute_not_exists(PK)"}},
-            *[
-                {"Put": {"TableName": self.table_name, "Item": item, "ConditionExpression": "attribute_not_exists(PK)"}}
-                for item in video_items
-            ],
         ]
         try:
             self._transact(operations)
@@ -174,7 +172,26 @@ class DynamoImportStore:
             if not existing:
                 raise
             return CreateImportResult(existing["importID"], False, int(existing.get("accepted", 0)))
-        return CreateImportResult(import_id, True, len(video_items))
+        return CreateImportResult(import_id, True, len(request.videos))
+
+    def _ensure_videos(self, import_id: str, videos) -> None:
+        """Create one QUEUED row per video if absent — idempotent across client retries."""
+        now = _now()
+        for video in videos:
+            item = {
+                **self._key(import_id, f"VIDEO#{video.video_id}"),
+                "videoID": video.video_id,
+                "url": video.url,
+                "bookmarkedAt": video.bookmarked_at.isoformat(),
+                "state": VideoState.QUEUED.value,
+                "attempts": 0,
+                "updatedAt": now,
+            }
+            try:
+                self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(PK)")
+            except Exception as error:
+                if not _is_conditional_failure(error):
+                    raise
 
     def claim_video(self, import_id: str, video_id: str) -> bool:
         key = self._key(import_id, f"VIDEO#{video_id}")
@@ -287,27 +304,31 @@ class DynamoImportStore:
         item = self._get(key)
         if not item or item.get("state") not in {VideoState.RUNNING.value, VideoState.RETRYABLE.value}:
             return False
-        if retryable:
+        attempts = int(item.get("attempts", 0)) + 1
+        # Retry a transient failure — but only until the attempt budget runs out. Past
+        # that we fall through to a terminal failure so the video stops being redelivered
+        # and the import can finalize instead of stalling on a dead-lettered job.
+        if retryable and attempts < MAX_FAST_PASS_ATTEMPTS:
             now = _now()
             if hasattr(self.table, "update_item"):
                 try:
                     self.table.update_item(
                         Key=key,
-                        UpdateExpression="SET #state = :retryable, errorCode = :code, updatedAt = :updated",
+                        UpdateExpression="SET #state = :retryable, attempts = :attempts, errorCode = :code, updatedAt = :updated",
                         ConditionExpression="#state IN (:running, :retryable)",
                         ExpressionAttributeNames={"#state": "state"},
-                        ExpressionAttributeValues={":retryable": VideoState.RETRYABLE.value, ":running": VideoState.RUNNING.value, ":code": code, ":updated": now},
+                        ExpressionAttributeValues={":retryable": VideoState.RETRYABLE.value, ":running": VideoState.RUNNING.value, ":attempts": attempts, ":code": code, ":updated": now},
                     )
                 except Exception as error:
                     if _is_conditional_failure(error):
                         return False
                     raise
             else:
-                item.update(state=VideoState.RETRYABLE.value, errorCode=code, updatedAt=now)
+                item.update(state=VideoState.RETRYABLE.value, attempts=attempts, errorCode=code, updatedAt=now)
                 self.table.put_item(Item=item)
             return True
         meta = self._get(self._key(import_id, "META"))
-        if not meta or item.get("state") != VideoState.RUNNING.value:
+        if not meta or item.get("state") not in {VideoState.RUNNING.value, VideoState.RETRYABLE.value}:
             return False
         now = _now()
         if self._client is not None and hasattr(self._client, "transact_write_items"):
@@ -316,10 +337,10 @@ class DynamoImportStore:
                     "Update": {
                         "TableName": self.table_name,
                         "Key": key,
-                        "UpdateExpression": "SET #state = :failed, errorCode = :code, updatedAt = :updated",
-                        "ConditionExpression": "#state = :running",
+                        "UpdateExpression": "SET #state = :failed, attempts = :attempts, errorCode = :code, updatedAt = :updated",
+                        "ConditionExpression": "#state IN (:running, :retryable)",
                         "ExpressionAttributeNames": {"#state": "state"},
-                        "ExpressionAttributeValues": {":failed": VideoState.FAILED.value, ":running": VideoState.RUNNING.value, ":code": code, ":updated": now},
+                        "ExpressionAttributeValues": {":failed": VideoState.FAILED.value, ":running": VideoState.RUNNING.value, ":retryable": VideoState.RETRYABLE.value, ":attempts": attempts, ":code": code, ":updated": now},
                     }
                 },
                 {
@@ -341,7 +362,7 @@ class DynamoImportStore:
                 raise
             self._try_finalize(import_id)
             return True
-        item.update(state=VideoState.FAILED.value, errorCode=code, updatedAt=_now())
+        item.update(state=VideoState.FAILED.value, attempts=attempts, errorCode=code, updatedAt=_now())
         meta["fastDone"] = int(meta.get("fastDone", 0)) + 1
         meta["partialFailures"] = int(meta.get("partialFailures", 0)) + 1
         meta["updatedAt"] = _now()

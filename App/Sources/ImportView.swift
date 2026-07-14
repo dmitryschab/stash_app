@@ -82,17 +82,7 @@ struct ImportView: View {
     @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
-    #if DEBUG
-    @AppStorage(CloudImportFeatureFlag.defaultsKey) private var developerCloudImportEnabled = false
-    #endif
-
-    private var usesCloudImport: Bool {
-        #if DEBUG
-        developerCloudImportEnabled && PipelineCenter.cloudImportEnabled
-        #else
-        false
-        #endif
-    }
+    private var usesCloudImport: Bool { PipelineCenter.cloudImportEnabled }
 
     var body: some View {
         ScrollView {
@@ -351,9 +341,7 @@ struct SettingsView: View {
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
     #if DEBUG
-    @AppStorage(CloudImportFeatureFlag.defaultsKey) private var cloudImportEnabled = false
-    @AppStorage("cloudImportBaseURL") private var cloudImportBaseURL = BoxDefaults.baseURL
-    @AppStorage("cloudImportToken") private var cloudImportToken = ""
+    @AppStorage(CloudImportFeatureFlag.forceLocalKey) private var forceLocalImport = false
     #endif
 
     var body: some View {
@@ -374,14 +362,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 #if DEBUG
-                Section("Developer cloud import") {
-                    Toggle("Enable cloud import", isOn: $cloudImportEnabled)
-                    field("Base URL", text: $cloudImportBaseURL, placeholder: BoxDefaults.baseURL, disableAutocaps: true)
-                    LabeledContent("Bearer token") {
-                        SecureField("developer token", text: $cloudImportToken)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    Text("Uses the current /v1/imports backend slice only. Credentials are entered locally and are not part of the app source.")
+                Section("Developer") {
+                    Toggle("Force on-device import", isOn: $forceLocalImport)
+                    Text("Cloud import is the default — the box processes the whole library in the background. Enable this to run the on-device pipeline instead (local-box development).")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

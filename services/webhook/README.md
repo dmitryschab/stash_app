@@ -9,7 +9,7 @@ TLS and also serves the public site. Live at **https://stash.dmitrijs.dev**
 ## Endpoints
 - `GET  /health` — liveness + whether signature verification is on
 - `POST /webhook/tiktok` — receives events, verifies HMAC (when a secret is set), logs to `/var/lib/stash-webhook/events.jsonl`, returns 200
-- `POST /v1/imports` — authenticated, accepts up to 50 normalized bookmarks and returns immediately with an import ID
+- `POST /v1/imports` — authenticated, accepts up to 1200 normalized bookmarks (a whole library) and returns immediately with an import ID; the box processes them in the background
 - `GET  /v1/imports/{id}` — authenticated cloud-import progress
 - `GET  /v1/imports/{id}/results` — authenticated paginated compact results
 - `POST /v1/videos/transcript` — existing direct transcript endpoint

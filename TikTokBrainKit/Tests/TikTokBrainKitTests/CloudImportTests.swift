@@ -148,15 +148,21 @@ final class CloudImportTests: XCTestCase {
         XCTAssertEqual(video.title, "Newest")
     }
 
-    func testFeatureFlagIsDisabledOutsideDebugAndDefaultsOff() {
-        let suite = UserDefaults(suiteName: #function)!
-        suite.removePersistentDomain(forName: #function)
-        defer { suite.removePersistentDomain(forName: #function) }
+    func testWholeLibraryFitsAndOverCapIsRejectedWithoutNetwork() async throws {
+        // A 900-video library must submit; over the cap is rejected before any network call.
+        XCTAssertGreaterThanOrEqual(CloudImportLimits.maxVideosPerImport, 900)
 
-        XCTAssertFalse(CloudImportFeatureFlag.isEnabled(debugBuild: true, defaults: suite))
-        suite.set(true, forKey: CloudImportFeatureFlag.defaultsKey)
-        XCTAssertTrue(CloudImportFeatureFlag.isEnabled(debugBuild: true, defaults: suite))
-        XCTAssertFalse(CloudImportFeatureFlag.isEnabled(debugBuild: false, defaults: suite))
+        let client = makeClient { request in
+            XCTFail("over-cap submit must not hit the network")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let tooMany = (0...CloudImportLimits.maxVideosPerImport).map { bookmark(id: "\($0)") }
+        do {
+            _ = try await client.submit(bookmarks: tooMany, clientImportID: UUID())
+            XCTFail("expected tooManyVideos")
+        } catch let error as CloudImportError {
+            guard case .tooManyVideos = error else { return XCTFail("unexpected \(error)") }
+        }
     }
 
     func testMissingTokenFailsWithoutNetworkCall() async throws {
@@ -219,21 +225,6 @@ final class CloudImportTests: XCTestCase {
             guard case .transport = error else { return XCTFail("expected transport, got \(error)") }
         }
         XCTAssertEqual(recorder.bodies.count, 3)
-    }
-
-    func testSubmitRejectsMoreThan50VideosWithoutNetworkCall() async throws {
-        let client = makeClient { request in
-            XCTFail("submit should reject before any network call")
-            return (HTTPURLResponse(url: request.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!, Data())
-        }
-        let bookmarks = (1...51).map { bookmark(id: "\($0)") }
-
-        do {
-            _ = try await client.submit(bookmarks: bookmarks, clientImportID: UUID())
-            XCTFail("expected tooManyVideos(51)")
-        } catch let error as CloudImportError {
-            XCTAssertEqual(error, .tooManyVideos(51))
-        }
     }
 
     func testUpsertPreservesLocalMetadataForUnavailableAndFailedResults() throws {

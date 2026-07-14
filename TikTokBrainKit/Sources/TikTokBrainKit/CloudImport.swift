@@ -183,12 +183,17 @@ public struct CloudImportSyncState: Codable, Equatable, Sendable {
     }
 }
 
-public enum CloudImportFeatureFlag {
-    public static let defaultsKey = "developer.cloudImportEnabled"
+public enum CloudImportLimits {
+    /// Matches the server contract cap (services/webhook/cloud_import_models.py). A whole
+    /// ~900-video library fits in one import; larger libraries would need client-side
+    /// chunking, which isn't built yet (YAGNI until someone actually exceeds this).
+    public static let maxVideosPerImport = 1200
+}
 
-    public static func isEnabled(debugBuild: Bool, defaults: UserDefaults = .standard) -> Bool {
-        debugBuild && defaults.bool(forKey: defaultsKey)
-    }
+public enum CloudImportFeatureFlag {
+    /// Debug-only escape hatch to force the on-device pipeline (e.g. local-box work).
+    /// Cloud import is the default everywhere; see `PipelineCenter.cloudImportEnabled`.
+    public static let forceLocalKey = "developer.forceLocalImport"
 }
 
 public enum CloudImportError: Error, Equatable, LocalizedError {
@@ -206,7 +211,7 @@ public enum CloudImportError: Error, Equatable, LocalizedError {
         case .badResponse(let status): "Cloud import returned HTTP \(status)."
         case .transport(let message): "Cloud import is unreachable: \(message)"
         case .malformedPayload(let message): "Cloud import returned an invalid response: \(message)"
-        case .tooManyVideos(let count): "Cloud imports currently support at most 50 videos (received \(count))."
+        case .tooManyVideos(let count): "Cloud imports currently support at most \(CloudImportLimits.maxVideosPerImport) videos (received \(count))."
         }
     }
 
@@ -238,7 +243,7 @@ public struct CloudImportClient: Sendable {
     }
 
     public func submit(bookmarks: [Bookmark], clientImportID: UUID) async throws -> CloudImportSubmission {
-        guard bookmarks.count <= 50 else { throw CloudImportError.tooManyVideos(bookmarks.count) }
+        guard bookmarks.count <= CloudImportLimits.maxVideosPerImport else { throw CloudImportError.tooManyVideos(bookmarks.count) }
         let payload = CreateImportRequest(
             clientImportID: clientImportID,
             videos: bookmarks.map {
