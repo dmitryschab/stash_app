@@ -245,10 +245,12 @@ public actor PipelineRunner {
             video.recipeJSON = try? encoder.encode(recipe)
         }
         if var track = analysis.track {
-            // Resolve a universal song.link for music (best-effort; a failure just leaves it nil).
-            if track.universalLink == nil {
-                track.universalLink = try? await deps.musicResolver.universalLink(
-                    title: track.title, artist: track.artist)
+            // Resolve per-service links for music (best-effort; a failure just leaves them nil).
+            if track.links == nil {
+                let resolved = (try? await deps.musicResolver.resolve(
+                    title: track.title, artist: track.artist)) ?? .none
+                track.universalLink = track.universalLink ?? resolved.universalLink
+                track.links = resolved.links
             }
             video.trackJSON = try? encoder.encode(track)
         }

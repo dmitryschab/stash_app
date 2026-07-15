@@ -6,6 +6,7 @@ docs/superpowers/specs/2026-07-11-tester-ready-cloud-pipeline-design.md):
   POST /v1/videos/transcript   {url} -> yt-dlp audio -> Groq whisper -> filtered text
   POST /v1/chat/completions    OpenAI-shape proxy to Bedrock Gemma (model pinned here)
   GET  /v1/tiktok/download/{id} -> mp4 bytes (app "Keep offline")
+  GET  /v1/music/spotify       {title,artist} -> Spotify track/album URL
 
 TikTok blocks all in-app media downloads (blank playAddr / CDN 403 / CORS), so the
 box owns every media fetch. Groq free tier: 7200 audio-sec per rolling hour — 429s
@@ -180,6 +181,64 @@ def tiktok_download(video_id: str, authorization: str | None = Header(None)):
     return Response(content=data, media_type="video/mp4")
 
 
+# ---------------------------------------------------------------- spotify links
+
+# Odesli (song.link) resolves Apple -> Tidal/Deezer/etc. but returns no Spotify match
+# for an Apple-seeded lookup, so Spotify is the one service the app can't reach on its
+# own. Its client secret can't ship in the app binary, so the lookup lives here.
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+SPOTIFY_SEARCH_URL = "https://api.spotify.com/v1/search"
+
+_spotify_cache: dict = {"token": None, "expires": 0.0}
+
+
+def _spotify_token() -> str:
+    if _spotify_cache["token"] and time.time() < _spotify_cache["expires"]:
+        return _spotify_cache["token"]
+    resp = requests.post(
+        SPOTIFY_TOKEN_URL,
+        data={"grant_type": "client_credentials"},
+        auth=(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET),
+        timeout=20)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"spotify auth {resp.status_code}")
+    data = resp.json()
+    _spotify_cache["token"] = data["access_token"]
+    # Client-credentials tokens carry no refresh token; re-mint just before expiry.
+    _spotify_cache["expires"] = time.time() + data.get("expires_in", 3600) - 60
+    return _spotify_cache["token"]
+
+
+@router.get("/music/spotify")
+def music_spotify(title: str, artist: str = "", authorization: str | None = Header(None)):
+    require_auth(authorization)
+    if not (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET):
+        raise HTTPException(status_code=503, detail="spotify not configured")
+    term = f"{title} {artist}".strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="empty query")
+
+    resp = requests.get(
+        SPOTIFY_SEARCH_URL,
+        headers={"Authorization": f"Bearer {_spotify_token()}"},
+        params={"q": term, "type": "track", "limit": 1},
+        timeout=20)
+    if resp.status_code == 429:
+        raise HTTPException(status_code=429, detail="spotify throttled",
+                            headers={"Retry-After": resp.headers.get("retry-after", "5")})
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"spotify {resp.status_code}")
+
+    items = resp.json().get("tracks", {}).get("items", [])
+    if not items:
+        return {"url": None, "album": None}
+    track = items[0]
+    return {"url": track["external_urls"]["spotify"],
+            "album": track["album"]["external_urls"]["spotify"]}
+
+
 # ---------------------------------------------------------------- self-check
 
 def selftest():
@@ -191,6 +250,15 @@ def selftest():
         lines += ["chorus line here", f"unique verse number {i} distinct words follow"]
     res = filter_transcript(lines)
     assert "chorus line here" not in res.split("\n")
+
+    # Spotify token cache: a live token is reused; an expired one is never served.
+    _spotify_cache.update({"token": "live", "expires": time.time() + 60})
+    assert _spotify_token() == "live"
+    _spotify_cache.update({"token": "stale", "expires": time.time() - 1})
+    try:
+        assert _spotify_token() != "stale", "expired token must not be reused"
+    except (HTTPException, requests.RequestException):
+        pass  # no creds/network under test: re-mint fails loudly, which is the point
     print("api_v1 selftest OK")
 
 

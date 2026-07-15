@@ -10,5 +10,5 @@ public protocol Analyzing: Sendable {
     func analyze(meta: VideoMeta, transcript: String?, ocrText: String?) async throws -> Analysis
 }
 public protocol MusicLinkResolving: Sendable {
-    func universalLink(title: String, artist: String) async throws -> URL?
+    func resolve(title: String, artist: String) async throws -> TrackResolution
 }

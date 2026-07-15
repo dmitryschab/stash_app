@@ -116,13 +116,19 @@ enum SampleData {
                 hashtags: ["music", "synthwave"],
                 category: .music,
                 title: "Midnight City",
-                summary: "Synth anthem used as the backing track — resolved to a universal link.",
+                summary: "Synth anthem used as the backing track — resolved to streaming links.",
                 topics: ["synthwave", "night drive"],
                 transcript: nil,
                 trackJSON: json([
                     "title": "Midnight City",
                     "artist": "M83",
                     "universalLink": "https://song.link/https%3A%2F%2Fmusic.apple.com%2Fus%2Falbum%2Fmidnight-city%2F1440843425%3Fi%3D1440843426",
+                    "links": [
+                        ["service": "appleMusic",
+                         "url": "https://music.apple.com/us/album/midnight-city/1440843425?i=1440843426"],
+                        ["service": "spotify", "url": "https://open.spotify.com/track/6GByuNLrJEnLBmB3XeLpTr"],
+                        ["service": "tidal", "url": "https://listen.tidal.com/track/17761850"],
+                    ],
                 ])
             ),
             make(

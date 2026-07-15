@@ -31,8 +31,46 @@ public struct VideoMeta: Equatable, Sendable {
 public enum Category: String, Codable, Sendable { case recipe, music, coding, other }
 
 public struct RecipeData: Codable, Equatable, Sendable { public var name: String; public var ingredients: [String]; public var steps: [String] }
-public struct TrackData: Codable, Equatable, Sendable { public var title: String; public var artist: String; public var universalLink: URL? }
 public struct CodeData: Codable, Equatable, Sendable { public var summary: String; public var links: [URL]; public var techTags: [String] }
+
+/// Raw values match Odesli's `linksByPlatform` keys, so its payload maps straight across.
+public enum MusicService: String, Codable, Sendable, CaseIterable {
+    case appleMusic, spotify, tidal
+    public var label: String {
+        switch self {
+        case .appleMusic: "Apple Music"
+        case .spotify: "Spotify"
+        case .tidal: "Tidal"
+        }
+    }
+}
+
+public struct TrackLink: Codable, Equatable, Sendable, Identifiable {
+    public var service: MusicService
+    public var url: URL
+    public var id: MusicService { service }
+    public init(service: MusicService, url: URL) { self.service = service; self.url = url }
+}
+
+public struct TrackData: Codable, Equatable, Sendable {
+    public var title: String
+    public var artist: String
+    public var universalLink: URL?
+    /// Optional so track blobs written before per-service links still decode.
+    public var links: [TrackLink]?
+}
+
+/// What `MusicLinkResolving` returns: per-service links plus the song.link catch-all
+/// that covers the services we don't list individually.
+public struct TrackResolution: Equatable, Sendable {
+    public var universalLink: URL?
+    public var links: [TrackLink]
+    public static let none = TrackResolution(universalLink: nil, links: [])
+    public init(universalLink: URL?, links: [TrackLink]) {
+        self.universalLink = universalLink
+        self.links = links
+    }
+}
 
 public struct Analysis: Codable, Equatable, Sendable {
     public var category: Category

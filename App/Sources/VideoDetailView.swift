@@ -165,17 +165,34 @@ struct VideoDetailView: View {
                 }
                 Spacer(minLength: 0)
             }
+            let links = track.links ?? []
+            if !links.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(links) { link in
+                        Link(destination: link.url) {
+                            Micro(text: link.service.label, size: 10, tracking: 1.2, color: .categoryMusic)
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 7)
+                                .overlay(
+                                    Capsule().stroke(Color.categoryMusic.opacity(0.35), lineWidth: 1)
+                                )
+                        }
+                    }
+                }
+                .padding(.top, 14)
+            }
             if let link = track.universalLink {
                 Link(destination: link) {
                     HStack(spacing: 7) {
                         Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .bold))
-                        Micro(text: "Open in your music app", size: 10, tracking: 1.2, color: .categoryMusic)
+                        Micro(text: links.isEmpty ? "Open in your music app" : "All services",
+                              size: 10, tracking: 1.2, color: .categoryMusic)
                     }
                     .foregroundStyle(Color.categoryMusic)
                 }
-                .padding(.top, 14)
-            } else {
-                Text("No universal link found for this track.")
+                .padding(.top, links.isEmpty ? 14 : 12)
+            } else if links.isEmpty {
+                Text("No links found for this track.")
                     .font(.archivo(12))
                     .foregroundStyle(Color.stashInk.opacity(0.5))
                     .padding(.top, 12)

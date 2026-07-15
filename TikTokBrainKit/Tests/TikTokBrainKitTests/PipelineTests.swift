@@ -222,7 +222,10 @@ private struct StubTranscriber: Transcribing {
 
 private struct StubMusicResolver: MusicLinkResolving {
     var link: URL?
-    func universalLink(title: String, artist: String) async throws -> URL? { link }
+    func resolve(title: String, artist: String) async throws -> TrackResolution {
+        guard let link else { return .none }
+        return TrackResolution(universalLink: link, links: [TrackLink(service: .appleMusic, url: link)])
+    }
 }
 
 /// Classifies from the stub metadata; for anything uncategorised it echoes the transcript

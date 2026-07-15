@@ -9,7 +9,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-
 
 id stash >/dev/null 2>&1 || sudo useradd --system --home-dir /opt/stash-webhook --shell /usr/sbin/nologin stash
 sudo mkdir -p /opt/stash-webhook
-sudo cp app.py /opt/stash-webhook/app.py
+# app.py imports api_v1 at startup — both must land, or the service fails to boot.
+sudo cp app.py api_v1.py /opt/stash-webhook/
 
 [ -d /opt/stash-webhook/venv ] || sudo python3 -m venv /opt/stash-webhook/venv
 sudo /opt/stash-webhook/venv/bin/pip install --quiet --upgrade pip
@@ -17,6 +18,7 @@ sudo /opt/stash-webhook/venv/bin/pip install --quiet -r requirements.txt
 
 echo ">>> self-check"
 sudo /opt/stash-webhook/venv/bin/python test_app.py
+sudo /opt/stash-webhook/venv/bin/python api_v1.py
 
 sudo chown -R stash:stash /opt/stash-webhook
 sudo cp stash-webhook.service /etc/systemd/system/stash-webhook.service
