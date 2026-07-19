@@ -336,6 +336,8 @@ struct ImportView: View {
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Query private var videos: [Video]
+    private var controller = PipelineCenter.shared
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
     @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
@@ -358,6 +360,21 @@ struct SettingsView: View {
                 }
                 Section {
                     Text("Analysis and transcription run on the Stash cloud by default. Point the base URL at your own model box for local development — models are pinned server-side either way.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Library") {
+                    Button {
+                        controller.reanalyzeLibrary()
+                    } label: {
+                        if controller.isImporting, let p = controller.progress {
+                            Text("Re-analyzing… \(p.done)/\(p.total)")
+                        } else {
+                            Text("Re-analyze library (\(videos.count) videos)")
+                        }
+                    }
+                    .disabled(controller.isImporting)
+                    Text("Re-runs classification on every saved video against the current categories, using text already fetched — no re-download. Costs a few cents and can take several minutes.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

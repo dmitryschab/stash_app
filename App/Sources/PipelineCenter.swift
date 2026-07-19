@@ -229,6 +229,33 @@ final class PipelineCenter {
         }
     }
 
+    // MARK: - Re-analysis
+
+    /// Re-buckets the existing library against the current category taxonomy: re-runs the
+    /// analyzer on every stored video using text already fetched (no re-enrich/transcribe).
+    /// User-initiated one-shot; works in cloud or local mode since it only talks to the box.
+    func reanalyzeLibrary() {
+        guard !isImporting, let runner = makeRunner() else { return }
+        lastError = nil
+        processingTask = Task { [weak self] in
+            await self?.drainReanalyze(runner: runner)
+        }
+    }
+
+    private func drainReanalyze(runner: PipelineRunner) async {
+        isImporting = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            isImporting = false
+            progress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        await runner.reanalyzeAll { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+        lastSummary = "Re-analyzed the library"
+    }
+
     // MARK: - Lifecycle (called from the App's scenePhase watcher)
 
     func appBecameActive() {

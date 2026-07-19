@@ -149,6 +149,50 @@ public actor PipelineRunner {
         return (done, videos.count)
     }
 
+    // MARK: - Re-analysis (taxonomy refresh)
+
+    /// Re-runs ONLY the analyze stage for every already-classified, available video, using
+    /// its stored caption/transcript/OCR — no re-enrich, no re-transcribe, so nothing that was
+    /// fetched is lost. Used to re-bucket the library after the category set changes. I/O-bound
+    /// analyzer calls overlap on the actor (like `processAll`); reports (done, total).
+    public func reanalyzeAll(concurrency: Int = 4, progress: @escaping @Sendable (Int, Int) -> Void) async {
+        let videos = (try? ModelContext(container).fetch(FetchDescriptor<Video>())) ?? []
+        let ids = videos.filter { !$0.unavailable && !$0.categoryRaw.isEmpty }.map(\.videoID)
+        let total = ids.count
+        var done = 0
+        progress(done, total)
+        var iterator = ids.makeIterator()
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<max(1, min(concurrency, total)) {
+                if let id = iterator.next() { group.addTask { await self.reanalyzeOne(videoID: id) } }
+            }
+            for await _ in group {
+                done += 1
+                progress(done, total)
+                if !Task.isCancelled, let id = iterator.next() {
+                    group.addTask { await self.reanalyzeOne(videoID: id) }
+                }
+            }
+        }
+    }
+
+    private func reanalyzeOne(videoID: String) async {
+        let context = ModelContext(container)
+        guard let video = try? context.fetch(
+            FetchDescriptor<Video>(predicate: #Predicate { $0.videoID == videoID })).first else { return }
+        let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
+                             author: video.author, thumbnailURL: video.thumbnailURL)
+        guard let analysis = try? await deps.analyzer.analyze(
+            meta: meta, transcript: video.transcript, ocrText: video.ocrText) else { return }
+        // Drop stale payloads first so a video re-bucketed away from recipe/music/coding
+        // doesn't keep showing the old card; applyAnalysis re-sets whichever one still applies.
+        video.recipeJSON = nil
+        video.trackJSON = nil
+        video.codeJSON = nil
+        await applyAnalysis(analysis, to: video)
+        try? context.save()
+    }
+
     /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.
     private var inFlight: Set<String> = []
     private var passCompleted = 0

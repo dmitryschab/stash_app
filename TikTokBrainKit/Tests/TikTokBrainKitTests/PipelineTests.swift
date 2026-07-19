@@ -295,6 +295,41 @@ private struct StubMusicResolver: MusicLinkResolving {
     func universalLink(title: String, artist: String) async throws -> URL? { link }
 }
 
+extension PipelineTests {
+    /// Re-analysis re-buckets an already-classified video from its STORED fields, with no
+    /// enrich/transcribe — the enricher/transcriber here would fatal if the pass touched them.
+    func testReanalyzeAllRebucketsFromStoredFields() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "7000000000000000010",
+            url: URL(string: "https://www.tiktok.com/@x/video/7000000000000000010")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 500))
+        video.caption = "POV miso ramen"
+        video.hashtags = ["recipe"]           // StubAnalyzer classifies recipe from this
+        video.categoryRaw = Category.other.rawValue  // stale bucket from an older taxonomy
+        video.title = "old title"
+        context.insert(video)
+        try context.save()
+
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: "unused"),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        await runner.reanalyzeAll { _, _ in }
+
+        let updated = try XCTUnwrap(fetchVideo("7000000000000000010", in: container))
+        XCTAssertEqual(updated.categoryRaw, Category.recipe.rawValue)  // re-bucketed
+        XCTAssertEqual(updated.title, "Miso Ramen")                    // re-analyzed
+    }
+}
+
 /// Classifies from the stub metadata; for anything uncategorised it echoes the transcript
 /// it received (or "no-transcript") so tests can assert what `analyze` was handed.
 private struct StubAnalyzer: Analyzing {
