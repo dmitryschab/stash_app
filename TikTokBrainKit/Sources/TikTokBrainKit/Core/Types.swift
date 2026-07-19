@@ -28,7 +28,16 @@ public struct VideoMeta: Equatable, Sendable {
     }
 }
 
-public enum Category: String, Codable, Sendable { case recipe, music, coding, other }
+public enum Category: String, Codable, Sendable {
+    case recipe, fitness, style, travel, home, learning, comedy, music, coding, other
+
+    /// Tolerate an unknown or near-miss category from the model instead of throwing and
+    /// failing the whole analysis decode — anything off-list falls back to `.other`.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Category(rawValue: raw) ?? .other
+    }
+}
 
 public struct RecipeData: Codable, Equatable, Sendable { public var name: String; public var ingredients: [String]; public var steps: [String] }
 public struct TrackData: Codable, Equatable, Sendable { public var title: String; public var artist: String; public var universalLink: URL? }

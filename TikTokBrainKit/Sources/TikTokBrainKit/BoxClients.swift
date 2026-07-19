@@ -161,7 +161,7 @@ public struct AnalyzerClient: Analyzing {
     You classify a short video into a single strict JSON object. Respond with ONLY the JSON \
     object, no prose and no Markdown code fences. Use this exact shape:
     {
-      "category": "recipe" | "music" | "coding" | "other",
+      "category": "recipe" | "fitness" | "style" | "travel" | "home" | "learning" | "comedy" | "music" | "coding" | "other",
       "title": string,
       "summary": string,
       "topics": [string],            // short lowercase topic keywords
@@ -169,15 +169,21 @@ public struct AnalyzerClient: Analyzing {
       "track": { "title": string, "artist": string, "universalLink": null } | null,
       "code": { "summary": string, "links": [string], "techTags": [string] } | null
     }
-    Include only the payload object that matches the chosen category and set the other two to \
-    null. Set "universalLink" to null; the app resolves music links separately. If information \
-    is missing, use empty strings or empty arrays rather than inventing details.
+    Only recipe, music and coding have a payload object; include the one matching the chosen \
+    category and set the other two to null. For every other category (fitness, style, travel, \
+    home, learning, comedy, other) set recipe, track and code all to null. Set "universalLink" \
+    to null; the app resolves music links separately. If information is missing, use empty \
+    strings or empty arrays rather than inventing details.
     Rules (validated on an 855-video run — see pipeline-lab/PROMPT.md):
     - Captions and transcripts may be in any language; ALWAYS answer in English. \
     Title max 60 characters.
     - Classify from caption hashtags even when the transcript is empty: #linux #arch \
-    #selfhosted #homelab #docker #python #react #vim -> "coding"; cooking/baking/food -> \
-    "recipe"; a song/lyrics/album -> "music".
+    #selfhosted #homelab #docker #python #react #vim or gadgets/AI/software -> "coding"; \
+    cooking/baking/food -> "recipe"; a song/lyrics/album -> "music"; workouts/gym/running/ \
+    nutrition -> "fitness"; outfits/fashion/beauty/makeup -> "style"; destinations/trips/ \
+    hotels/flights -> "travel"; home decor/cleaning/DIY/renovation/gardening -> "home"; \
+    facts/how-to/study/science/history -> "learning"; skits/jokes/memes/pranks -> "comedy". \
+    Use "other" only when none fit.
     - Music: if the video is an album/artist RECOMMENDATION LIST (not one song), set \
     track.title to the list's theme and track.artist to the main artist(s), or "" if several. \
     For one song, identify title+artist from well-known lyrics — but NEVER invent an artist \

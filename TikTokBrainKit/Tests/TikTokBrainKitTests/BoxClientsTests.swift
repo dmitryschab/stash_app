@@ -105,6 +105,13 @@ final class BoxClientsTests: XCTestCase {
 
     // MARK: Analyzer
 
+    func testCategoryDecodeIsLenient() throws {
+        // A newly-added category round-trips…
+        XCTAssertEqual(try JSONDecoder().decode(Category.self, from: Data("\"fitness\"".utf8)), .fitness)
+        // …and an unknown/near-miss value falls back to .other instead of throwing.
+        XCTAssertEqual(try JSONDecoder().decode(Category.self, from: Data("\"cooking\"".utf8)), .other)
+    }
+
     func testAnalyzerDecodesRecipe() async throws {
         let analysisJSON = """
         {"category":"recipe","title":"Miso Ramen","summary":"A quick miso ramen.",\
