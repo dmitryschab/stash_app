@@ -25,6 +25,8 @@ app = FastAPI(title="Stash webhook receiver")
 # /v1 pipeline API (transcript, analyze proxy, keep-offline) — see api_v1.py.
 from api_v1 import router as v1_router  # noqa: E402
 app.include_router(v1_router)
+from cloud_import_api import router as cloud_import_router  # noqa: E402
+app.include_router(cloud_import_router)
 
 
 @app.get("/health")

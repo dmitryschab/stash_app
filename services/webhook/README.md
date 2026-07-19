@@ -9,16 +9,22 @@ TLS and also serves the public site. Live at **https://stash.dmitrijs.dev**
 ## Endpoints
 - `GET  /health` — liveness + whether signature verification is on
 - `POST /webhook/tiktok` — receives events, verifies HMAC (when a secret is set), logs to `/var/lib/stash-webhook/events.jsonl`, returns 200
+- `POST /v1/imports` — authenticated, accepts up to 1200 normalized bookmarks (a whole library) and returns immediately with an import ID; the box processes them in the background
+- `GET  /v1/imports/{id}` — authenticated cloud-import progress
+- `GET  /v1/imports/{id}/results` — authenticated paginated compact results
+- `POST /v1/videos/transcript` — existing direct transcript endpoint
+- `POST /v1/chat/completions` — existing analysis proxy
+- `GET  /v1/tiktok/download/{id}` — existing keep-offline endpoint
 
 ## Deploy / redeploy
 From this directory:
 ```sh
 KEY=../../infra/aws-box/stash-box-key.pem ; IP=13.50.196.28
 ssh -i $KEY ubuntu@$IP 'mkdir -p /tmp/stash-webhook'
-scp -i $KEY app.py requirements.txt stash-webhook.service deploy.sh test_app.py ubuntu@$IP:/tmp/stash-webhook/
+scp -i $KEY *.py *.service requirements.txt deploy.sh ubuntu@$IP:/tmp/stash-webhook/
 ssh -i $KEY ubuntu@$IP 'bash /tmp/stash-webhook/deploy.sh'
 ```
-`deploy.sh` is idempotent and runs the signature self-check before installing.
+`deploy.sh` is idempotent, runs the backend tests and self-checks, and installs both the API and independent import worker services.
 
 ## Enable signature verification (do this before going live)
 The client secret is NOT stored in this repo. On the box:
@@ -32,11 +38,25 @@ sudo systemctl restart stash-webhook   # /health then shows "verify": true
 ```sh
 sudo systemctl status stash-webhook
 sudo journalctl -u stash-webhook -f
+sudo systemctl status stash-import-worker
+sudo journalctl -u stash-import-worker -f
 ```
 
 ## Serving (current)
 Caddy (`/etc/caddy/Caddyfile`) terminates TLS for `stash.dmitrijs.dev`, proxies `/webhook/*` and `/health` to `127.0.0.1:8000`, and file-serves the static site (`site/` → `/var/www/stash`). Public pages: `/` (landing), `/privacy`, `/terms`.
 
-## Still to do
-- **Client secret:** set `TIKTOK_CLIENT_SECRET` on the box (see above) to turn on signature verification before going live.
-- **Archive worker:** download the archive from the event, extract only Favourite Videos, hand off to the pipeline. Built once the API is approved and a real payload is available.
+## Cloud import worker configuration
+
+The environment file is server-side only and must contain `STASH_API_TOKEN`,
+`STASH_IMPORT_TABLE`, `STASH_IMPORT_QUEUE_URL`, and `AWS_REGION` in addition to
+any existing webhook/provider settings. The Terraform outputs provide the table
+name and queue URL after infrastructure approval. The worker does not store raw
+exports, captions, transcripts, or permanent audio.
+
+The local smoke gate reads `STASH_BASE_URL`, `STASH_API_TOKEN`, and a path in
+`STASH_IMPORT_BOOKMARKS_FILE` (or a positional JSON file), then submits exactly 50
+normalized bookmarks and polls until 50 unique results are returned:
+
+```sh
+python smoke_cloud_import.py
+```

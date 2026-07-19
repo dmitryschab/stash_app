@@ -23,16 +23,39 @@ final class PipelineCenter {
     var boxStatus: BoxStatus = .unknown
     var lastError: String?
     var lastSummary: String?
+    var cloudStatus: CloudImportStatus?
+    var cloudSyncing = false
+
+    var cloudImportEnabled: Bool { Self.cloudImportEnabled }
 
     private var container: ModelContainer?
     private var processingTask: Task<Void, Never>?
+    private var cloudSyncTask: Task<Void, Never>?
     private var extraTime: UIBackgroundTaskIdentifier = .invalid
+    private var cloudState = CloudImportSyncState()
+    private static let cloudStateKey = "cloudImport.syncState"
 
     // MARK: - Wiring
 
     /// Called once from the App with the shared SwiftData container.
     func configure(container: ModelContainer) {
         self.container = container
+        if let data = UserDefaults.standard.data(forKey: Self.cloudStateKey),
+           let state = try? JSONDecoder().decode(CloudImportSyncState.self, from: data) {
+            cloudState = state
+            cloudStatus = state.status
+        }
+    }
+
+    /// Cloud import is the default everywhere: pressing Import hands the whole library
+    /// to the box, which processes it in the background whether or not the app stays
+    /// open. Debug builds can force the on-device pipeline for local-box work.
+    static var cloudImportEnabled: Bool {
+        #if DEBUG
+        !UserDefaults.standard.bool(forKey: CloudImportFeatureFlag.forceLocalKey)
+        #else
+        true
+        #endif
     }
 
     /// Box config from the same defaults the Settings screen writes.
@@ -50,6 +73,17 @@ final class PipelineCenter {
         return PipelineRunner(deps: Self.makeDeps(config: Self.currentConfig()), container: container)
     }
 
+    /// The cloud-import API lives under the same box base URL and shares the same bearer
+    /// token as the rest of `/v1`, so no separate configuration is needed — Settings can
+    /// still override the base URL/token for local-box development.
+    private static func makeCloudClient() -> CloudImportClient? {
+        guard let baseURL = URL(string: UserDefaults.standard.string(forKey: "boxBaseURL") ?? BoxDefaults.baseURL) else { return nil }
+        return CloudImportClient(baseURL: baseURL, authorization: {
+            let key = UserDefaults.standard.string(forKey: "boxApiKey") ?? BoxDefaults.apiKey
+            return key.isEmpty ? BoxDefaults.apiKey : key
+        })
+    }
+
     /// Builds the pipeline from the Kit's concrete clients. Shared with the per-video re-run.
     static func makeDeps(config: BoxConfig) -> PipelineDeps {
         PipelineDeps(
@@ -64,8 +98,17 @@ final class PipelineCenter {
 
     // MARK: - Import + resume
 
-    /// Fresh import from a picked export file/folder, then drain the queue.
+    /// Fresh import from a picked export file/folder. Cloud submits the whole library to
+    /// the box (background processing); the on-device drain is the debug-only fallback.
     func runImport(url: URL) async {
+        if Self.cloudImportEnabled {
+            await runCloudImport(url: url)
+        } else {
+            await runLocalImport(url: url)
+        }
+    }
+
+    private func runLocalImport(url: URL) async {
         guard !isImporting, let runner = makeRunner() else { return }
         lastError = nil
 
@@ -97,9 +140,73 @@ final class PipelineCenter {
         await drainQueue(runner: runner)
     }
 
+    private func runCloudImport(url: URL) async {
+        guard !isImporting, let runner = makeRunner(), let client = Self.makeCloudClient() else {
+            lastError = "Cloud import isn't configured — check the box URL and API key in Settings."
+            return
+        }
+        lastError = nil
+
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+
+        let bookmarks: [Bookmark]
+        do {
+            let parser = ExportParser()
+            if url.hasDirectoryPath {
+                bookmarks = try parser.parse(zipAt: url)
+            } else {
+                bookmarks = try parser.parse(jsonData: Data(contentsOf: url))
+            }
+        } catch {
+            lastError = "Could not read the export: \(error.localizedDescription)"
+            return
+        }
+
+        guard !bookmarks.isEmpty else {
+            lastError = "The export contains no bookmarked videos."
+            return
+        }
+        guard bookmarks.count <= CloudImportLimits.maxVideosPerImport else {
+            lastError = CloudImportError.tooManyVideos(bookmarks.count).localizedDescription
+            return
+        }
+
+        do {
+            let newCount = try await runner.ingest(bookmarks: bookmarks)
+            let fingerprint = CloudImportSyncState.fingerprint(of: bookmarks)
+            let clientImportID: UUID
+            if cloudState.videoIDsFingerprint == fingerprint,
+               let existing = cloudState.clientImportID,
+               cloudState.importID == nil || cloudState.isActive {
+                clientImportID = existing
+            } else {
+                clientImportID = UUID()
+                cloudState = CloudImportSyncState(clientImportID: clientImportID)
+            }
+            cloudState.videoIDsFingerprint = fingerprint
+            persistCloudState()
+            isImporting = true
+            defer { isImporting = false }
+            let submission = try await client.submit(bookmarks: bookmarks, clientImportID: clientImportID)
+            cloudState.importID = submission.importID
+            persistCloudState()
+            lastSummary = "Submitted \(submission.accepted) videos · \(newCount) new"
+            await syncCloudImport()
+        } catch {
+            var message = "Could not submit the cloud import: \(error.localizedDescription)"
+            if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
+            lastError = message
+        }
+    }
+
     /// Continues whatever is pending or parked — no file pick needed. Safe to call
     /// on every foreground/launch; does nothing when idle or already running.
     func resumePendingIfNeeded() {
+        guard !Self.cloudImportEnabled else {
+            syncCloudImportIfNeeded()
+            return
+        }
         guard !isImporting, let runner = makeRunner() else { return }
         processingTask = Task { [weak self] in
             let pending = (try? await runner.pendingCount()) ?? 0
@@ -116,7 +223,7 @@ final class PipelineCenter {
             progress = nil
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        progress = (0, 0)
+        progress = try? await runner.processedCounts()
         await runner.processAll { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
@@ -126,10 +233,19 @@ final class PipelineCenter {
 
     func appBecameActive() {
         endExtraTime()
-        resumePendingIfNeeded()
+        if Self.cloudImportEnabled {
+            syncCloudImportIfNeeded()
+        } else {
+            resumePendingIfNeeded()
+        }
     }
 
     func appEnteredBackground() {
+        if Self.cloudImportEnabled {
+            cloudSyncTask?.cancel()
+            cloudSyncTask = nil
+            return
+        }
         guard isImporting else { return }
         // Finish the current stretch on borrowed time (~30 s – a few min)…
         extraTime = UIApplication.shared.beginBackgroundTask(withName: "stash-import") { [weak self] in
@@ -182,6 +298,78 @@ final class PipelineCenter {
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
         try? BGTaskScheduler.shared.submit(request)  // duplicate submits just replace
+    }
+
+    // MARK: - Cloud import synchronization
+
+    func syncCloudImportIfNeeded() {
+        guard Self.cloudImportEnabled, cloudState.importID != nil, !cloudSyncing else { return }
+        cloudSyncTask?.cancel()
+        cloudSyncTask = Task { [weak self] in
+            await self?.syncCloudImport()
+        }
+    }
+
+    private func persistCloudState() {
+        if let data = try? JSONEncoder().encode(cloudState) {
+            UserDefaults.standard.set(data, forKey: Self.cloudStateKey)
+        }
+        cloudStatus = cloudState.status
+    }
+
+    private func syncCloudImport() async {
+        guard !cloudSyncing, let importID = cloudState.importID, let client = Self.makeCloudClient() else { return }
+        cloudSyncing = true
+        defer { cloudSyncing = false }
+
+        do {
+            let status = try await client.status(importID: importID)
+            cloudState.apply(status: status)
+            persistCloudState()
+
+            var cursor = cloudState.nextResultsCursor
+            var seenCursors = Set<String>()
+            while true {
+                let page = try await client.results(importID: importID, cursor: cursor)
+                if let container {
+                    let applied = try CloudImportResultUpserter.apply(page.results, to: ModelContext(container))
+                    if applied > 0 { lastSummary = "Synced \(applied) cloud results" }
+                }
+                guard let nextCursor = page.nextCursor else {
+                    cloudState.nextResultsCursor = nil
+                    persistCloudState()
+                    break
+                }
+                guard seenCursors.insert(nextCursor).inserted else {
+                    throw CloudImportError.malformedPayload("result cursor repeated")
+                }
+                cursor = nextCursor
+                cloudState.nextResultsCursor = nextCursor
+                persistCloudState()
+            }
+            if status.state == .completed {
+                lastSummary = "Cloud import complete · \(status.unavailable) unavailable · \(status.partialFailures) partial failures"
+            }
+            scheduleCloudRepoll()
+        } catch is CancellationError {
+            return
+        } catch {
+            var message = "Could not sync the cloud import: \(error.localizedDescription)"
+            if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
+            lastError = message
+        }
+    }
+
+    private func scheduleCloudRepoll() {
+        guard cloudState.isActive else {
+            cloudSyncTask = nil
+            return
+        }
+        cloudSyncTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.syncCloudImport()
+        }
     }
 
     // MARK: - Box reachability probe

@@ -166,6 +166,76 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(video.categoryRaw, Category.other.rawValue)
     }
 
+    // MARK: - Progress reflects the whole imported library
+
+    func testProgressReportsClassifiedOfTotalImported() async throws {
+        let container = try makeContainer()
+        let liveURL = URL(string: "https://www.tiktok.com/@a/video/7000000000000000010")!
+        let deadURL = URL(string: "https://www.tiktok.com/@b/video/7000000000000000011")!
+        let deps = PipelineDeps(
+            enricher: StubEnricher(
+                metasByURL: [liveURL.absoluteString: VideoMeta(caption: "clip", author: "a")],
+                failingURLs: [deadURL.absoluteString]),
+            media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+            transcriber: StubTranscriber(transcript: nil),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+        _ = try await runner.ingest(bookmarks: [
+            Bookmark(id: "7000000000000000010", url: liveURL, date: Date(timeIntervalSince1970: 20)),
+            Bookmark(id: "7000000000000000011", url: deadURL, date: Date(timeIntervalSince1970: 10)),
+        ])
+
+        let recorder = ProgressRecorder()
+        await runner.processAll(progress: { d, t in recorder.record(d, t) })
+
+        // Total is always the imported count, never the shrinking pending count.
+        XCTAssertFalse(recorder.calls.isEmpty)
+        for (_, total) in recorder.calls { XCTAssertEqual(total, 2) }
+        // Both are terminal: the live video is classified, the dead one hard-failed.
+        let counts = try await runner.processedCounts()
+        XCTAssertEqual(counts.done, 2)
+        XCTAssertEqual(counts.total, 2)
+        XCTAssertEqual(recorder.calls.last?.0, 2)
+    }
+
+    func testProgressStaysCumulativeAcrossRelaunch() async throws {
+        let container = try makeContainer()
+        let firstURL = URL(string: "https://www.tiktok.com/@a/video/7000000000000000020")!
+        let secondURL = URL(string: "https://www.tiktok.com/@b/video/7000000000000000021")!
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [
+                firstURL.absoluteString: VideoMeta(caption: "one", author: "a"),
+                secondURL.absoluteString: VideoMeta(caption: "two", author: "b"),
+            ]),
+            media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+            transcriber: StubTranscriber(transcript: nil),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        // First import + drain.
+        _ = try await runner.ingest(bookmarks: [
+            Bookmark(id: "7000000000000000020", url: firstURL, date: Date(timeIntervalSince1970: 20))])
+        await runner.processAll(progress: { _, _ in })
+        let afterFirst = try await runner.processedCounts()
+        XCTAssertEqual(afterFirst.done, 1)
+        XCTAssertEqual(afterFirst.total, 1)
+
+        // Relaunch: importing more must not reset the done count to zero.
+        _ = try await runner.ingest(bookmarks: [
+            Bookmark(id: "7000000000000000021", url: secondURL, date: Date(timeIntervalSince1970: 10))])
+        let recorder = ProgressRecorder()
+        await runner.processAll(progress: { d, t in recorder.record(d, t) })
+
+        let first = try XCTUnwrap(recorder.calls.first)
+        XCTAssertEqual(first.1, 2)                // total = full imported count
+        XCTAssertGreaterThanOrEqual(first.0, 1)   // already-processed video still counts
+        XCTAssertEqual(recorder.calls.last?.0, 2) // both done at the end
+    }
+
     // MARK: - Ingest de-duplication
 
     func testIngestDeduplicatesByVideoID() async throws {

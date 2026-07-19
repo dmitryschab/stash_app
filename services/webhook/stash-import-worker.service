@@ -1,0 +1,19 @@
+[Unit]
+Description=Stash asynchronous cloud-import worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stash
+Group=stash
+WorkingDirectory=/opt/stash-webhook
+EnvironmentFile=-/etc/stash-webhook/env
+ExecStart=/opt/stash-webhook/venv/bin/python cloud_import_worker.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

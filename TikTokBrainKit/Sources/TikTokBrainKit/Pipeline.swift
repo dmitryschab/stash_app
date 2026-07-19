@@ -97,6 +97,7 @@ public actor PipelineRunner {
     /// count stops shrinking (e.g. everything left is rate-limit-parked).
     /// Respects task cancellation between videos.
     public func processAll(progress: @escaping @Sendable (Int, Int) -> Void) async {
+        report(to: progress)
         var lastPending = Int.max
         while !Task.isCancelled {
             let pending = (try? pendingCount()) ?? 0
@@ -115,10 +116,15 @@ public actor PipelineRunner {
         while !Task.isCancelled, passCompleted < passTotal {
             guard (try? await processNext()) == true else { break }
             passCompleted += 1
-            // Early workers may pipeline freshly-parked backfill within the same
-            // pass; clamp so the UI never reports past the pass total.
-            progress(min(passCompleted, passTotal), passTotal)
+            report(to: progress)
         }
+    }
+
+    /// Reports library-wide progress (see `processedCounts`) rather than the per-pass
+    /// drain counters, so the UI shows a stable "done of total-imported" that survives
+    /// relaunches instead of restarting at zero on each pass or launch.
+    private func report(to progress: @Sendable (Int, Int) -> Void) {
+        if let counts = try? processedCounts() { progress(counts.done, counts.total) }
     }
 
     // MARK: - Queue selection
@@ -128,6 +134,19 @@ public actor PipelineRunner {
         return videos.reduce(into: 0) { count, video in
             if isPending(video) { count += 1 }
         }
+    }
+
+    /// Library-wide UI progress: how many imported videos have finished their fast pass
+    /// (enrich no longer `.pending` — classified, unavailable, or hard-failed) over the
+    /// total imported. Monotonic and stable across relaunches, unlike the per-pass drain
+    /// counters used to schedule work.
+    /// ponytail: full fetch per call; fine at <=1200 videos, revisit if imports grow.
+    public func processedCounts() throws -> (done: Int, total: Int) {
+        let videos = try ModelContext(container).fetch(FetchDescriptor<Video>())
+        let done = videos.reduce(into: 0) { count, video in
+            if stageStates(video)[PipelineStage.enrich.rawValue] != .pending { count += 1 }
+        }
+        return (done, videos.count)
     }
 
     /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.

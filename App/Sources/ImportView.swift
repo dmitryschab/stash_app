@@ -82,6 +82,7 @@ struct ImportView: View {
     @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
+    private var usesCloudImport: Bool { PipelineCenter.cloudImportEnabled }
 
     var body: some View {
         ScrollView {
@@ -89,7 +90,9 @@ struct ImportView: View {
                 topBar
                 connectCard.padding(.top, 16)
                 importSection.padding(.top, 12)
-                boxCard.padding(.top, 12)
+                if !usesCloudImport {
+                    boxCard.padding(.top, 12)
+                }
                 if let error = controller.lastError {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle")
@@ -114,7 +117,13 @@ struct ImportView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConnect) { ConnectFlowView() }
         .sheet(isPresented: $showGuide) { DataDownloadGuideView() }
-        .task { await controller.pingBox() }
+        .task {
+            if usesCloudImport {
+                controller.syncCloudImportIfNeeded()
+            } else {
+                await controller.pingBox()
+            }
+        }
     }
 
     // MARK: - Sections
@@ -156,11 +165,11 @@ struct ImportView: View {
                     Micro(text: "TikTok", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
                     Spacer()
                     Micro(
-                        text: controller.isImporting ? "Syncing" : "Not connected",
+                        text: usesCloudImport ? "Cloud import" : (controller.isImporting ? "Syncing" : "Not connected"),
                         size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7)
                     )
                 }
-                Text(controller.isImporting ? "Syncing favorites" : "Connect your TikTok")
+                Text(usesCloudImport ? "Cloud import" : (controller.isImporting ? "Syncing favorites" : "Connect your TikTok"))
                     .font(.archivo(23, .heavy))
                     .foregroundStyle(Color.stashOnAccent)
                     .padding(.top, 9)
@@ -168,7 +177,7 @@ struct ImportView: View {
                     .font(.archivo(13, .semibold))
                     .foregroundStyle(Color.stashOnAccent.opacity(0.8))
                     .padding(.top, 4)
-                if let progress = controller.progress, progress.total > 0 {
+                if let progress = localProgress, progress.total > 0 {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.stashOnAccent.opacity(0.25))
@@ -187,6 +196,23 @@ struct ImportView: View {
     }
 
     private var subtitleLine: String {
+        if usesCloudImport {
+            if let status = controller.cloudStatus {
+                switch status.state {
+                case .accepted:
+                    return "Queued for cloud processing · \(status.fastPass.total) videos — you can close the app"
+                case .fastPass:
+                    return "Fast pass \(status.fastPass.done) of \(status.fastPass.total) · \(status.unavailable) unavailable · \(status.partialFailures) partial failures — cloud keeps going if you close the app"
+                case .completed:
+                    return "Complete · \(status.unavailable) unavailable · \(status.partialFailures) partial failures"
+                case .cancelled:
+                    return "Cancelled · \(status.fastPass.done) of \(status.fastPass.total) processed"
+                }
+            }
+            if controller.cloudSyncing { return "Refreshing cloud results…" }
+            if let summary = controller.lastSummary { return summary }
+            return "Developer cloud import is enabled."
+        }
         if let progress = controller.progress {
             return "\(progress.done) of \(progress.total) processed"
         }
@@ -196,7 +222,7 @@ struct ImportView: View {
 
     private var importSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            StashPrimaryButton(title: "Import TikTok export", systemImage: "square.and.arrow.down") {
+            StashPrimaryButton(title: usesCloudImport ? "Submit TikTok export" : "Import TikTok export", systemImage: "square.and.arrow.down") {
                 showImporter = true
             }
             .disabled(controller.isImporting)
@@ -283,6 +309,14 @@ struct ImportView: View {
         makeBoxConfig(baseURL: boxBaseURL, chatModel: chatModel, whisperModel: whisperModel, apiKey: boxApiKey)
     }
 
+    private var localProgress: (done: Int, total: Int)? {
+        guard !usesCloudImport else {
+            guard let status = controller.cloudStatus else { return nil }
+            return (status.fastPass.done, status.fastPass.total)
+        }
+        return controller.progress
+    }
+
     private func count(_ category: Category) -> Int {
         videos.filter { !$0.needsLook && $0.category == category }.count
     }
@@ -306,6 +340,9 @@ struct SettingsView: View {
     @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
+    #if DEBUG
+    @AppStorage(CloudImportFeatureFlag.forceLocalKey) private var forceLocalImport = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -324,6 +361,14 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                #if DEBUG
+                Section("Developer") {
+                    Toggle("Force on-device import", isOn: $forceLocalImport)
+                    Text("Cloud import is the default — the box processes the whole library in the background. Enable this to run the on-device pipeline instead (local-box development).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                #endif
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
