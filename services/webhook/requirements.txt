@@ -4,6 +4,7 @@ requests
 pydantic
 aws-bedrock-token-generator
 yt-dlp
+curl_cffi  # gives yt-dlp a browser impersonation target; without it TikTok fetches fail intermittently
 boto3
 pytest
 httpx

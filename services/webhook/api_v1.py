@@ -54,6 +54,45 @@ class TranscriptRequest(BaseModel):
     url: str
 
 
+# Segment quality gates. Whisper hallucinates canned lines on music/silence
+# (its verbose_json exposes the confidence signals that give them away).
+NO_SPEECH_MAX = 0.6        # drop a segment Whisper itself scores as non-speech
+AVG_LOGPROB_MIN = -1.0     # drop very low-confidence guesses
+COMPRESSION_RATIO_MAX = 2.4  # Whisper's own gibberish/repeat heuristic
+MIN_WORDS = 5              # keep short-but-real speech ("add two eggs then mix")
+
+# Canonical Whisper hallucinations — subtitle credits and sign-offs baked into
+# its training data that surface on non-speech audio. Matched case-insensitively
+# as substrings on a normalized line. High-precision list; extend as new ones show up.
+_HALLUCINATIONS = (
+    "субтитры сделал", "субтитры создавал", "субтитры делал", "редактор субтитров",
+    "dimatorzok", "amara.org", "subtitles by", "subs by", "subtitle by",
+    "thanks for watching", "thank you for watching", "please subscribe",
+    "like and subscribe", "don't forget to subscribe", "see you next time",
+    "시청해주셔서 감사합니다", "mbc 뉴스", "字幕", "字幕志愿者",
+)
+
+
+def _is_hallucination(text: str) -> bool:
+    t = text.strip().lower()
+    return any(h in t for h in _HALLUCINATIONS)
+
+
+def keep_segment(seg: dict) -> bool:
+    """True when a Whisper segment looks like real speech, not a hallucination.
+
+    Missing confidence fields default to 'keep' so we never over-drop on responses
+    (or test fakes) that omit them; the text blocklist still applies.
+    """
+    if seg.get("no_speech_prob", 0.0) >= NO_SPEECH_MAX:
+        return False
+    if seg.get("avg_logprob", 0.0) < AVG_LOGPROB_MIN:
+        return False
+    if seg.get("compression_ratio", 0.0) > COMPRESSION_RATIO_MAX:
+        return False
+    return not _is_hallucination(seg.get("text", ""))
+
+
 # Whisper repetition filter — port of the validated pipeline filter (PROMPT.md).
 def _ngram_loops(line: str) -> bool:
     words = line.split()
@@ -66,6 +105,12 @@ def _ngram_loops(line: str) -> bool:
     return False
 
 
+def _low_diversity(line: str) -> bool:
+    """Single-token loops the n-gram check misses on short lines ('The The The The')."""
+    words = line.split()
+    return len(words) >= 4 and len({w.lower() for w in words}) / len(words) < 0.5
+
+
 def filter_transcript(lines: list[str]) -> str:
     out: list[str] = []
     for line in lines:
@@ -74,13 +119,13 @@ def filter_transcript(lines: list[str]) -> str:
             continue
         if out and line == out[-1]:
             continue
-        if _ngram_loops(line):
+        if _ngram_loops(line) or _low_diversity(line) or _is_hallucination(line):
             continue
         out.append(line)
     counts = Counter(out)
     out = [l for l in out if counts[l] <= 4]
     text = "\n".join(out).strip()
-    return text if len(text.split()) >= 12 else ""
+    return text if len(text.split()) >= MIN_WORDS else ""
 
 
 @router.post("/videos/transcript")
@@ -115,7 +160,9 @@ def video_transcript(body: TranscriptRequest, authorization: str | None = Header
                 GROQ_URL,
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
                 files={"file": (os.path.basename(audio), f)},
-                data={"model": GROQ_MODEL, "response_format": "verbose_json"},
+                # temperature=0 disables Whisper's sampling fallback, which is a
+                # major source of hallucinated text on noisy/musical clips.
+                data={"model": GROQ_MODEL, "response_format": "verbose_json", "temperature": 0},
                 timeout=120)
 
     if resp.status_code == 429:
@@ -123,10 +170,15 @@ def video_transcript(body: TranscriptRequest, authorization: str | None = Header
         raise HTTPException(status_code=429, detail="transcription throttled",
                             headers={"Retry-After": retry})
     if resp.status_code != 200:
+        # Log the upstream body so the cause of these 502s is diagnosable — the
+        # bare status alone told us nothing about the ~60% historical failure rate.
+        print(f"groq transcription {resp.status_code}: {resp.text[:300]}", file=sys.stderr)
         raise HTTPException(status_code=502, detail=f"groq {resp.status_code}")
 
     data = resp.json()
-    lines = [s.get("text", "") for s in data.get("segments", [])]
+    # Gate each segment on Whisper's own confidence signals before joining, so a
+    # hallucinated sign-off on a music clip never reaches the analyzer as "content".
+    lines = [s.get("text", "") for s in data.get("segments", []) if keep_segment(s)]
     text = filter_transcript(lines)
     return {"transcript": text or None, "duration": data.get("duration", 0)}
 
@@ -245,6 +297,20 @@ def selftest():
         lines += ["chorus line here", f"unique verse number {i} distinct words follow"]
     res = filter_transcript(lines)
     assert "chorus line here" not in res.split("\n")
+
+    # Hallucinated subtitle credits are stripped even when they'd clear the word floor.
+    assert filter_transcript(["Субтитры сделал DimaTorzok"]) == ""
+    assert filter_transcript(["Thanks for watching, don't forget to subscribe"]) == ""
+    # Short but real speech now survives (floor lowered from 12 to 4 words).
+    assert filter_transcript(["add two eggs then mix"]) != ""
+    # Segment gate: non-speech / low-confidence / gibberish segments are dropped;
+    # a clean speech segment is kept; missing fields default to keep.
+    assert keep_segment({"text": "here is the recipe", "no_speech_prob": 0.02, "avg_logprob": -0.3})
+    assert not keep_segment({"text": "music", "no_speech_prob": 0.95})
+    assert not keep_segment({"text": "hi", "avg_logprob": -2.0})
+    assert not keep_segment({"text": "la la la la", "compression_ratio": 3.1})
+    assert not keep_segment({"text": "Субтитры создавал кто-то"})
+    assert keep_segment({"text": "plain segment with no confidence fields"})
     print("api_v1 selftest OK")
 
 
