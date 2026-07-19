@@ -200,9 +200,13 @@ def _bedrock_token() -> str:
 ANALYSIS_SYSTEM_PROMPT = """
 You classify a short video into a single strict JSON object. Respond with ONLY the JSON
 object, with category, title, summary, and topics fields. Category must be one of
-recipe, music, coding, or other. Always answer in English. Use empty strings or arrays
-when information is missing. Never output placeholder prose. If caption and transcript
-are empty, use title \"Saved video\" and summarize that no caption or audio was available.
+recipe, fitness, style, travel, home, learning, comedy, music, coding, or other
+(fitness=workouts/gym/nutrition, style=fashion/beauty/makeup, travel=trips/destinations,
+home=decor/DIY/gardening, learning=facts/how-to/study, comedy=skits/jokes/memes,
+coding=software/gadgets/AI); use other only when none fit. Always answer in English. Use
+empty strings or arrays when information is missing. Never output placeholder prose. If
+caption and transcript are empty, use title \"Saved video\" and summarize that no caption
+or audio was available.
 """.strip()
 
 

@@ -39,10 +39,16 @@ extension Color {
     }
 
     // Category jewel tones (brightened on dark).
-    static let categoryRecipe = Color(light: 0xC43A26, dark: 0xDD4E33) // brick red
-    static let categoryMusic = Color(light: 0x2743C7, dark: 0x4A63E7)  // cobalt
-    static let categoryCoding = Color(light: 0x1A6F52, dark: 0x2A9271) // forest green
-    static let categoryOther = Color(light: 0xC98A12, dark: 0xC98A12)  // amber
+    static let categoryRecipe = Color(light: 0xC43A26, dark: 0xDD4E33)   // brick red
+    static let categoryFitness = Color(light: 0xE0661F, dark: 0xF27C35)  // orange
+    static let categoryStyle = Color(light: 0xC0367F, dark: 0xDB4F98)    // magenta
+    static let categoryTravel = Color(light: 0x1C8AA8, dark: 0x30A7C6)   // teal
+    static let categoryHome = Color(light: 0x6F8A1E, dark: 0x88A63A)     // olive
+    static let categoryLearning = Color(light: 0x5A3EC0, dark: 0x745AE0) // indigo
+    static let categoryComedy = Color(light: 0x9B2FC4, dark: 0xB44CDE)   // purple
+    static let categoryMusic = Color(light: 0x2743C7, dark: 0x4A63E7)    // cobalt
+    static let categoryCoding = Color(light: 0x1A6F52, dark: 0x2A9271)   // forest green
+    static let categoryOther = Color(light: 0xC98A12, dark: 0xC98A12)    // amber
 
     // Chrome.
     static let stashBackground = Color(light: 0xF3ECDB, dark: 0x191408) // warm cream / near-black
@@ -155,8 +161,14 @@ extension Category {
     var displayName: String {
         switch self {
         case .recipe: "Recipes"
+        case .fitness: "Fitness"
+        case .style: "Style"
+        case .travel: "Travel"
+        case .home: "Home & DIY"
+        case .learning: "Learning"
+        case .comedy: "Comedy"
         case .music: "Music"
-        case .coding: "Code"
+        case .coding: "Tech"
         case .other: "Other"
         }
     }
@@ -165,8 +177,14 @@ extension Category {
     var singular: String {
         switch self {
         case .recipe: "Recipe"
+        case .fitness: "Fitness"
+        case .style: "Style"
+        case .travel: "Travel"
+        case .home: "Home"
+        case .learning: "Learning"
+        case .comedy: "Comedy"
         case .music: "Music"
-        case .coding: "Code"
+        case .coding: "Tech"
         case .other: "Other"
         }
     }
@@ -174,6 +192,12 @@ extension Category {
     var color: Color {
         switch self {
         case .recipe: .categoryRecipe
+        case .fitness: .categoryFitness
+        case .style: .categoryStyle
+        case .travel: .categoryTravel
+        case .home: .categoryHome
+        case .learning: .categoryLearning
+        case .comedy: .categoryComedy
         case .music: .categoryMusic
         case .coding: .categoryCoding
         case .other: .categoryOther
@@ -183,6 +207,12 @@ extension Category {
     var symbol: String {
         switch self {
         case .recipe: "fork.knife"
+        case .fitness: "dumbbell.fill"
+        case .style: "bag.fill"
+        case .travel: "airplane"
+        case .home: "house.fill"
+        case .learning: "graduationcap.fill"
+        case .comedy: "theatermasks.fill"
         case .music: "music.note"
         case .coding: "chevron.left.forwardslash.chevron.right"
         case .other: "sparkles"
@@ -190,8 +220,10 @@ extension Category {
     }
 }
 
-/// The four library segments, in tab order.
-let librarySegments: [Category] = [.recipe, .music, .coding, .other]
+/// The library segments, in tab order.
+let librarySegments: [Category] = [
+    .recipe, .fitness, .style, .travel, .home, .learning, .comedy, .music, .coding, .other,
+]
 
 // MARK: - Stage state display
 
