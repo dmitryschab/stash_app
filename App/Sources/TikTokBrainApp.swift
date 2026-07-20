@@ -1,8 +1,8 @@
 // TikTokBrainApp.swift
 //
 // App entry point: registers the bundled Archivo faces, builds the SwiftData container,
-// optionally seeds sample content for the simulator smoke run, and hosts the four-tab
-// Set List shell (Today / Library / Search / Mind map) behind a custom ink pill tab bar.
+// optionally seeds sample content for the simulator smoke run, and hosts the six-tab
+// Set List shell (Today / Library / Cook / Music / Search / Mind map) behind a custom ink pill tab bar.
 
 import SwiftUI
 import SwiftData
@@ -53,12 +53,14 @@ struct TikTokBrainApp: App {
 // MARK: - Tab shell
 
 enum StashTab: CaseIterable {
-    case today, library, search, mindMap
+    case today, library, cook, music, search, mindMap
 
     var label: String {
         switch self {
         case .today: "Today"
         case .library: "Library"
+        case .cook: "Cook"
+        case .music: "Music"
         case .search: "Search"
         case .mindMap: "Mind map"
         }
@@ -68,6 +70,8 @@ enum StashTab: CaseIterable {
         switch self {
         case .today: "sun.max"
         case .library: "square.grid.2x2.fill"
+        case .cook: "fork.knife"
+        case .music: "music.note"
         case .search: "magnifyingglass"
         case .mindMap: "circle.hexagongrid.fill"
         }
@@ -79,6 +83,8 @@ struct RootView: View {
     @State private var tab: StashTab = {
         switch UserDefaults.standard.string(forKey: "initialTab") {
         case "library": .library
+        case "cook": .cook
+        case "music": .music
         case "search": .search
         case "mindmap": .mindMap
         default: .today
@@ -94,6 +100,8 @@ struct RootView: View {
                 switch tab {
                 case .today: TodayView()
                 case .library: LibraryView()
+                case .cook: CookView()
+                case .music: MusicView()
                 case .search: SearchView()
                 case .mindMap: MindMapView()
                 }

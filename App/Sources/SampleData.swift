@@ -12,7 +12,7 @@ import SwiftData
 import TikTokBrainKit
 
 enum SampleData {
-    /// Seeds six sample videos when launched with `-seedSample` and the store is empty.
+    /// Seeds the sample videos when launched with `-seedSample` and the store is empty.
     static func seedIfRequested(_ container: ModelContainer) {
         let context = ModelContext(container)
         // `-seedFile <path>`: load a pre-processed dataset (simulator testing with real data).
@@ -68,7 +68,7 @@ enum SampleData {
         }
     }
 
-    /// Six videos spanning every category plus one "needs a look" pile entry.
+    /// Eight videos spanning the categories plus one "needs a look" pile entry.
     static func makeSampleVideos() -> [Video] {
         [
             make(
@@ -123,6 +123,40 @@ enum SampleData {
                     "title": "Midnight City",
                     "artist": "M83",
                     "universalLink": "https://song.link/https%3A%2F%2Fmusic.apple.com%2Fus%2Falbum%2Fmidnight-city%2F1440843425%3Fi%3D1440843426",
+                ])
+            ),
+            make(
+                id: "7234567890000000006",
+                url: "https://www.tiktok.com/@basslinediaries/video/7234567890000000006",
+                daysAgo: 4,
+                author: "basslinediaries",
+                caption: "that bassline never misses",
+                hashtags: ["music", "psychrock"],
+                category: .music,
+                title: "The Less I Know the Better",
+                summary: "Psych-pop staple used as the backing track.",
+                topics: ["psych pop"],
+                transcript: nil,
+                trackJSON: json([
+                    "title": "The Less I Know the Better",
+                    "artist": "Tame Impala",
+                ])
+            ),
+            make(
+                id: "7234567890000000007",
+                url: "https://www.tiktok.com/@psychpopdaily/video/7234567890000000007",
+                daysAgo: 2,
+                author: "psychpopdaily",
+                caption: "the drop at 1:52 is unreal",
+                hashtags: ["music", "psychrock"],
+                category: .music,
+                title: "Let It Happen",
+                summary: "Eight-minute opener condensed into a fifteen-second edit.",
+                topics: ["psych pop"],
+                transcript: nil,
+                trackJSON: json([
+                    "title": "Let It Happen",
+                    "artist": "Tame Impala",
                 ])
             ),
             make(
