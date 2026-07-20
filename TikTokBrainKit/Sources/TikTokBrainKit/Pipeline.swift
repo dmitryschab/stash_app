@@ -193,6 +193,100 @@ public actor PipelineRunner {
         try? context.save()
     }
 
+    // MARK: - Transcript backfill
+
+    /// What a backfill run managed to do, so the UI can explain why it stopped.
+    public struct BackfillResult: Sendable {
+        public let filled: Int
+        public let attempted: Int
+        public let remaining: Int
+        /// True when consecutive transcriber failures aborted the run (almost always the
+        /// cloud Whisper quota), so the caller can say "try again later" instead of "done".
+        public let stoppedEarly: Bool
+    }
+
+    /// Give up after this many transcripts fail back-to-back: the free Whisper tier caps
+    /// audio-seconds per rolling hour, and once it is exhausted every further call just burns
+    /// a request. Stopping leaves the rest for the next run.
+    private static let throttleAbortThreshold = 5
+
+    private enum BackfillOutcome { case filled, empty, failed }
+
+    /// Fetches transcripts for videos that have none, then re-analyzes each one it fills so the
+    /// summary and category come from the audio instead of the caption alone.
+    ///
+    /// Deliberately serial: the original bulk import fired hundreds of transcript calls at once
+    /// and blew the hourly quota, which is what made ~60% of them fail. Running one at a time
+    /// stays under the cap. The run is resumable — it only picks videos that still have no
+    /// transcript and were not already attempted — so calling it again continues where it left off.
+    public func backfillTranscripts(
+        limit: Int = Int.max,
+        progress: @escaping @Sendable (Int, Int) -> Void
+    ) async -> BackfillResult {
+        let all = (try? ModelContext(container).fetch(
+            FetchDescriptor<Video>(sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
+        let targets = all.filter { video in
+            !video.unavailable && video.transcript == nil
+                && stageStates(video)[PipelineStage.transcribe.rawValue] != .done
+        }.map(\.videoID).prefix(limit)
+
+        let total = targets.count
+        var filled = 0, attempted = 0, consecutiveFailures = 0
+        progress(0, total)
+        for id in targets {
+            if Task.isCancelled { break }
+            attempted += 1
+            switch await backfillOne(videoID: id) {
+            case .filled: filled += 1; consecutiveFailures = 0
+            case .empty: consecutiveFailures = 0   // music/no speech is a normal result
+            case .failed: consecutiveFailures += 1
+            }
+            progress(attempted, total)
+            if consecutiveFailures >= Self.throttleAbortThreshold {
+                return BackfillResult(filled: filled, attempted: attempted,
+                                      remaining: total - attempted, stoppedEarly: true)
+            }
+        }
+        return BackfillResult(filled: filled, attempted: attempted,
+                              remaining: total - attempted, stoppedEarly: false)
+    }
+
+    private func backfillOne(videoID: String) async -> BackfillOutcome {
+        let context = ModelContext(container)
+        guard let video = try? context.fetch(
+            FetchDescriptor<Video>(predicate: #Predicate { $0.videoID == videoID })).first else { return .failed }
+
+        let fetched: String?
+        do {
+            fetched = try await deps.transcriber.transcript(for: video.url)
+        } catch {
+            return .failed   // left untouched, so the next run retries it
+        }
+
+        // Mark the stage done either way: a no-speech video must not be retried forever.
+        var stages = stageStates(video)
+        stages[PipelineStage.transcribe.rawValue] = .done
+        store(stages, on: video)
+
+        guard let fetched, !fetched.isEmpty else {
+            try? context.save()
+            return .empty
+        }
+
+        video.transcript = fetched
+        let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
+                             author: video.author, thumbnailURL: video.thumbnailURL)
+        if let analysis = try? await deps.analyzer.analyze(
+            meta: meta, transcript: fetched, ocrText: video.ocrText) {
+            video.recipeJSON = nil
+            video.trackJSON = nil
+            video.codeJSON = nil
+            await applyAnalysis(analysis, to: video)
+        }
+        try? context.save()
+        return .filled
+    }
+
     /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.
     private var inFlight: Set<String> = []
     private var passCompleted = 0

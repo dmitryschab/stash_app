@@ -338,6 +338,10 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var videos: [Video]
     private var controller = PipelineCenter.shared
+    /// Saves still classified from the caption alone — the backfill's work queue.
+    private var missingTranscripts: Int {
+        videos.filter { !$0.unavailable && $0.transcript == nil }.count
+    }
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
     @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
@@ -368,13 +372,23 @@ struct SettingsView: View {
                         controller.reanalyzeLibrary()
                     } label: {
                         if controller.isImporting, let p = controller.progress {
-                            Text("Re-analyzing… \(p.done)/\(p.total)")
+                            Text("Working… \(p.done)/\(p.total)")
                         } else {
                             Text("Re-analyze library (\(videos.count) videos)")
                         }
                     }
                     .disabled(controller.isImporting)
                     Text("Re-runs classification on every saved video against the current categories, using text already fetched — no re-download. Costs a few cents and can take several minutes.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        controller.backfillTranscripts()
+                    } label: {
+                        Text("Fetch missing transcripts (\(missingTranscripts))")
+                    }
+                    .disabled(controller.isImporting || missingTranscripts == 0)
+                    Text("Most saves were never transcribed, so their summaries come from the caption alone. This fetches the audio transcript and re-analyzes each one with it. Transcription is rate-limited hourly, so run it again until the count reaches zero.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
