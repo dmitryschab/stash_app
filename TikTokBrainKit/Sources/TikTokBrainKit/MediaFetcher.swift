@@ -49,6 +49,16 @@ public struct MediaFetcher: MediaFetching {
         return MediaBundle(audioFileURL: audioFileURL, keyframes: keyframes)
     }
 
+    /// Samples keyframes from an already-downloaded local video file, skipping the audio
+    /// export `fetch` performs — the visual pass only needs frames, and exporting audio
+    /// across a whole library is pure waste. The caller owns `fileURL` and the returned PNGs.
+    public func keyframes(fromLocalFile fileURL: URL) async throws -> [URL] {
+        let workDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tiktokbrain-media", isDirectory: true)
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        return try await extractKeyframes(from: AVURLAsset(url: fileURL), into: workDir)
+    }
+
     // MARK: - Audio
 
     /// Exports the asset's audio track to a temporary `.m4a` (AAC) file for the

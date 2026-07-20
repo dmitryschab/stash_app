@@ -218,31 +218,11 @@ struct VideoDetailView: View {
 
     // MARK: - Text (OCR + transcript)
 
+    /// Deliberately empty: the transcript and on-screen text are extraction signals, not
+    /// something to read. They stay stored on the `Video` and stay in the search index — they
+    /// just no longer take up the detail screen with raw machine output.
     @ViewBuilder
-    private var textSection: some View {
-        if let ocr = video.ocrText, !ocr.isEmpty {
-            sectionHeader("On-screen text")
-            Text(ocr)
-                .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.85))
-                .lineSpacing(3)
-                .padding(.top, 6)
-        }
-        sectionHeader("Transcript")
-        Group {
-            if let transcript = video.transcript, !transcript.isEmpty {
-                Text(transcript)
-                    .font(.archivo(13))
-                    .foregroundStyle(Color.stashInk.opacity(0.85))
-                    .lineSpacing(3)
-            } else {
-                Text("No transcript — the video may have no English audio.")
-                    .font(.archivo(13))
-                    .foregroundStyle(Color.stashInk.opacity(0.5))
-            }
-        }
-        .padding(.top, 6)
-    }
+    private var textSection: some View { EmptyView() }
 
     // MARK: - Pipeline
 
