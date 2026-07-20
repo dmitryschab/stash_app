@@ -256,6 +256,35 @@ final class PipelineCenter {
         lastSummary = "Re-analyzed the library"
     }
 
+    /// Fetches transcripts for saves that never got one and re-analyzes them with it. Paced and
+    /// resumable — the cloud Whisper quota is hourly, so this is expected to take several runs.
+    func backfillTranscripts() {
+        guard !isImporting, let runner = makeRunner() else { return }
+        lastError = nil
+        processingTask = Task { [weak self] in
+            await self?.drainBackfill(runner: runner)
+        }
+    }
+
+    private func drainBackfill(runner: PipelineRunner) async {
+        isImporting = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            isImporting = false
+            progress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        let result = await runner.backfillTranscripts { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+        if result.stoppedEarly {
+            lastError = "Transcription is being throttled — filled \(result.filled), "
+                + "\(result.remaining) still to go. Try again in an hour."
+        } else {
+            lastSummary = "Filled \(result.filled) transcripts · \(result.remaining) left"
+        }
+    }
+
     // MARK: - Lifecycle (called from the App's scenePhase watcher)
 
     func appBecameActive() {

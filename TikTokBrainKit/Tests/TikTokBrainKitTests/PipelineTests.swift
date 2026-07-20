@@ -298,6 +298,44 @@ private struct StubMusicResolver: MusicLinkResolving {
 extension PipelineTests {
     /// Re-analysis re-buckets an already-classified video from its STORED fields, with no
     /// enrich/transcribe — the enricher/transcriber here would fatal if the pass touched them.
+    /// The backfill fills a missing transcript, re-analyzes with it, and — crucially — does not
+    /// pick the same video up again on a second run (otherwise a no-speech save loops forever).
+    func testBackfillTranscriptsFillsThenStopsRepeating() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "7000000000000000011",
+            url: URL(string: "https://www.tiktok.com/@x/video/7000000000000000011")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 600))
+        video.caption = "POV miso ramen"
+        video.hashtags = ["recipe"]
+        video.categoryRaw = Category.other.rawValue
+        context.insert(video)
+        try context.save()
+
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: "boil the noodles"),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        let first = await runner.backfillTranscripts { _, _ in }
+        XCTAssertEqual(first.filled, 1)
+        XCTAssertFalse(first.stoppedEarly)
+
+        let updated = try XCTUnwrap(fetchVideo("7000000000000000011", in: container))
+        XCTAssertEqual(updated.transcript, "boil the noodles")
+        XCTAssertEqual(updated.categoryRaw, Category.recipe.rawValue)  // re-analyzed with audio
+
+        // Second run finds nothing left to do — resumable, not repeating.
+        let second = await runner.backfillTranscripts { _, _ in }
+        XCTAssertEqual(second.attempted, 0)
+    }
+
     func testReanalyzeAllRebucketsFromStoredFields() async throws {
         let container = try makeContainer()
         let context = ModelContext(container)
