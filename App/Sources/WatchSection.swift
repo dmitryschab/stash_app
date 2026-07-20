@@ -141,6 +141,23 @@ enum OfflineVideoStore {
 
     /// Asks the model box to yt-dlp the video and stores the returned mp4.
     static func download(videoID: String, boxBaseURL: String, apiKey: String) async throws -> String {
+        let data = try await fetchVideoData(videoID: videoID, boxBaseURL: boxBaseURL, apiKey: apiKey)
+        let name = "\(videoID).mp4"
+        try data.write(to: fileURL(name), options: .atomic)
+        return name
+    }
+
+    /// Same fetch, but into a temporary file the caller deletes. Used by the visual-text pass,
+    /// which walks the whole library and must not leave hundreds of videos on the device.
+    static func downloadTemporary(videoID: String, boxBaseURL: String, apiKey: String) async throws -> URL {
+        let data = try await fetchVideoData(videoID: videoID, boxBaseURL: boxBaseURL, apiKey: apiKey)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stash-ocr-\(videoID).mp4")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private static func fetchVideoData(videoID: String, boxBaseURL: String, apiKey: String) async throws -> Data {
         guard let base = URL(string: boxBaseURL) else { throw URLError(.badURL) }
         let endpoint = base.appendingPathComponent("tiktok/download/\(videoID)")
         var request = URLRequest(url: endpoint)
@@ -154,10 +171,7 @@ enum OfflineVideoStore {
               data.subdata(in: 4..<8) == Data("ftyp".utf8) else {
             throw URLError(.badServerResponse)
         }
-
-        let name = "\(videoID).mp4"
-        try data.write(to: fileURL(name), options: .atomic)
-        return name
+        return data
     }
 }
 

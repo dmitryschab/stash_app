@@ -287,6 +287,91 @@ public actor PipelineRunner {
         return .filled
     }
 
+    // MARK: - Visual text backfill
+
+    /// Extracts on-screen text for videos that have none, then re-analyzes each one with it.
+    ///
+    /// On TikTok the words burned into the frame are often the actual content (recipe steps,
+    /// list items, auto-captions), and Vision OCR is free and unmetered — unlike cloud Whisper,
+    /// which is why this needs none of the transcript backfill's hourly pacing. The real cost is
+    /// bandwidth for the video download, which `visualText` owns; it receives the video's ID and
+    /// URL and returns recognized text (nil when the video carries none).
+    ///
+    /// Resumable on the same terms as the transcript backfill: only videos with no stored
+    /// `ocrText` whose ocr stage is not already done are picked up.
+    public func backfillVisualText(
+        limit: Int = Int.max,
+        visualText: @escaping @Sendable (String, URL) async throws -> String?,
+        progress: @escaping @Sendable (Int, Int) -> Void
+    ) async -> BackfillResult {
+        let all = (try? ModelContext(container).fetch(
+            FetchDescriptor<Video>(sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
+        let targets = all.filter { video in
+            !video.unavailable && video.ocrText == nil
+                && stageStates(video)[PipelineStage.ocr.rawValue] != .done
+        }.map(\.videoID).prefix(limit)
+
+        let total = targets.count
+        var filled = 0, attempted = 0, consecutiveFailures = 0
+        progress(0, total)
+        for id in targets {
+            if Task.isCancelled { break }
+            attempted += 1
+            switch await backfillVisualOne(videoID: id, visualText: visualText) {
+            case .filled: filled += 1; consecutiveFailures = 0
+            case .empty: consecutiveFailures = 0   // no on-screen text is a normal result
+            case .failed: consecutiveFailures += 1
+            }
+            progress(attempted, total)
+            // Repeated failures here mean the box or the network is down, not a quota — either
+            // way, continuing just burns bandwidth, so leave the rest for the next run.
+            if consecutiveFailures >= Self.throttleAbortThreshold {
+                return BackfillResult(filled: filled, attempted: attempted,
+                                      remaining: total - attempted, stoppedEarly: true)
+            }
+        }
+        return BackfillResult(filled: filled, attempted: attempted,
+                              remaining: total - attempted, stoppedEarly: false)
+    }
+
+    private func backfillVisualOne(
+        videoID: String,
+        visualText: @escaping @Sendable (String, URL) async throws -> String?
+    ) async -> BackfillOutcome {
+        let context = ModelContext(container)
+        guard let video = try? context.fetch(
+            FetchDescriptor<Video>(predicate: #Predicate { $0.videoID == videoID })).first else { return .failed }
+
+        let recognized: String?
+        do {
+            recognized = try await visualText(video.videoID, video.url)
+        } catch {
+            return .failed   // untouched, so the next run retries it
+        }
+
+        var stages = stageStates(video)
+        stages[PipelineStage.ocr.rawValue] = .done
+        store(stages, on: video)
+
+        guard let recognized, !recognized.isEmpty else {
+            try? context.save()
+            return .empty
+        }
+
+        video.ocrText = recognized
+        let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
+                             author: video.author, thumbnailURL: video.thumbnailURL)
+        if let analysis = try? await deps.analyzer.analyze(
+            meta: meta, transcript: video.transcript, ocrText: recognized) {
+            video.recipeJSON = nil
+            video.trackJSON = nil
+            video.codeJSON = nil
+            await applyAnalysis(analysis, to: video)
+        }
+        try? context.save()
+        return .filled
+    }
+
     /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.
     private var inFlight: Set<String> = []
     private var passCompleted = 0

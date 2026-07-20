@@ -285,6 +285,57 @@ final class PipelineCenter {
         }
     }
 
+    /// Reads the words burned into each video's frames and re-analyzes with them. Vision OCR is
+    /// free and unmetered, so this is the cheap signal — the cost is downloading the videos.
+    func backfillVisualText() {
+        guard !isImporting, let runner = makeRunner() else { return }
+        lastError = nil
+        let extract = Self.makeVisualTextExtractor()
+        processingTask = Task { [weak self] in
+            await self?.drainVisualBackfill(runner: runner, extract: extract)
+        }
+    }
+
+    /// Downloads the video through the box (TikTok blocks in-app fetches), samples frames, and
+    /// runs on-device Vision OCR. More keyframes than the pipeline default: on-screen text
+    /// changes fast, and frames are cheap once the video is already downloaded.
+    private static func makeVisualTextExtractor() -> @Sendable (String, URL) async throws -> String? {
+        let config = currentConfig()
+        let baseURL = config.baseURL.absoluteString
+        let apiKey = config.apiKey
+        return { videoID, _ in
+            let file = try await OfflineVideoStore.downloadTemporary(
+                videoID: videoID, boxBaseURL: baseURL, apiKey: apiKey)
+            defer { try? FileManager.default.removeItem(at: file) }
+            let frames = try await MediaFetcher(keyframeCount: 12).keyframes(fromLocalFile: file)
+            defer { frames.forEach { try? FileManager.default.removeItem(at: $0) } }
+            let text = try await FrameReader().recognizeText(in: frames)
+            return text.isEmpty ? nil : text
+        }
+    }
+
+    private func drainVisualBackfill(
+        runner: PipelineRunner,
+        extract: @escaping @Sendable (String, URL) async throws -> String?
+    ) async {
+        isImporting = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            isImporting = false
+            progress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        let result = await runner.backfillVisualText(visualText: extract) { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+        if result.stoppedEarly {
+            lastError = "Stopped after repeated download failures — read \(result.filled), "
+                + "\(result.remaining) still to go. Check the box and try again."
+        } else {
+            lastSummary = "Read on-screen text for \(result.filled) · \(result.remaining) left"
+        }
+    }
+
     // MARK: - Lifecycle (called from the App's scenePhase watcher)
 
     func appBecameActive() {

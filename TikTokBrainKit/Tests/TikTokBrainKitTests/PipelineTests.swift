@@ -298,6 +298,45 @@ private struct StubMusicResolver: MusicLinkResolving {
 extension PipelineTests {
     /// Re-analysis re-buckets an already-classified video from its STORED fields, with no
     /// enrich/transcribe — the enricher/transcriber here would fatal if the pass touched them.
+    /// On-screen text is stored and drives a re-analysis, and a second run finds nothing left.
+    func testBackfillVisualTextStoresOCRAndReanalyzes() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "7000000000000000012",
+            url: URL(string: "https://www.tiktok.com/@x/video/7000000000000000012")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 700))
+        video.caption = ""                                // no caption at all…
+        video.hashtags = ["recipe"]
+        video.categoryRaw = Category.other.rawValue
+        context.insert(video)
+        try context.save()
+
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: "unused"),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        // …the words on screen are the only real signal.
+        let first = await runner.backfillVisualText(
+            visualText: { _, _ in "MISO RAMEN\n2 eggs\nboil 4 minutes" }, progress: { _, _ in })
+        XCTAssertEqual(first.filled, 1)
+        XCTAssertFalse(first.stoppedEarly)
+
+        let updated = try XCTUnwrap(fetchVideo("7000000000000000012", in: container))
+        XCTAssertEqual(updated.ocrText, "MISO RAMEN\n2 eggs\nboil 4 minutes")
+        XCTAssertEqual(updated.categoryRaw, Category.recipe.rawValue)
+
+        let second = await runner.backfillVisualText(
+            visualText: { _, _ in "should not be called" }, progress: { _, _ in })
+        XCTAssertEqual(second.attempted, 0)
+    }
+
     /// The backfill fills a missing transcript, re-analyzes with it, and — crucially — does not
     /// pick the same video up again on a second run (otherwise a no-speech save loops forever).
     func testBackfillTranscriptsFillsThenStopsRepeating() async throws {

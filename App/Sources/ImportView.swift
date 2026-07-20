@@ -342,6 +342,10 @@ struct SettingsView: View {
     private var missingTranscripts: Int {
         videos.filter { !$0.unavailable && $0.transcript == nil }.count
     }
+    /// Saves whose frames have not been read yet.
+    private var missingVisualText: Int {
+        videos.filter { !$0.unavailable && $0.ocrText == nil }.count
+    }
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
     @AppStorage("boxApiKey") private var boxApiKey = BoxDefaults.apiKey
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
@@ -389,6 +393,16 @@ struct SettingsView: View {
                     }
                     .disabled(controller.isImporting || missingTranscripts == 0)
                     Text("Most saves were never transcribed, so their summaries come from the caption alone. This fetches the audio transcript and re-analyzes each one with it. Transcription is rate-limited hourly, so run it again until the count reaches zero.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        controller.backfillVisualText()
+                    } label: {
+                        Text("Read on-screen text (\(missingVisualText))")
+                    }
+                    .disabled(controller.isImporting || missingVisualText == 0)
+                    Text("Reads the words burned into each video's frames — often the real content on TikTok — and re-analyzes with them. Free and unmetered, unlike transcription, but it downloads each video, so expect it to take a while.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
