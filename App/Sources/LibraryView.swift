@@ -141,14 +141,25 @@ struct LibraryView: View {
                     .font(.archivo(40, .heavy))
                     .foregroundStyle(Color.stashInk)
                 Spacer()
-                NavigationLink { ImportView() } label: {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.stashInk)
-                        .frame(width: 38, height: 38)
-                        .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                HStack(spacing: 10) {
+                    NavigationLink { ImportView() } label: {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.stashInk)
+                            .frame(width: 38, height: 38)
+                            .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                    }
+                    .accessibilityLabel("Import")
+                    // Mind map lives here rather than in the tab bar — it is a view of this library.
+                    NavigationLink { MindMapView() } label: {
+                        Image(systemName: "circle.hexagongrid.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.stashInk)
+                            .frame(width: 38, height: 38)
+                            .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                    }
+                    .accessibilityLabel("Mind map")
                 }
-                .accessibilityLabel("Import")
             }
         }
         .padding(.top, 8)
