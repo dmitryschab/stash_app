@@ -11,6 +11,7 @@ import TikTokBrainKit
 
 struct MindMapView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
+    @Environment(\.dismiss) private var dismiss
 
     @State private var engine = MindMapEngine()
     @State private var camera = GraphCamera()
@@ -22,21 +23,33 @@ struct MindMapView: View {
     @State private var hasInteracted = false
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                StashHeader(title: "Mind map", trailing: "\(videos.count) saves")
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-
-                if categories.isEmpty {
-                    emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    graph
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            // Pushed from the Library header rather than owning a tab, so it carries its
+            // own back control (matching Import) instead of a nav bar.
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.stashInk)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
             }
-            .background(Color.stashBackground.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back")
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+
+            StashHeader(title: "Mind map", trailing: "\(videos.count) saves")
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+
+            if categories.isEmpty {
+                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                graph
+            }
         }
+        .background(Color.stashBackground.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     // MARK: - Graph

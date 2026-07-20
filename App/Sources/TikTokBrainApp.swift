@@ -1,8 +1,10 @@
 // TikTokBrainApp.swift
 //
 // App entry point: registers the bundled Archivo faces, builds the SwiftData container,
-// optionally seeds sample content for the simulator smoke run, and hosts the six-tab
-// Set List shell (Today / Library / Cook / Music / Search / Mind map) behind a custom ink pill tab bar.
+// optionally seeds sample content for the simulator smoke run, and hosts the five-tab
+// Set List shell (Today / Library / Cook / Music / Search) behind a custom ink pill tab bar.
+// Mind map is deliberately not a tab — six slots crowded the pill, so it opens from the
+// Library header instead, next to Import (it is a map of the library after all).
 
 import SwiftUI
 import SwiftData
@@ -53,7 +55,7 @@ struct TikTokBrainApp: App {
 // MARK: - Tab shell
 
 enum StashTab: CaseIterable {
-    case today, library, cook, music, search, mindMap
+    case today, library, cook, music, search
 
     var label: String {
         switch self {
@@ -62,7 +64,6 @@ enum StashTab: CaseIterable {
         case .cook: "Cook"
         case .music: "Music"
         case .search: "Search"
-        case .mindMap: "Mind map"
         }
     }
 
@@ -73,20 +74,18 @@ enum StashTab: CaseIterable {
         case .cook: "fork.knife"
         case .music: "music.note"
         case .search: "magnifyingglass"
-        case .mindMap: "circle.hexagongrid.fill"
         }
     }
 }
 
 struct RootView: View {
-    // Simulator smoke runs can open a specific tab: `-initialTab library|search|mindmap`.
+    // Simulator smoke runs can open a specific tab: `-initialTab library|cook|music|search`.
     @State private var tab: StashTab = {
         switch UserDefaults.standard.string(forKey: "initialTab") {
         case "library": .library
         case "cook": .cook
         case "music": .music
         case "search": .search
-        case "mindmap": .mindMap
         default: .today
         }
     }()
@@ -103,7 +102,6 @@ struct RootView: View {
                 case .cook: CookView()
                 case .music: MusicView()
                 case .search: SearchView()
-                case .mindMap: MindMapView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
