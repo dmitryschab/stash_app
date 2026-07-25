@@ -11,9 +11,25 @@ targets:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
-    sources: [Sources, Resources]
+    sources:
+      # Local tooling (ruflo/agentdb) drops a ruvector.db into Sources, and the bare glob
+      # copied all 1.5 MB of it to the root of every built .app. Excluding the extension
+      # rather than the one filename means the next stray database is caught too.
+      - path: Sources
+        excludes: ["**/*.db"]
+      - Resources
+      # The privacy manifest has to sit at the bundle root, so it is listed on its own
+      # instead of living under Resources/ (which would nest it in the copied folder).
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: TikTokBrainKit
+    # Sign in with Apple is the only auth method; without this entitlement the
+    # ASAuthorizationController request fails at runtime (error 1000).
+    entitlements:
+      path: Stash.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     info:
       path: Info.plist
       properties:
@@ -36,7 +52,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "13"
+        CURRENT_PROJECT_VERSION: "14"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3  # personal team (Dmitrijs Sabelniks) — hosts Orivox too

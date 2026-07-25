@@ -97,11 +97,34 @@ class CreateImportRequest(ContractModel):
         return self
 
 
+# Hard per-user budget. The initial import allowance is spent first; only once it is gone
+# does the monthly allowance drain. Enforced server-side — the in-app counter mirrors this
+# state, it is never the source of it.
+INITIAL_LIMIT = 500
+MONTH_LIMIT = 100
+
+
+class Quota(ContractModel):
+    """The per-user import budget, echoed on every quota-consuming response so the
+    in-app counter stays fresh without a second round trip."""
+
+    initial_remaining: int = Field(alias="initialRemaining")
+    month_remaining: int = Field(alias="monthRemaining")
+    month_reset_at: int = Field(alias="monthResetAt")
+    initial_limit: int = Field(alias="initialLimit", default=INITIAL_LIMIT)
+    month_limit: int = Field(alias="monthLimit", default=MONTH_LIMIT)
+
+
 class CreateImportResponse(ContractModel):
     import_id: str = Field(alias="importID")
     state: ImportState
     accepted: int
+    # Submitted videos that did not fit in the remaining budget. Non-zero means truncated,
+    # not failed: the client says "500 of 720 imported, 220 waiting until <monthResetAt>"
+    # and re-submits the rest as a fresh import once the month rolls over.
+    deferred: int = 0
     duplicates: int
+    quota: Quota
 
 
 class Progress(ContractModel):
@@ -115,6 +138,10 @@ class ImportStatus(ContractModel):
     fast_pass: Progress = Field(alias="fastPass")
     unavailable: int
     partial_failures: int = Field(alias="partialFailures")
+    # Repeated here, not only on the create response: a client that was killed mid-import
+    # comes back polling status, and "done 500 of 500" with no deferred count would look
+    # like the whole library landed.
+    deferred: int = 0
     estimated_cost_usd: float = Field(alias="estimatedCostUSD")
     updated_at: datetime = Field(alias="updatedAt")
 

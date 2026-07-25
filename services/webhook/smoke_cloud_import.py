@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run the approved 50-video asynchronous import release gate."""
+"""Run the approved 50-video asynchronous import release gate.
+
+STASH_JWT is a per-user Stash session token (POST /v1/auth/apple), not the retired
+shared box token — the gate now exercises the same authenticated path a device does,
+including the 500-unit initial quota.
+"""
 
 from __future__ import annotations
 
@@ -70,7 +75,7 @@ def fetch_results(session: requests.Session, base_url: str, token: str, import_i
 
 def run(base_url: str, token: str, bookmarks: list[dict], session: requests.Session | None = None) -> None:
     if not base_url or not token:
-        raise ValueError("STASH_BASE_URL and STASH_API_TOKEN are required")
+        raise ValueError("STASH_BASE_URL and STASH_JWT are required")
     videos = validate_bookmarks(bookmarks)
     session = session or requests.Session()
     base_url = base_url.rstrip("/")
@@ -118,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("provide a bookmarks JSON file or STASH_IMPORT_BOOKMARKS_FILE")
     try:
         raw = json.loads(Path(path).read_text())
-        run(os.environ.get("STASH_BASE_URL", ""), os.environ.get("STASH_API_TOKEN", ""), raw)
+        run(os.environ.get("STASH_BASE_URL", ""), os.environ.get("STASH_JWT", ""), raw)
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         print(f"smoke failed: {error}", file=sys.stderr)
         return 1

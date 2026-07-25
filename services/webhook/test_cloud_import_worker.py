@@ -1,5 +1,4 @@
 import json
-import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -43,14 +42,22 @@ class FakeStore:
         return {"url": f"https://www.tiktok.com/@x/video/{video_id}"}
 
 
-def message():
+def message(**overrides):
     return {
+        "v": 2,
+        "userID": "user-a",
         "importID": "import-1",
         "videoID": "123",
         "stage": "fast_pass",
         "url": "https://www.tiktok.com/@x/video/123",
         "receiptHandle": "receipt-1",
+        **overrides,
     }
+
+
+def stores(store):
+    """handle_message builds one store per message from the message's userID."""
+    return lambda user_id: store
 
 
 def test_fast_pass_maps_yt_dlp_metadata(monkeypatch):
@@ -101,7 +108,7 @@ def test_duplicate_delivery_does_not_call_provider():
     queue = FakeQueue()
     pipeline = SimpleNamespace(process=lambda *_args: pytest.fail("provider called"))
 
-    result = handle_message(message(), store, pipeline, queue)
+    result = handle_message(message(), stores(store), pipeline, queue)
 
     assert result == HandleResult(deleted=True, retryable=False)
     assert queue.deleted == ["receipt-1"]
@@ -113,7 +120,7 @@ def test_running_duplicate_is_left_for_redelivery():
     queue = FakeQueue()
     pipeline = SimpleNamespace(process=lambda *_args: pytest.fail("provider called"))
 
-    result = handle_message(message(), store, pipeline, queue)
+    result = handle_message(message(), stores(store), pipeline, queue)
 
     assert result == HandleResult(deleted=False, retryable=True)
     assert queue.deleted == []
@@ -124,7 +131,7 @@ def test_transient_failure_keeps_message_for_retry():
     queue = FakeQueue()
     pipeline = SimpleNamespace(process=lambda *_args: (_ for _ in ()).throw(PipelineError("429", True, "provider_429")))
 
-    result = handle_message(message(), store, pipeline, queue)
+    result = handle_message(message(), stores(store), pipeline, queue)
 
     assert result == HandleResult(deleted=False, retryable=True)
     assert store.failed == [(True, "provider_429")]
@@ -136,7 +143,7 @@ def test_hard_failure_is_recorded_and_deleted():
     queue = FakeQueue()
     pipeline = SimpleNamespace(process=lambda *_args: (_ for _ in ()).throw(PipelineError("bad", False, "invalid_output")))
 
-    result = handle_message(message(), store, pipeline, queue)
+    result = handle_message(message(), stores(store), pipeline, queue)
 
     assert result == HandleResult(deleted=True, retryable=False)
     assert store.failed == [(False, "invalid_output")]
@@ -148,9 +155,56 @@ def test_success_deletes_only_after_store_completion():
     queue = FakeQueue()
     pipeline = SimpleNamespace(process=lambda *_args: VideoResult(videoID="123", title="Saved"))
 
-    result = handle_message(message(), store, pipeline, queue)
+    result = handle_message(message(), stores(store), pipeline, queue)
 
     assert result == HandleResult(deleted=True, retryable=False)
     assert len(store.completed_results) == 1
     assert queue.deleted == ["receipt-1"]
     assert queue.extended == [("receipt-1", 300)]
+
+
+def test_the_message_decides_which_users_store_is_written():
+    seen = []
+    queue = FakeQueue()
+    pipeline = SimpleNamespace(process=lambda *_args: VideoResult(videoID="123"))
+
+    def store_for(user_id):
+        seen.append(user_id)
+        return FakeStore()
+
+    handle_message(message(userID="user-b"), store_for, pipeline, queue)
+    assert seen == ["user-b"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"v": 1},                 # pre-cutover message, no owning user
+    {"userID": None},         # v2 shape but unusable
+    {"stage": "slow_pass"},
+    {"importID": None},
+])
+def test_unusable_messages_are_dropped_not_retried(bad):
+    # Raising here would burn all five redeliveries into the dead-letter queue for every
+    # message still in flight at cutover.
+    queue = FakeQueue()
+    pipeline = SimpleNamespace(process=lambda *_args: pytest.fail("provider called"))
+
+    def store_for(_user_id):
+        pytest.fail("store built for an unusable message")
+
+    result = handle_message(message(**bad), store_for, pipeline, queue)
+
+    assert result == HandleResult(deleted=True, retryable=False)
+    assert queue.deleted == ["receipt-1"]
+
+
+def test_a_job_for_a_deleted_account_is_dropped():
+    # The partition is gone, so the claim fails and there is no video row to look at.
+    store = FakeStore(claimed=False)
+    store.get_video = lambda *_args: None
+    queue = FakeQueue()
+    pipeline = SimpleNamespace(process=lambda *_args: pytest.fail("provider called"))
+
+    result = handle_message(message(), stores(store), pipeline, queue)
+
+    assert result == HandleResult(deleted=True, retryable=False)
+    assert queue.deleted == ["receipt-1"]

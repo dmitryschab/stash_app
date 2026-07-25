@@ -22,9 +22,6 @@ import SwiftData
     public var stageStatesJSON: Data      // [String: StageState] encoded; keys: enrich, media, transcribe, ocr, analyze
     public var unavailable: Bool
     public var cloudAnalysisRevision: Int = 0
-    // Filename under Application Support/OfflineVideos, relative because absolute
-    // container URLs break across reinstalls. nil = not kept offline.
-    public var offlineVideoFilename: String?
     public init(videoID: String, url: URL, bookmarkedAt: Date) {
         self.videoID = videoID
         self.url = url
@@ -48,6 +45,5 @@ import SwiftData
         self.stageStatesJSON = (try? JSONEncoder().encode(initialStages)) ?? Data()
         self.unavailable = false
         self.cloudAnalysisRevision = 0
-        self.offlineVideoFilename = nil
     }
 }

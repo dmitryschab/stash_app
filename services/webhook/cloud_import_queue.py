@@ -8,14 +8,26 @@ from typing import Any
 
 from cloud_import_aws import instance_role_session
 
+# Bumped when the message body changes shape. v2 added the owning userID.
+MESSAGE_SCHEMA = 2
+
 
 class SQSImportQueue:
     def __init__(self, client=None, queue_url: str | None = None):
         self.client = client or instance_role_session().client("sqs")
         self.queue_url = queue_url or os.environ["STASH_IMPORT_QUEUE_URL"]
 
-    def enqueue(self, import_id: str, video_id: str) -> dict[str, Any]:
-        message = {"importID": import_id, "videoID": video_id, "stage": "fast_pass"}
+    def enqueue(self, user_id: str, import_id: str, video_id: str, url: str | None = None) -> dict[str, Any]:
+        """Carry the owning user in the message so the worker can build a scoped store.
+
+        `v` is a schema marker: the worker discards anything that is not v2 rather than
+        guessing, so pre-cutover messages still in flight are dropped, not mis-routed
+        into some other account's partition.
+        """
+        message = {"v": MESSAGE_SCHEMA, "userID": user_id, "importID": import_id,
+                   "videoID": video_id, "stage": "fast_pass"}
+        if url:
+            message["url"] = url
         response = self.client.send_message(QueueUrl=self.queue_url, MessageBody=json.dumps(message, separators=(",", ":")))
         return {**message, "messageID": response.get("MessageId")}
 

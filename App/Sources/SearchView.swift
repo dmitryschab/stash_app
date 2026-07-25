@@ -27,7 +27,9 @@ struct SearchView: View {
                     Micro(text: "Meaning, not just keywords", size: 10, tracking: 1.8)
                         .padding(.top, 18)
 
-                    if trimmedQuery.isEmpty {
+                    if videos.isEmpty {
+                        emptyLibrary.padding(.top, 44)
+                    } else if trimmedQuery.isEmpty {
                         suggestions.padding(.top, 22)
                     } else if results.isEmpty {
                         Text("No saves matched.")
@@ -110,6 +112,16 @@ struct SearchView: View {
         .frame(height: 50)
         .background(Color.stashSurface, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+    }
+
+    /// Search over nothing is worse than a blank screen: the canned "try asking" chips promise
+    /// results that cannot exist. Say the index is empty and offer the one thing that fills it.
+    private var emptyLibrary: some View {
+        StashEmptyState(
+            symbol: "magnifyingglass",
+            title: "Nothing to search yet",
+            message: "Import your favorites and Stash indexes every caption, transcript and on-screen word."
+        )
     }
 
     private var suggestions: some View {

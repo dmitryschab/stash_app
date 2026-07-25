@@ -365,6 +365,55 @@ struct CategoryBadge: View {
     }
 }
 
+/// The one empty state every tab shows before anything has been imported: a jewel symbol, a
+/// line naming what lands here, and — crucially — the way to fill it. Import is only reachable
+/// from the Library header, so a brand-new account landing on Cook or Music would otherwise
+/// read a dead end. Each caller must sit inside a `NavigationStack` (all five tabs do).
+struct StashEmptyState: View {
+    let symbol: String
+    var tint: Color = .stashInk.opacity(0.35)
+    let title: String
+    let message: String
+    /// Off when the caller already offers Import a tap away — the Library header has its own
+    /// button, and a second one under a half-empty shelf is noise.
+    var offersImport = true
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 38, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(title)
+                .font(.archivo(17, .bold))
+                .foregroundStyle(Color.stashInk)
+            Text(message)
+                .font(.archivo(13))
+                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+            if offersImport {
+                NavigationLink { ImportView() } label: {
+                    InfoChip(text: "Import your saves", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// The published policy pages. Guideline 5.1.1(i) wants both reachable from inside the app,
+/// so they are linked from the sign-in gate — where continuing *is* the agreement — and again
+/// from Settings.
+/// ponytail: SignInView spells these two URLs out a second time inside a Markdown string,
+/// because `Text` only parses link syntax in literal segments — an interpolated URL renders as
+/// plain text. Changing the domain means changing both places.
+enum StashLegal {
+    static let terms = URL(string: "https://stash.dmitrijs.dev/terms")!
+    static let privacy = URL(string: "https://stash.dmitrijs.dev/privacy")!
+}
+
 /// A thin outlined capsule chip — an icon plus an uppercase micro label — used for
 /// reassurance and sync-status lines (e.g. the connect flow).
 struct InfoChip: View {

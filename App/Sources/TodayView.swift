@@ -144,19 +144,11 @@ struct TodayView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "sun.max")
-                .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.35))
-            Text("Nothing to surface yet")
-                .font(.archivo(17, .bold))
-                .foregroundStyle(Color.stashInk)
-            Text("Import your TikTok favorites and Stash will pick three saves worth returning to each day.")
-                .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
+        StashEmptyState(
+            symbol: "sun.max",
+            title: "Nothing to surface yet",
+            message: "Import your TikTok favorites and Stash picks three saves worth returning to each day."
+        )
     }
 }
 

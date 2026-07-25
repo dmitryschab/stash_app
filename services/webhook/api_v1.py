@@ -1,19 +1,25 @@
 """Stash /v1 API — the cloud half of the tester pipeline.
 
-Three endpoints behind one shared bearer token (spec:
+Three endpoints, each behind a per-user Stash JWT (spec:
 docs/superpowers/specs/2026-07-11-tester-ready-cloud-pipeline-design.md):
 
   POST /v1/videos/transcript   {url} -> yt-dlp audio -> Groq whisper -> filtered text
-  POST /v1/chat/completions    OpenAI-shape proxy to Bedrock Gemma (model pinned here)
-  GET  /v1/tiktok/download/{id} -> mp4 bytes (app "Keep offline")
+  POST /v1/chat/completions    OpenAI-shape proxy to Bedrock Gemma (model and output cap
+                               pinned here; the client body is not forwarded as-is)
+  GET  /v1/tiktok/download/{id} -> mp4 bytes, transient only (visual-text OCR backfill)
 
 TikTok blocks all in-app media downloads (blank playAddr / CDN 403 / CORS), so the
 box owns every media fetch. Groq free tier: 7200 audio-sec per rolling hour — 429s
 are passed through with Retry-After so the app can park the stage and retry.
+
+All three cost one quota unit, charged only when the work actually produced something: a
+private or deleted video, a throttled provider or a Bedrock error must not eat the caller's
+budget. Nothing here is free — an unmetered authenticated route is an unbounded bill.
 """
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,13 +27,16 @@ import time
 from collections import Counter
 
 import requests
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+import stash_secrets
+from cloud_import_store import DynamoImportStore
+from stash_auth import peek_quota, user_store
 
 router = APIRouter(prefix="/v1")
 
-API_TOKEN = os.environ.get("STASH_API_TOKEN", "")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL = "whisper-large-v3-turbo"
 GROQ_MAX_BYTES = 24_000_000  # free-tier file cap is 25 MB; re-encode above this
@@ -39,13 +48,21 @@ BEDROCK_REGION = "eu-central-1"
 # yt-dlp is pip-installed into the service venv; systemd's PATH can't see it.
 YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 
+# Caps on the proxied analyzer call. The prompt this endpoint serves is a few hundred bytes
+# and its answer is one JSON object; anything larger is either a bug or someone using our
+# Bedrock budget as a general-purpose LLM. A size cap alone does NOT bound the bill — output
+# tokens are what cost money, and n/best_of/stream multiply them — so the outbound body is
+# rebuilt from an allowlist and max_tokens is clamped. Clamped per call still is not a bound
+# on the total, so the route is quota-metered too: one unit per answer Bedrock actually
+# returned, which is what caps an invited account at its budget instead of at our bill.
+CHAT_MAX_BYTES = 32_000
+CHAT_MAX_OUTPUT_TOKENS = 1024  # a full recipe Analysis object measures ~600
 
-def require_auth(authorization: str | None):
-    """Fail closed: no configured token means no /v1 service."""
-    if not API_TOKEN:
-        raise HTTPException(status_code=503, detail="API token not configured")
-    if authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(status_code=401, detail="bad token")
+
+def _groq_key() -> str:
+    """Read lazily: a module-level read would make pytest and `python api_v1.py` reach
+    for instance metadata off-box."""
+    return stash_secrets.secret("GROQ_API_KEY")
 
 
 # ---------------------------------------------------------------- transcript
@@ -129,12 +146,13 @@ def filter_transcript(lines: list[str]) -> str:
 
 
 @router.post("/videos/transcript")
-def video_transcript(body: TranscriptRequest, authorization: str | None = Header(None)):
-    require_auth(authorization)
-    if not GROQ_API_KEY:
+def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends(user_store)):
+    groq_key = _groq_key()
+    if not groq_key:
         raise HTTPException(status_code=503, detail="transcription not configured")
     if not re.match(r"^https://(www\.)?tiktok(v)?\.com/", body.url):
         raise HTTPException(status_code=400, detail="not a tiktok url")
+    quota = peek_quota(store)  # 402 before spending yt-dlp and Groq time
 
     with tempfile.TemporaryDirectory() as td:
         # Keep yt-dlp's native container — Groq accepts m4a/mp4/webm alike.
@@ -144,8 +162,9 @@ def video_transcript(body: TranscriptRequest, authorization: str | None = Header
             capture_output=True, timeout=180)
         produced = [os.path.join(td, f) for f in os.listdir(td) if f.startswith("audio.")]
         if dl.returncode != 0 or not produced:
-            # deleted / private / region-locked — a normal library condition
-            return {"transcript": None, "duration": 0, "unavailable": True}
+            # deleted / private / region-locked — a normal library condition, not billable
+            return {"transcript": None, "duration": 0, "unavailable": True,
+                    "quota": quota.model_dump(by_alias=True)}
         audio = produced[0]
 
         if os.path.getsize(audio) > GROQ_MAX_BYTES:
@@ -158,7 +177,7 @@ def video_transcript(body: TranscriptRequest, authorization: str | None = Header
         with open(audio, "rb") as f:
             resp = requests.post(
                 GROQ_URL,
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                headers={"Authorization": f"Bearer {groq_key}"},
                 files={"file": (os.path.basename(audio), f)},
                 # temperature=0 disables Whisper's sampling fallback, which is a
                 # major source of hallucinated text on noisy/musical clips.
@@ -180,7 +199,11 @@ def video_transcript(body: TranscriptRequest, authorization: str | None = Header
     # hallucinated sign-off on a music clip never reaches the analyzer as "content".
     lines = [s.get("text", "") for s in data.get("segments", []) if keep_segment(s)]
     text = filter_transcript(lines)
-    return {"transcript": text or None, "duration": data.get("duration", 0)}
+    # Commit the unit only now — the 429 and 502 paths above raise before reaching here,
+    # so a throttled or broken provider never costs the caller budget.
+    quota = store.reserve_quota(1) or store.get_quota()
+    return {"transcript": text or None, "duration": data.get("duration", 0),
+            "quota": quota.model_dump(by_alias=True)}
 
 
 # ---------------------------------------------------------------- analyze proxy
@@ -256,38 +279,76 @@ def analyze_metadata(metadata: dict) -> dict:
 
 
 @router.post("/chat/completions")
-def chat_completions(body: dict, authorization: str | None = Header(None)):
-    require_auth(authorization)
-    body["model"] = BEDROCK_MODEL  # pinned server-side; client value ignored
-    # Gemma via Mantle rejects OpenAI's response_format param; the prompt already
-    # demands bare JSON and the app strips fences, so drop it rather than 400.
-    body.pop("response_format", None)
+def chat_completions(body: dict, store: DynamoImportStore = Depends(user_store)):
+    if len(json.dumps(body)) > CHAT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="request too large")
+    peek_quota(store)  # 402 before spending Bedrock money
+    try:
+        wanted = int(body.get("max_tokens") or CHAT_MAX_OUTPUT_TOKENS)
+        temperature = float(body.get("temperature", 0.2))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="bad analyzer body")
+    # Allowlist, not blocklist: anything unnamed here is dropped, so n/best_of/stream cannot
+    # multiply the output bill. Gemma via Mantle also rejects OpenAI's response_format, and
+    # the prompt already demands bare JSON that the app strips fences from.
+    outbound = {
+        "model": BEDROCK_MODEL,  # pinned server-side; client value ignored
+        "messages": body.get("messages") or [],
+        "temperature": max(0.0, min(temperature, 1.0)),
+        "max_tokens": max(1, min(wanted, CHAT_MAX_OUTPUT_TOKENS)),
+    }
     resp = requests.post(
         BEDROCK_URL,
         headers={"Authorization": f"Bearer {_bedrock_token()}",
                  "Content-Type": "application/json"},
-        json=body, timeout=120)
+        json=outbound, timeout=120)
+    headers = {}
+    if resp.status_code == 200:
+        # Commit the unit only for an answer we were billed for, same rule as the two routes
+        # above. The body is a verbatim OpenAI-shape pass-through the app decodes as such, so
+        # the fresh quota rides in the header StashHTTP already reads on every response.
+        quota = store.reserve_quota(1) or store.get_quota()
+        headers["X-Stash-Quota"] = json.dumps(quota.model_dump(by_alias=True))
     return Response(content=resp.content, status_code=resp.status_code,
-                    media_type="application/json")
+                    media_type="application/json", headers=headers)
 
 
-# ---------------------------------------------------------------- keep-offline
+# ---------------------------------------------------------------- transient media
 
 @router.get("/tiktok/download/{video_id}")
-def tiktok_download(video_id: str, authorization: str | None = Header(None)):
-    require_auth(authorization)
+def tiktok_download(video_id: str, store: DynamoImportStore = Depends(user_store)):
+    """mp4 bytes for the app's visual-text OCR backfill, which samples frames and deletes
+    the file immediately. No persistent offline copy is served or kept anywhere."""
     if not re.fullmatch(r"\d{5,25}", video_id):
         raise HTTPException(status_code=400, detail="bad video id")
-    with tempfile.TemporaryDirectory() as td:
-        out = os.path.join(td, f"{video_id}.mp4")
+    quota = peek_quota(store)
+
+    # Not TemporaryDirectory: the file has to outlive this function so the body can be
+    # streamed instead of read whole into a 1 GB box's memory. The generator cleans up.
+    temp_dir = tempfile.mkdtemp(prefix="stash-dl-")
+    try:
+        out = os.path.join(temp_dir, f"{video_id}.mp4")
         dl = subprocess.run(
             [YTDLP, "-q", "--no-warnings", "-f", "mp4", "-o", out,
              f"https://www.tiktok.com/@/video/{video_id}"],
             capture_output=True, timeout=180)
         if dl.returncode != 0 or not os.path.exists(out):
             raise HTTPException(status_code=502, detail="download failed")
-        data = open(out, "rb").read()
-    return Response(content=data, media_type="video/mp4")
+        quota = store.reserve_quota(1) or store.get_quota()  # bytes exist, unit earned
+    except BaseException:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    def stream():
+        try:
+            with open(out, "rb") as handle:
+                while chunk := handle.read(1 << 20):
+                    yield chunk
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return StreamingResponse(stream(), media_type="video/mp4",
+                             headers={"X-Stash-Quota": json.dumps(quota.model_dump(by_alias=True))})
 
 
 # ---------------------------------------------------------------- self-check

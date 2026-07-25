@@ -112,18 +112,15 @@ struct CookView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "fork.knife")
-                .font(.system(size: 36, weight: .semibold))
-                .foregroundStyle(Color.categoryRecipe)
-            Text("Nothing to cook yet")
-                .font(.archivo(17, .bold))
-                .foregroundStyle(Color.stashInk)
-            Text("Recipes you save land here as a wall.")
-                .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
-        }
-        .frame(maxWidth: .infinity)
+        StashEmptyState(
+            symbol: "fork.knife",
+            tint: .categoryRecipe,
+            title: "Nothing to cook yet",
+            message: videos.isEmpty
+                ? "Recipes land here as a wall once your favorites are in."
+                : "None of your saves came back as a recipe yet — the wall fills as they are analyzed.",
+            offersImport: videos.isEmpty
+        )
     }
 }
 

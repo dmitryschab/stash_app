@@ -2,7 +2,8 @@
 //
 // Thin HTTP clients for the self-hosted "model box" over Tailscale, following AtlasFlow's
 // DiffusionGemma pattern: OpenAI-compatible endpoints, base URL from runtime config (never
-// committed), placeholder API key, a distinct "box unreachable" error, ~30 s timeout.
+// committed), a distinct "box unreachable" error, ~30 s timeout. Authorization is the
+// signed-in user's Stash JWT, fetched per request through `BoxConfig.auth` (see StashAuth).
 //
 //   TranscriberClient → POST {base}/audio/transcriptions  (Whisper, multipart upload)
 //   AnalyzerClient    → POST {base}/chat/completions        (structured JSON output → Analysis)
@@ -30,19 +31,23 @@ private enum BoxHTTP {
     }
 
     /// Throws `BoxError.badResponse` for any non-2xx status.
-    static func validate(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else { return }
-        guard (200..<300).contains(http.statusCode) else {
-            throw BoxError.badResponse(http.statusCode)
+    static func validate(_ response: HTTPURLResponse) throws {
+        guard (200..<300).contains(response.statusCode) else {
+            throw BoxError.badResponse(response.statusCode)
         }
     }
 
-    /// Runs the request, mapping transport failures and validating the status code.
-    static func send(_ request: URLRequest, on session: URLSession) async throws -> Data {
+    /// The single funnel for both clients: `StashHTTP` owns the bearer, the one 401 refresh
+    /// retry and the 402 decode (both surface as `StashError`), so all that is left here is
+    /// mapping transport failures and validating the status code.
+    static func send(_ request: URLRequest, on session: URLSession,
+                     auth: StashAuthProvider) async throws -> Data {
         let data: Data
-        let response: URLResponse
+        let response: HTTPURLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await StashHTTP.send(request, on: session, auth: auth)
+        } catch let error as StashError {
+            throw error   // session/quota failures stay typed all the way to the UI
         } catch {
             throw mapTransportError(error)
         }
@@ -79,21 +84,25 @@ public struct TranscriberClient: Transcribing {
         let url = config.baseURL.appendingPathComponent("videos/transcript")
         var request = URLRequest(url: url, timeoutInterval: Self.transcriptTimeout)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["url": videoURL.absoluteString])
 
-        let data = try await BoxHTTP.send(request, on: session)
+        let data = try await BoxHTTP.send(request, on: session, auth: config.auth)
+        let decoded: TranscriptResponse
         do {
-            return try JSONDecoder().decode(TranscriptResponse.self, from: data).transcript
+            decoded = try JSONDecoder().decode(TranscriptResponse.self, from: data)
         } catch {
             throw BoxError.malformedPayload("transcript response: \(error.localizedDescription)")
         }
+        // Transcription costs a quota unit, so the response carries the new balance.
+        if let quota = decoded.quota { config.auth.quotaChanged(quota) }
+        return decoded.transcript
     }
 
     private struct TranscriptResponse: Decodable {
         let transcript: String?
         let unavailable: Bool?
+        let quota: Quota?
     }
 }
 
@@ -113,7 +122,7 @@ public struct AnalyzerClient: Analyzing {
 
     public func analyze(meta: VideoMeta, transcript: String?, ocrText: String?) async throws -> Analysis {
         let request = try makeRequest(meta: meta, transcript: transcript, ocrText: ocrText)
-        let data = try await BoxHTTP.send(request, on: session)
+        let data = try await BoxHTTP.send(request, on: session, auth: config.auth)
 
         let content: String
         do {
@@ -141,7 +150,6 @@ public struct AnalyzerClient: Analyzing {
         var request = URLRequest(url: url, timeoutInterval: boxRequestTimeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
 
         let payload: [String: Any] = [
             "model": config.chatModel,

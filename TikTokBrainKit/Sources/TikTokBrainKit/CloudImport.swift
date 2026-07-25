@@ -31,12 +31,16 @@ public struct CloudImportSubmission: Codable, Equatable, Sendable {
     public var state: CloudImportState
     public var accepted: Int
     public var duplicates: Int
+    /// The budget left after this import was charged — one unit per accepted video.
+    public var quota: Quota?
 
-    public init(importID: String, state: CloudImportState, accepted: Int, duplicates: Int) {
+    public init(importID: String, state: CloudImportState, accepted: Int, duplicates: Int,
+                quota: Quota? = nil) {
         self.importID = importID
         self.state = state
         self.accepted = accepted
         self.duplicates = duplicates
+        self.quota = quota
     }
 }
 
@@ -184,9 +188,10 @@ public struct CloudImportSyncState: Codable, Equatable, Sendable {
 }
 
 public enum CloudImportLimits {
-    /// Matches the server contract cap (services/webhook/cloud_import_models.py). A whole
-    /// ~900-video library fits in one import; larger libraries would need client-side
-    /// chunking, which isn't built yet (YAGNI until someone actually exceeds this).
+    /// Matches the server contract cap (services/webhook/cloud_import_models.py). It is a
+    /// shape check, not the real ceiling: the box charges a unit per submitted video and one
+    /// account never holds more than 600 of them, so `PipelineCenter.runCloudImport` trims a
+    /// submission to the remaining budget long before this cap comes into play.
     public static let maxVideosPerImport = 1200
 }
 
@@ -206,8 +211,12 @@ public enum CloudImportError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .missingAuthorization: "Developer cloud-import token is not configured."
+        case .missingAuthorization: "Your Stash session has expired — sign in again."
         case .invalidBaseURL: "The cloud-import base URL is invalid."
+        // A 402 normally arrives as `StashError.quotaExhausted` with the numbers attached; it
+        // only lands here when the body was not the documented `{"detail","quota"}` shape, and
+        // "HTTP 402" is not something to show a user.
+        case .badResponse(402): "Import budget used up — this month's allowance is spent."
         case .badResponse(let status): "Cloud import returned HTTP \(status)."
         case .transport(let message): "Cloud import is unreachable: \(message)"
         case .malformedPayload(let message): "Cloud import returned an invalid response: \(message)"
@@ -226,20 +235,31 @@ public enum CloudImportError: Error, Equatable, LocalizedError {
 
 public struct CloudImportClient: Sendable {
     private let baseURL: URL
-    private let authorization: @Sendable () -> String?
+    private let auth: StashAuthProvider
     private let session: URLSession
     private let retryDelays: [UInt64]
 
+    public init(
+        baseURL: URL,
+        auth: StashAuthProvider,
+        session: URLSession = .shared,
+        retryDelays: [UInt64] = [250, 1_000]
+    ) {
+        self.baseURL = baseURL
+        self.auth = auth
+        self.session = session
+        self.retryDelays = retryDelays
+    }
+
+    /// Fixed-token convenience — local-box development and tests, no refresh, no quota sink.
     public init(
         baseURL: URL,
         authorization: @escaping @Sendable () -> String?,
         session: URLSession = .shared,
         retryDelays: [UInt64] = [250, 1_000]
     ) {
-        self.baseURL = baseURL
-        self.authorization = authorization
-        self.session = session
-        self.retryDelays = retryDelays
+        self.init(baseURL: baseURL, auth: .fixed(authorization),
+                  session: session, retryDelays: retryDelays)
     }
 
     public func submit(bookmarks: [Bookmark], clientImportID: UUID) async throws -> CloudImportSubmission {
@@ -251,7 +271,9 @@ public struct CloudImportClient: Sendable {
             })
         var request = try makeRequest(path: "imports", method: "POST")
         request.httpBody = try Self.encoder.encode(payload)
-        return try await send(request, as: CloudImportSubmission.self)
+        let submission = try await send(request, as: CloudImportSubmission.self)
+        if let quota = submission.quota { auth.quotaChanged(quota) }
+        return submission
     }
 
     public func status(importID: String) async throws -> CloudImportStatus {
@@ -267,7 +289,6 @@ public struct CloudImportClient: Sendable {
         guard let url = components.url else { throw CloudImportError.invalidBaseURL }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        try addAuthorization(to: &request)
         let page = try await send(request, as: ResultPage.self)
         return (page.results, page.nextCursor)
     }
@@ -301,25 +322,16 @@ public struct CloudImportClient: Sendable {
         var request = URLRequest(url: try makeURL(path: path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        try addAuthorization(to: &request)
         return request
     }
 
-    private func addAuthorization(to request: inout URLRequest) throws {
-        guard let token = authorization(), !token.isEmpty else {
-            throw CloudImportError.missingAuthorization
-        }
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    }
-
+    /// `StashHTTP` attaches the bearer, refreshes once on 401 and raises 402 as a typed
+    /// `StashError`; the retry loop here only covers the transient statuses (408/429/5xx).
     private func send<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
         var attempt = 0
         while true {
             do {
-                let (data, response) = try await session.data(for: request)
-                guard let http = response as? HTTPURLResponse else {
-                    throw CloudImportError.transport("invalid HTTP response")
-                }
+                let (data, http) = try await StashHTTP.send(request, on: session, auth: auth)
                 guard (200..<300).contains(http.statusCode) else {
                     throw CloudImportError.badResponse(http.statusCode)
                 }
@@ -328,6 +340,10 @@ public struct CloudImportClient: Sendable {
                 } catch {
                     throw CloudImportError.malformedPayload(error.localizedDescription)
                 }
+            } catch StashError.unauthenticated {
+                throw CloudImportError.missingAuthorization
+            } catch let error as StashError {
+                throw error   // quota exhausted: retrying spends nothing and fixes nothing
             } catch let error as CloudImportError {
                 guard shouldRetry(error), attempt < retryDelays.count else { throw error }
                 try? await Task.sleep(nanoseconds: retryDelays[attempt] * 1_000_000)

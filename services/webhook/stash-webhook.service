@@ -8,10 +8,14 @@ User=stash
 Group=stash
 WorkingDirectory=/opt/stash-webhook
 EnvironmentFile=-/etc/stash-webhook/env
-ExecStart=/opt/stash-webhook/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
+; --no-access-log: the app's own middleware already emits one structured JSON line per
+; request, including the userID, which uvicorn's text access log cannot.
+ExecStart=/opt/stash-webhook/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --no-access-log
 Restart=always
 RestartSec=3
 StateDirectory=stash-webhook
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

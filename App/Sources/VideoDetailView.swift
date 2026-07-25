@@ -277,20 +277,50 @@ struct VideoDetailView: View {
                 .frame(height: 52)
                 .background(Color.stashInk, in: Capsule())
             }
-            Button {
-                rerun()
-            } label: {
-                HStack(spacing: 8) {
-                    Micro(text: "Re-run pipeline", size: 11, tracking: 1.2, color: .stashInk.opacity(0.45))
-                    if isRerunning { ProgressView().controlSize(.small).tint(.stashInk) }
+            if !isDemoLibrary {
+                Button {
+                    rerun()
+                } label: {
+                    HStack(spacing: 8) {
+                        Micro(text: "Re-run pipeline", size: 11, tracking: 1.2, color: .stashInk.opacity(0.45))
+                        if isRerunning { ProgressView().controlSize(.small).tint(.stashInk) }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isRerunning || budgetSpent)
+                .opacity(budgetSpent ? 0.4 : 1)
+                .padding(.top, 14)
+                // A re-run fetches the transcript again, which costs a unit. Saying so up front
+                // beats letting the stage come back "Failed" with no reason attached.
+                if let quota, quota.remaining == 0 {
+                    Micro(text: "No budget left · \(quota.monthLimit) more on "
+                          + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted),
+                          size: 9.5, tracking: 1.2, color: .categoryOther)
+                        .padding(.top, 8)
                 }
             }
-            .buttonStyle(.plain)
-            .disabled(isRerunning)
-            .padding(.top, 14)
         }
         .padding(.top, 26)
     }
+
+    /// Read through the singleton rather than stored: `VideoDetailView` takes its video as a
+    /// non-defaulted `let`, so any extra private stored property would drag the memberwise
+    /// initializer down to `private` and break every call site. Observation still tracks it —
+    /// the read happens inside `body`.
+    private var quota: Quota? { StashSession.shared.quota }
+    private var budgetSpent: Bool { quota?.remaining == 0 }
+
+    /// The demo library is invented content: its video ids do not resolve on TikTok, so a
+    /// re-run enriches to nothing, and `PipelineRunner` reads that as deleted/private and sets
+    /// `unavailable`. That drops the row out of Library, Cook, Music, Today and the mind map
+    /// with no undo and no way back, so App Review could shrink its own demo library a tap at
+    /// a time. Hide the control instead.
+    ///
+    /// ponytail: gated per account rather than per row — a demo account's library *is* the
+    /// seeded one (RootView wipes any other on sign-in), and a per-row flag means a new
+    /// `Video` property and a store migration for one button on one reviewer's device. The
+    /// ceiling is a reviewer who also imports the sample export and then finds no re-run.
+    private var isDemoLibrary: Bool { StashSession.shared.isDemoAccount }
 
     private func rerun() {
         guard !isRerunning else { return }

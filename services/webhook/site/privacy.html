@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy policy — Stash</title>
-<meta name="description" content="How Stash handles your data: it accesses your TikTok archive solely to obtain your Favourite Videos and discards everything else on receipt.">
+<meta name="description" content="How Stash handles your data: what it collects, the servers and providers that process it, how long it is kept, and how to delete all of it.">
 <link rel="icon" type="image/png" href="/assets/stash-logo-clean.png">
 <style>
   :root {
@@ -86,45 +86,136 @@
   <div class="wrap">
     <article>
       <h1>Privacy policy</h1>
-      <p class="updated">Last updated 10 July 2026 · Controller: Dmitrijs Šabeļņiks (individual developer) · Contact: <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a></p>
+      <p class="updated">Last updated 25 July 2026 · Applies to the Stash iOS app and this website</p>
 
-      <p class="intro">Stash is a personal tool that organizes the TikTok videos you have saved to your own Favourites into a searchable library. This policy explains, plainly, what Stash accesses, what it keeps, and the rights you have over your data.</p>
-
-      <h2>What we access</h2>
-      <p>With your explicit authorisation via TikTok Login, Stash accesses your TikTok data archive <strong>solely to obtain your Favourite Videos</strong> — the videos you have bookmarked. We do not use any other category of your TikTok data.</p>
-
-      <h2>What we keep</h2>
-      <p>We keep only your Favourite Videos list and the organized library Stash builds from it: titles, summaries, categories, and links.</p>
       <div class="callout">
-        <p>We <strong>discard all other data</strong> contained in the TikTok archive immediately on receipt. Messages, watch history, profile, wallet, and every other category are never stored — they are dropped in memory before anything is written to storage, and the archive itself is deleted right after your favourites are extracted.</p>
+        <p><strong>Who is responsible for your data.</strong> The controller is Dmitrijs Sabelniks, a sole proprietorship (eenmanszaak) registered in the Netherlands, KvK number 70958416, registered address Gasthuisring 14-21, 5041 DS Tilburg, Netherlands. Write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a> about anything on this page.</p>
       </div>
 
-      <h2>Why we process it</h2>
-      <p>To provide the service you asked for: an organized, searchable library of the TikTok videos you saved. The lawful basis is performing a service at your request and your consent, which you may withdraw at any time.</p>
+      <p class="intro">Stash takes the TikTok videos you saved to your own Favourites and builds a searchable library out of them: recipes become recipe cards, music becomes a track list, how-to videos become summaries. Doing that means your data leaves your phone and is processed on servers we run and by two providers we use. This page says exactly what we hold, where it goes, how long it stays, and how to remove all of it. Stash is an invitation-only beta.</p>
+
+      <h2>What we collect</h2>
+      <dl>
+        <dt>Your Apple account identifier</dt>
+        <dd>Signing in with Apple gives us a stable identifier that is unique to Stash. It is how we recognise you across devices and how everything below is keyed. <strong>Stash asks Apple for no name and no email address</strong> — we never receive them, not even a private relay address.</dd>
+        <dt>Your invite code and quota counters</dt>
+        <dd>The code you used to join, and running counts of how many videos you have imported, so we can hold the beta to its capacity limits.</dd>
+        <dt>Your Favourites list</dt>
+        <dd>For each saved video: the TikTok video ID and link, the date you saved it, the creator's handle, the caption, hashtags, thumbnail URL, and duration.</dd>
+        <dt>The library Stash derives from it</dt>
+        <dd>A category, title, summary and topic list per video, plus the structured recipe, track and code cards. To produce these, Stash transcribes the spoken audio and reads the text shown on screen, and it stores both the transcript and that on-screen text.</dd>
+        <dt>Import bookkeeping</dt>
+        <dd>Per-video processing state, retry counts, error codes and estimated processing cost, so a failed import can be resumed rather than restarted.</dd>
+        <dt>Server logs</dt>
+        <dd>Our servers log request times, paths, status codes and the IP address the request came from. We use these to keep the service up and to spot abuse.</dd>
+      </dl>
+      <p>Stash has no analytics SDK, no advertising SDK and no crash-reporting SDK. We do not track you across other companies' apps or websites, and we do not sell your data.</p>
+
+      <h2>How your favourites reach Stash</h2>
+      <p>There are two routes, and today only the first one is live.</p>
+      <dl>
+        <dt>Your own TikTok data export (live)</dt>
+        <dd>You request your data from TikTok, download the file yourself, and pick it in Stash. Stash reads the Favourite Videos entries out of it and ignores every other category in the file — messages, watch history, profile, wallet and the rest are never sent to our servers and never written to storage.</dd>
+        <dt>TikTok Data Portability API (not live)</dt>
+        <dd>We have applied to TikTok for continuous access to your Favourites so the library can stay in sync without you exporting anything. The application is still in review. If it is approved, connecting is an explicit authorisation you give inside TikTok, and you can revoke it from TikTok's own settings at any time. This page will be updated before that route is switched on.</dd>
+      </dl>
+
+      <h2>Why we process it, and on what legal basis</h2>
+      <dl>
+        <dt>Running your account, importing your favourites, analysing them and counting your quota</dt>
+        <dd>Article 6(1)(b) GDPR — necessary to perform the service you signed up for. Without this data there is no library.</dd>
+        <dt>Keeping the service up, logging requests, preventing abuse, and enforcing the invite gate</dt>
+        <dd>Article 6(1)(f) GDPR — our legitimate interest in running a small service on a fixed budget without it being scraped or overrun. We weighed this against your interests: the data involved is limited to logs and counters, it is not used to profile you, and it is deleted on the schedule below.</dd>
+      </dl>
+      <p>We do not rely on consent for any of the above, so there is no consent for you to withdraw — instead, deleting your account (below) ends the processing entirely. If we ever add something genuinely optional, we will ask for consent separately and it will be refusable without losing the rest.</p>
 
       <h2>Where it is processed</h2>
-      <p>Your favourites are processed in <strong>your own environment</strong> — your device and a model service under your control. Stash is a single-user personal tool; there is no shared, multi-tenant datastore of TikTok content. Your data is not sold and is not shared with third parties.</p>
+      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. Speech-to-text runs at Groq, which is outside the EU; see international transfers below.</p>
+      <p>This is shared infrastructure. Your rows sit in the same database table and the same queue as other users', separated by your account identifier rather than by having a server of your own.</p>
+      <p>To transcribe a video and read its on-screen text, our server fetches the video from TikTok, extracts the audio and samples some frames, and deletes the downloaded file as soon as that is done. Stash does not keep copies of TikTok videos.</p>
+
+      <h2>Who else processes it</h2>
+      <p>These are our sub-processors. We do not share your data with anyone else, and we do not sell it.</p>
+      <dl>
+        <dt>Amazon Web Services EMEA SARL</dt>
+        <dd>Hosting, the import queue, and the database (eu-north-1, Stockholm); text analysis on Bedrock (eu-central-1, Frankfurt). Receives everything listed under "What we collect".</dd>
+        <dt>Groq, Inc.</dt>
+        <dd>Speech-to-text. Receives the audio track extracted from a saved video and returns the transcript. It does not receive your account identifier, your email, or your library.</dd>
+      </dl>
+
+      <h2>International transfers</h2>
+      <p>Groq, Inc. is established in the United States and we send audio to its API, so this is a transfer outside the EEA under Chapter V GDPR. It is made under the European Commission's Standard Contractual Clauses, together with the fact that the audio is transient — it is processed for the length of one request and is not retained by us afterwards.</p>
+      <!--
+        VERIFY BEFORE PUBLISHING: two facts here were not checkable from this repository.
+        (1) Whether Groq, Inc. is actively certified on the EU-U.S. Data Privacy Framework list at
+            dataprivacyframework.gov. If it is, the transfer basis is an adequacy decision under
+            Art. 45 and this paragraph should say so; if it is not, leave the SCC wording above.
+        (2) Whether Groq has an EU processing region and whether the account is pinned to it. The
+            code calls api.groq.com with no region pin (services/webhook/api_v1.py), so the text
+            above assumes US processing. Do not soften it without checking.
+      -->
+      <p>AWS processes your data in the EU regions named above. AWS's parent company is American, so its Data Processing Addendum and the Standard Contractual Clauses cover any support access from outside the EEA. Stash does not use the AWS European Sovereign Cloud.</p>
+
+      <h2>Videos made by other people</h2>
+      <p>Your library is built out of other people's videos. Captions, creator handles, transcripts and on-screen text are personal data about TikTok creators who are not Stash users and never gave us anything directly. Contacting each of them would take effort out of all proportion to the processing, so we rely on the exemption in Article 14(5)(b) GDPR and set out here what we do instead: this content is only ever visible inside the private library of the user who saved the video, it is never published, never used to build creator profiles, and never used to train models.</p>
+      <p>A transcript can incidentally contain sensitive material — someone talking about their health, their politics or their religion. We do not seek that out, do not index it as such, and do not use it for anything beyond producing your summary.</p>
 
       <h2>How long we keep it</h2>
-      <p>For as long as you keep it in Stash. You can delete individual items or wipe everything from within the app at any time. Disconnecting TikTok revokes the ongoing grant and stops all future transfers.</p>
+      <dl>
+        <dt>Your library and account</dt>
+        <dd>Until you delete your account. If you stop using Stash entirely, we delete accounts that have had no activity for 24 months, after an email warning where we have an address to warn you at.</dd>
+        <dt>Import bookkeeping</dt>
+        <dd>90 days after the import finishes.</dd>
+        <dt>Server logs</dt>
+        <dd>30 days, then deleted.</dd>
+        <dt>Queued work</dt>
+        <dd>Messages carrying video links sit in the processing queue for at most 14 days before the queue drops them, whether or not they were handled.</dd>
+        <dt>Backups</dt>
+        <dd>The database has a rolling 35-day point-in-time backup window. Data you delete disappears from the live service immediately, but persists in that backup window until it rolls off. We do not restore backups to bring deleted accounts back.</dd>
+      </dl>
+
+      <h2>Deleting your account and your data</h2>
+      <p>Settings in the app has <strong>Delete account</strong>. It removes your account identifier, your library, your quota counters and your import bookkeeping from our servers, and it deletes the copy held on your phone. It also revokes the Sign in with Apple grant, so Stash disappears from the Apple ID list on your device. It is immediate and it is not reversible. The two lags above — the 14-day queue window and the 35-day backup window — are the only places anything survives, and neither is used to serve your data back to anyone.</p>
+      <p>Deleting in the app is all or nothing today: there is no button that removes a single video. If you want one video gone rather than the account, or would rather ask us than press the button, write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a> and we will remove it.</p>
 
       <h2>Your rights</h2>
-      <p>Under the GDPR you have the right to access, export, correction, deletion, and withdrawal of consent for your data.</p>
+      <p>Under the GDPR you have the following rights over your data. Exercise any of them by writing to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a>; two of them you can also exercise yourself in the app.</p>
       <dl>
-        <dt>Access and export</dt>
-        <dd>You see all stored data directly in the app; it is your own library, and you can export it at any time.</dd>
-        <dt>Deletion</dt>
-        <dd>Delete any item or wipe all Stash data from within the app. A deletion request to <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a> is honoured within 30 days.</dd>
-        <dt>Revocation</dt>
-        <dd>Revoke Stash's access from TikTok's own settings whenever you choose.</dd>
+        <dt>Access (Art. 15)</dt>
+        <dd>Ask what we hold about you and get a copy.</dd>
+        <dt>Portability (Art. 20)</dt>
+        <dd>Settings has <strong>Export my data</strong>, which produces a machine-readable JSON file containing your library, your account record and your quota counters.</dd>
+        <dt>Rectification (Art. 16)</dt>
+        <dd>Ask us to correct anything wrong. Summaries and categories are generated by a model and are sometimes simply wrong — tell us and we will fix or remove them.</dd>
+        <dt>Erasure (Art. 17)</dt>
+        <dd>Delete your account in the app, or ask us to.</dd>
+        <dt>Restriction (Art. 18)</dt>
+        <dd>Ask us to stop processing while a dispute about accuracy or lawfulness is resolved.</dd>
+        <dt>Objection (Art. 21)</dt>
+        <dd>Object to the processing we base on legitimate interests. We will stop unless we can show compelling grounds that override your interests.</dd>
       </dl>
-      <p>You may also lodge a complaint with your local data-protection authority. In Latvia this is the Data State Inspectorate (Datu valsts inspekcija, <a href="https://www.dvi.gov.lv" rel="noopener">www.dvi.gov.lv</a>).</p>
+      <p>We answer without undue delay and within one month. If a request is genuinely complex we may take up to two months more, and we will tell you why within the first month.</p>
+      <p>Stash sorts your videos into categories using a language model. That is not automated decision-making with legal or similarly significant effects under Article 22 — nothing about you is decided, only how a video is filed, and you can change or delete any of it.</p>
 
-      <h2>Contact</h2>
-      <p>For any question about this policy or your data, contact <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a>. We respond within 30 days.</p>
+      <h2>Security</h2>
+      <p>Everything between the app and our server travels over HTTPS. The database and the processing queue are encrypted at rest. Administrative access to the server is by SSH key from a single operator address. Only the operator has access to production data, and only to run and repair the service.</p>
+      <p>Stash is a small operation on one server. We think that is the right size for what it does, but you should know that it is not a company with a security team, and this policy is not a promise that nothing can go wrong.</p>
+
+      <h2>If there is a breach</h2>
+      <p>If personal data is breached in a way that is likely to risk your rights and freedoms, we report it to the Autoriteit Persoonsgegevens within 72 hours of becoming aware, and we tell you directly when the risk to you is high.</p>
+
+      <h2>Age</h2>
+      <p>Stash is for people aged 16 and over. We do not knowingly create accounts for anyone younger. If you believe a child has an account, write to us and we will delete it.</p>
+
+      <h2>Other services you touch through Stash</h2>
+      <p>Watching a saved video inside Stash loads TikTok's own embedded player, which means TikTok sees that request and may set its own cookies — that is TikTok's processing, under TikTok's privacy policy, not ours. Tapping "Play on Spotify" opens Spotify with a search; from that point you are in Spotify's hands. Signing in uses Apple's own flow, and Apple sees that you use an app from our developer account.</p>
+
+      <h2>Complaints</h2>
+      <p>If you are unhappy with how we handle your data, tell us first — <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a>. You also have the right to complain to a supervisory authority. Ours is the Dutch one, the Autoriteit Persoonsgegevens in The Hague (<a href="https://www.autoriteitpersoonsgegevens.nl" rel="noopener">autoriteitpersoonsgegevens.nl</a>). You may equally complain to the authority in the EU country where you live or work.</p>
+      <p>We are not required to appoint a data protection officer, and we do not need an Article 27 representative because the controller is established in the EU.</p>
 
       <h2>Changes</h2>
-      <p>We will post any changes to this policy on this page with an updated date.</p>
+      <p>We will post any change to this policy on this page with a new date at the top. If a change materially affects what we do with your data, we will tell you in the app before it takes effect.</p>
     </article>
   </div>
 </main>
@@ -134,9 +225,9 @@
     <div class="links">
       <a href="/">Home</a>
       <a href="/terms">Terms of service</a>
-      <a href="mailto:dmitryschab@gmail.com">Contact</a>
+      <a href="mailto:privacy@stash.dmitrijs.dev">Contact</a>
     </div>
-    <div class="meta">Stash · <a href="mailto:dmitryschab@gmail.com">dmitryschab@gmail.com</a></div>
+    <div class="meta">Stash · Dmitrijs Sabelniks · KvK 70958416 · <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a></div>
   </div>
 </footer>
 </body>

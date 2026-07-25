@@ -1,24 +1,34 @@
-"""DynamoDB state adapter for durable, idempotent cloud imports."""
+"""DynamoDB state adapter for durable, idempotent cloud imports.
+
+Every item this module writes lives under the authenticated user's partition,
+`PK = "INSTALL#<userID>"`. That single key choice is what buys per-user isolation
+(a foreign import id simply is not in the caller's partition, so `GET /v1/imports/{id}`
+cannot be an IDOR), and it makes `DELETE /v1/me` and `GET /v1/me/export` one Query each
+instead of a GSI. There is deliberately no default user id: constructing a store without
+an authenticated caller is a TypeError, not a silent write to a shared partition.
+"""
 
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterator
 
 from botocore.exceptions import ClientError
 
 from cloud_import_aws import instance_role_session
 
 from cloud_import_models import (
+    INITIAL_LIMIT,
+    MONTH_LIMIT,
     CreateImportRequest,
     ImportState,
     ImportStatus,
     Progress,
+    Quota,
     ResultPage,
     VideoResult,
     VideoState,
@@ -31,6 +41,7 @@ class CreateImportResult:
     created: bool
     accepted: int
     duplicates: int = 0
+    deferred: int = 0
 
 
 CLAIM_LEASE_SECONDS = 300
@@ -39,9 +50,39 @@ CLAIM_LEASE_SECONDS = 300
 # step with the queue's redrive maxReceiveCount (infra/aws-box/main.tf).
 MAX_FAST_PASS_ATTEMPTS = 5
 
+# Compare-and-set retries on the quota row. N writers racing on one row need N attempts in
+# the worst case — each round exactly one wins and the rest re-read — and the shipping app
+# drains its queue at concurrency 3 on the metered transcript route. A budget of 3 was
+# therefore exactly at the limit, and running out raises *after* Groq has already been paid
+# for and the transcript produced. 8 leaves room for a second device on the same account
+# and costs nothing when uncontended.
+QUOTA_CAS_ATTEMPTS = 8
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _next_month_reset(now: datetime) -> int:
+    """Unix seconds at 00:00 UTC on the 1st of the following calendar month."""
+    year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+    return int(datetime(year, month, 1, tzinfo=timezone.utc).timestamp())
+
+
+_shared_table = None
+
+
+def shared_table():
+    """The one boto3 Table handle for the process, built lazily.
+
+    Lazy because importing this module must not touch AWS: pytest and `python api_v1.py`
+    both import it off-box, where reaching for instance metadata would hang.
+    """
+    global _shared_table
+    if _shared_table is None:
+        resource = instance_role_session().resource("dynamodb")
+        _shared_table = resource.Table(os.environ["STASH_IMPORT_TABLE"])
+    return _shared_table
 
 
 def _dynamo_value(value: Any) -> Any:
@@ -79,19 +120,31 @@ class DynamoImportStore:
         table=None,
         *,
         table_name: str | None = None,
-        installation_id: str = "test-group",
+        user_id: str,
         dynamodb_resource=None,
     ):
+        if not user_id:
+            raise ValueError("user_id is required — there is no shared partition")
         if table is None:
             resource = dynamodb_resource or instance_role_session().resource("dynamodb")
             table = resource.Table(table_name or os.environ["STASH_IMPORT_TABLE"])
         self.table = table
         self.table_name = getattr(table, "name", table_name or os.environ.get("STASH_IMPORT_TABLE", ""))
-        self.installation_id = installation_id
+        self.user_id = user_id
         self._client = getattr(getattr(table, "meta", None), "client", None)
 
+    @property
+    def partition(self) -> str:
+        return f"INSTALL#{self.user_id}"
+
     def _key(self, import_id: str, suffix: str) -> dict[str, str]:
-        return {"PK": f"IMPORT#{import_id}", "SK": suffix}
+        return {"PK": self.partition, "SK": f"IMPORT#{import_id}#{suffix}"}
+
+    def _client_key(self, client_import_id) -> dict[str, str]:
+        return {"PK": self.partition, "SK": f"CLIENT#{client_import_id}"}
+
+    def _quota_key(self) -> dict[str, str]:
+        return {"PK": self.partition, "SK": "QUOTA"}
 
     def _get(self, key: dict[str, str]) -> dict[str, Any] | None:
         return self.table.get_item(Key=key).get("Item")
@@ -100,12 +153,14 @@ class DynamoImportStore:
         if self._client is not None and hasattr(self._client, "transact_write_items"):
             self._client.transact_write_items(TransactItems=operations)
             return
-        # Small fake-table fallback used by local contract tests. Production uses
-        # the transaction path above, which keeps stage and counters atomic.
+        # Small fake-table fallback used by local contract tests. Production uses the
+        # transaction path above, which keeps stage and counters atomic. This parser
+        # understands exactly the expression shapes this module emits and raises on
+        # anything else: a fallback that *guesses* would let a wrong arithmetic result
+        # pass green in tests while production diverged.
         for operation in operations:
             if "Put" in operation:
-                put = operation["Put"]
-                self.table.put_item(Item=put["Item"])
+                self.table.put_item(Item=operation["Put"]["Item"])
             elif "Update" in operation:
                 update = operation["Update"]
                 key = update["Key"]
@@ -113,27 +168,44 @@ class DynamoImportStore:
                 names = update.get("ExpressionAttributeNames", {})
                 values = update.get("ExpressionAttributeValues", {})
                 expression = update.get("UpdateExpression", "")
-                if expression.startswith("SET "):
-                    assignments = expression[4:].split(", ")
-                    for assignment in assignments:
-                        name, value = [part.strip() for part in assignment.split("=")]
-                        field = names.get(name, name)
-                        if "+" in value:
-                            base, increment = [part.strip() for part in value.split("+")]
-                            item[field] = item.get(names.get(base, base), 0) + values[increment]
-                        else:
-                            item[field] = values[value]
+                if not expression.startswith("SET "):
+                    raise NotImplementedError(f"fallback cannot apply {expression!r}")
+                for assignment in expression[4:].split(", "):
+                    name, value = [part.strip() for part in assignment.split("=", 1)]
+                    field = names.get(name, name)
+                    for operator, apply in ((" + ", int.__add__), (" - ", int.__sub__)):
+                        if operator in value:
+                            base, operand = [part.strip() for part in value.split(operator, 1)]
+                            item[field] = apply(int(item.get(names.get(base, base), 0)), int(values[operand]))
+                            break
+                    else:
+                        if value not in values:
+                            raise NotImplementedError(f"fallback cannot evaluate {value!r}")
+                        item[field] = values[value]
                 self.table.put_item(Item=item)
+            else:
+                raise NotImplementedError(f"fallback cannot apply {sorted(operation)}")
 
-    def create_import(self, request: CreateImportRequest) -> CreateImportResult:
-        client_key = {"PK": f"INSTALL#{self.installation_id}", "SK": f"CLIENT#{request.client_import_id}"}
+    def get_client_import(self, client_import_id) -> dict[str, Any] | None:
+        """The dedupe row for a client import id, or None when this is a first submission."""
+        return self._get(self._client_key(client_import_id))
+
+    def create_import(self, request: CreateImportRequest, *, deferred: int = 0) -> CreateImportResult:
+        """Stage `request`, which the caller may already have truncated to what the budget
+        covered; `deferred` is how many it dropped. Stored on both rows so a retry and a
+        later status poll report the same split instead of claiming the library landed whole.
+        """
+        client_key = self._client_key(request.client_import_id)
         existing = self._get(client_key)
         if existing:
-            return CreateImportResult(existing["importID"], False, int(existing.get("accepted", 0)))
+            return CreateImportResult(existing["importID"], False, int(existing.get("accepted", 0)),
+                                      deferred=int(existing.get("deferred", 0)))
 
-        # Derive the import id from the client id so a client retry after a partial
-        # create resumes onto the same rows instead of orphaning a fresh import each time.
-        import_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"stash-import/{request.client_import_id}"))
+        # Derive the import id from the client id so a client retry after a partial create
+        # resumes onto the same rows instead of orphaning a fresh import each time. Salted
+        # with the user so one account cannot derive (or collide with) another's import id
+        # by reusing its clientImportID — the id travels in URLs.
+        import_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"stash-import/{self.user_id}/{request.client_import_id}"))
         now = _now()
 
         # Stage the video rows first, one at a time. DynamoDB transactions cap at 100
@@ -150,6 +222,7 @@ class DynamoImportStore:
             "fastDone": 0,
             "unavailable": 0,
             "partialFailures": 0,
+            "deferred": deferred,
             "estimatedCostUSD": Decimal("0"),
             "updatedAt": now,
         }
@@ -157,6 +230,7 @@ class DynamoImportStore:
             **client_key,
             "importID": import_id,
             "accepted": len(request.videos),
+            "deferred": deferred,
             "createdAt": now,
         }
         operations = [
@@ -171,8 +245,9 @@ class DynamoImportStore:
             existing = self._get(client_key)
             if not existing:
                 raise
-            return CreateImportResult(existing["importID"], False, int(existing.get("accepted", 0)))
-        return CreateImportResult(import_id, True, len(request.videos))
+            return CreateImportResult(existing["importID"], False, int(existing.get("accepted", 0)),
+                                      deferred=int(existing.get("deferred", 0)))
+        return CreateImportResult(import_id, True, len(request.videos), deferred=deferred)
 
     def _ensure_videos(self, import_id: str, videos) -> None:
         """Create one QUEUED row per video if absent — idempotent across client retries."""
@@ -229,6 +304,21 @@ class DynamoImportStore:
 
     def get_video(self, import_id: str, video_id: str) -> dict[str, Any] | None:
         return self._get(self._key(import_id, f"VIDEO#{video_id}"))
+
+    def pending_videos(self, import_id: str) -> list[tuple[str, str | None]]:
+        """(video_id, url) for every row still waiting on a worker.
+
+        Backs the re-drive on a client retry: the rows are staged before the messages go
+        out, so an enqueue loop that dies halfway leaves paid-for videos that no worker
+        will ever see. Nothing else in the system revisits a QUEUED row.
+        """
+        waiting = {VideoState.QUEUED.value, VideoState.RETRYABLE.value}
+        return [
+            (item["videoID"], item.get("url"))
+            for page in self._pages(f"IMPORT#{import_id}#VIDEO#")
+            for item in page.get("Items", [])
+            if item.get("state") in waiting
+        ]
 
     def _mark_fast_pass(self, import_id: str) -> None:
         key = self._key(import_id, "META")
@@ -402,25 +492,157 @@ class DynamoImportStore:
             fastPass=Progress(done=int(item.get("fastDone", 0)), total=int(item.get("total", 0))),
             unavailable=int(item.get("unavailable", 0)),
             partialFailures=int(item.get("partialFailures", 0)),
+            deferred=int(item.get("deferred", 0)),
             estimatedCostUSD=float(item.get("estimatedCostUSD", 0)),
             updatedAt=item["updatedAt"],
         )
 
-    def list_results(self, import_id: str, cursor: str | None = None, limit: int = 50) -> ResultPage:
+    def _condition(self, sk_prefix: str):
+        """Key condition for this user's partition, boto-shaped or fake-shaped."""
         if hasattr(self.table, "meta"):
             from boto3.dynamodb.conditions import Key
-            expression = Key("PK").eq(f"IMPORT#{import_id}") & Key("SK").begins_with("VIDEO#")
-        else:
-            expression = (f"IMPORT#{import_id}", "VIDEO#")
-        items = self.table.query(KeyConditionExpression=expression).get("Items", [])
+            if not sk_prefix:
+                return Key("PK").eq(self.partition)
+            return Key("PK").eq(self.partition) & Key("SK").begins_with(sk_prefix)
+        return (self.partition, sk_prefix)
+
+    def _pages(self, sk_prefix: str, start_key: dict[str, str] | None = None, limit: int | None = None):
+        """Yield raw Query pages. Paged because a user's partition holds every import
+        they ever made — the old unbounded read would pull thousands of rows per poll."""
+        expression = self._condition(sk_prefix)
+        while True:
+            arguments: dict[str, Any] = {"KeyConditionExpression": expression}
+            if limit:
+                arguments["Limit"] = limit
+            if start_key:
+                arguments["ExclusiveStartKey"] = start_key
+            page = self.table.query(**arguments)
+            yield page
+            start_key = page.get("LastEvaluatedKey")
+            if not start_key:
+                return
+
+    def iter_user_items(self) -> Iterator[dict[str, Any]]:
+        """Every item stored for this user. Backs GET /v1/me/export and DELETE /v1/me."""
+        for page in self._pages(""):
+            yield from page.get("Items", [])
+
+    def delete_user_items(self) -> list[dict[str, str]]:
+        """Delete the whole partition; returns the keys removed so the caller can clean
+        up the refresh-token lookup rows that live outside it. Loops until a Query comes
+        back empty because a worker write can land mid-delete."""
+        removed: list[dict[str, str]] = []
+        while True:
+            keys = [{"PK": item["PK"], "SK": item["SK"]} for item in self.iter_user_items()]
+            if not keys:
+                return removed
+            removed.extend(keys)
+            if hasattr(self.table, "batch_writer"):
+                with self.table.batch_writer() as batch:  # chunks into BatchWriteItem for us
+                    for key in keys:
+                        batch.delete_item(Key=key)
+            else:
+                for key in keys:
+                    self.table.delete_item(Key=key)
+
+    # ------------------------------------------------------------------ quota
+
+    def _quota_values(self, item: dict[str, Any] | None) -> tuple[int, int, int]:
+        """Effective (initial, month, reset), rolling the month window forward in memory.
+
+        The roll is computed on read and persisted by the next write, so a user who does
+        not call for two months still sees a correct counter without a scheduled job.
+        """
+        now = datetime.now(timezone.utc)
+        if not item:
+            return INITIAL_LIMIT, MONTH_LIMIT, _next_month_reset(now)
+        initial = int(item.get("initialRemaining", INITIAL_LIMIT))
+        month = int(item.get("monthRemaining", MONTH_LIMIT))
+        reset = int(item.get("monthResetAt", 0))
+        if int(now.timestamp()) >= reset:
+            return initial, MONTH_LIMIT, _next_month_reset(now)
+        return initial, month, reset
+
+    def get_quota(self) -> Quota:
+        initial, month, reset = self._quota_values(self._get(self._quota_key()))
+        return Quota(initialRemaining=initial, monthRemaining=month, monthResetAt=reset)
+
+    def _write_quota(self, units: int) -> Quota | None:
+        """Compare-and-set the quota row by `units` (negative spends, positive refunds).
+
+        The condition pins all three stored values, so two concurrent requests can never
+        both spend the last unit: the loser's condition fails and it re-reads.
+        """
+        key = self._quota_key()
+        for _ in range(QUOTA_CAS_ATTEMPTS):
+            item = self._get(key)
+            initial, month, reset = self._quota_values(item)
+            if units < 0:
+                from_initial = min(initial, -units)
+                from_month = -units - from_initial
+                if from_month > month:
+                    return None
+                new_initial, new_month = initial - from_initial, month - from_month
+            else:
+                # Refunds fill the month bucket first — the exact mirror of an initial-first
+                # spend. Paying a month-bucket spend back into `initialRemaining` would look
+                # right today and mint budget on the 1st, because only the month bucket is
+                # reset: 100 units spent and refunded would come back as 150.
+                to_month = min(units, MONTH_LIMIT - month)
+                new_month = month + to_month
+                new_initial = min(INITIAL_LIMIT, initial + units - to_month)
+            now = _now()
+            try:
+                if item is None:
+                    self.table.put_item(
+                        Item={**key, "initialRemaining": new_initial, "monthRemaining": new_month,
+                              "monthResetAt": reset, "updatedAt": now},
+                        ConditionExpression="attribute_not_exists(PK)",
+                    )
+                else:
+                    self.table.update_item(
+                        Key=key,
+                        UpdateExpression="SET initialRemaining = :ni, monthRemaining = :nm, monthResetAt = :reset, updatedAt = :now",
+                        ConditionExpression="initialRemaining = :pi AND monthRemaining = :pm AND monthResetAt = :preset",
+                        ExpressionAttributeValues={
+                            ":ni": new_initial, ":nm": new_month, ":reset": reset, ":now": now,
+                            ":pi": int(item.get("initialRemaining", INITIAL_LIMIT)),
+                            ":pm": int(item.get("monthRemaining", MONTH_LIMIT)),
+                            ":preset": int(item.get("monthResetAt", 0)),
+                        },
+                    )
+            except Exception as error:
+                if _is_conditional_failure(error):
+                    continue
+                raise
+            return Quota(initialRemaining=new_initial, monthRemaining=new_month, monthResetAt=reset)
+        raise RuntimeError("quota contention: compare-and-set did not settle")
+
+    def reserve_quota(self, units: int) -> Quota | None:
+        """Spend `units`, initial budget first. None means exhausted — the caller 402s."""
+        return self._write_quota(-units) if units > 0 else self.get_quota()
+
+    def refund_quota(self, units: int) -> Quota:
+        """Give `units` back after work that was charged for but did not happen."""
+        return self._write_quota(units) if units > 0 else self.get_quota()
+
+    def list_results(self, import_id: str, cursor: str | None = None, limit: int = 50) -> ResultPage:
+        prefix = f"IMPORT#{import_id}#VIDEO#"
+        start_key = {"PK": self.partition, "SK": f"{prefix}{cursor}"} if cursor else None
+        terminal = {VideoState.COMPLETED.value, VideoState.UNAVAILABLE.value, VideoState.FAILED.value}
         results: list[VideoResult] = []
-        for item in items:
-            if item.get("state") not in {VideoState.COMPLETED.value, VideoState.UNAVAILABLE.value, VideoState.FAILED.value}:
-                continue
-            if cursor and item.get("videoID", "") <= cursor:
-                continue
-            raw_result = item.get("result") or {"videoID": item["videoID"], "unavailable": item.get("state") == VideoState.UNAVAILABLE.value, "errorCode": item.get("errorCode")}
-            results.append(VideoResult.model_validate(raw_result))
+        for page in self._pages(prefix, start_key=start_key, limit=limit):
+            for item in page.get("Items", []):
+                if item.get("state") not in terminal:
+                    continue
+                raw_result = item.get("result") or {
+                    "videoID": item["videoID"],
+                    "unavailable": item.get("state") == VideoState.UNAVAILABLE.value,
+                    "errorCode": item.get("errorCode"),
+                }
+                results.append(VideoResult.model_validate(raw_result))
+                if len(results) >= limit:
+                    break
             if len(results) >= limit:
                 break
         next_cursor = results[-1].video_id if len(results) == limit else None

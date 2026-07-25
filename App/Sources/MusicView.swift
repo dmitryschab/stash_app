@@ -92,7 +92,9 @@ final class AlbumStore {
         var tracklists: [Int: [String]]
     }
 
-    private static let cacheURL: URL = {
+    /// Not private: account deletion has to be able to remove it, and it holds resolved album
+    /// and tracklist data derived from the user's saves.
+    static let cacheURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("MusicAlbumCache.json")
@@ -229,18 +231,15 @@ struct MusicView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "music.note")
-                .font(.system(size: 36, weight: .semibold))
-                .foregroundStyle(Color.categoryMusic)
-            Text("No records yet")
-                .font(.archivo(17, .bold))
-                .foregroundStyle(Color.stashInk)
-            Text("Songs you save land here as albums.")
-                .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
-        }
-        .frame(maxWidth: .infinity)
+        StashEmptyState(
+            symbol: "music.note",
+            tint: .categoryMusic,
+            title: "No records yet",
+            message: videos.isEmpty
+                ? "Songs land here as whole albums once your favorites are in."
+                : "None of your saves came back as music yet — albums appear as they are analyzed.",
+            offersImport: videos.isEmpty
+        )
     }
 }
 

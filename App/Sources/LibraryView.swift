@@ -2,7 +2,8 @@
 //
 // The Library tab, Set List style: STASH header, category filter pills, a featured card for
 // the segment's latest save, list rows on the cream sheet, and the shared "needs a look"
-// pile. Import/pipeline lives behind the header's import button.
+// pile. Import/pipeline lives behind the header's import button, Settings — account deletion,
+// data export, legal — behind its gear.
 
 import SwiftUI
 import SwiftData
@@ -20,6 +21,7 @@ struct LibraryView: View {
         }
     }()
     @State private var selectedTopic: String?
+    @State private var showSettings = false
 
     var body: some View {
         NavigationStack {
@@ -51,6 +53,7 @@ struct LibraryView: View {
                 }
                 .background(Color.stashBackground.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
+                .sheet(isPresented: $showSettings) { SettingsView() }
                 .overlay(alignment: .trailing) {
                     if railEntries.count >= 2 {
                         timeRail(proxy)
@@ -159,6 +162,20 @@ struct LibraryView: View {
                             .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
                     }
                     .accessibilityLabel("Mind map")
+                    // Delete account and Export my data live in Settings, and guideline
+                    // 5.1.1(v) asks for a deletion path the user can actually find. Behind
+                    // the Import screen's gear it was two unlabelled icons deep, on a screen
+                    // called "Import" — present, but not findable. This is the only top-level
+                    // entry point; the Import one stays where the box config already is.
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.stashInk)
+                            .frame(width: 38, height: 38)
+                            .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Settings")
                 }
             }
         }
@@ -331,19 +348,18 @@ struct LibraryView: View {
         }
     }
 
+    /// Two different emptinesses: a library with nothing in it at all (the first run — say so
+    /// plainly and offer Import), versus one shelf that simply has no saves in it yet.
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: segment.symbol)
-                .font(.system(size: 36, weight: .semibold))
-                .foregroundStyle(segment.color)
-            Text("Nothing in \(segment.displayName.lowercased()) yet")
-                .font(.archivo(17, .bold))
-                .foregroundStyle(Color.stashInk)
-            Text("Import your TikTok favorites to fill this shelf.")
-                .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
-        }
-        .frame(maxWidth: .infinity)
+        StashEmptyState(
+            symbol: videos.isEmpty ? "tray" : segment.symbol,
+            tint: videos.isEmpty ? .stashInk.opacity(0.35) : segment.color,
+            title: videos.isEmpty ? "Your library is empty" : "Nothing in \(segment.displayName.lowercased()) yet",
+            message: videos.isEmpty
+                ? "Import your TikTok favorites and Stash sorts them onto these shelves."
+                : "Saves land on this shelf once they are analyzed as \(segment.displayName.lowercased()).",
+            offersImport: false   // the header's import button is already one tap away
+        )
     }
 }
 

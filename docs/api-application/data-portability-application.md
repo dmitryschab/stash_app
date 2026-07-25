@@ -122,3 +122,57 @@ Submitted version verified field-by-field in the portal:
 
 ## On approval
 - Data Portability API → "View scopes to apply" → request `portability.all.ongoing` with the use-case text above (scope application is gated until the app is approved — confirmed in portal).
+
+---
+
+# Update — 2026-07-25 — architecture changed under the submitted application
+
+The app moved from "single-user personal tool" to **per-user accounts on shared infrastructure**, and the legal entity moved from a Latvian individual to a **Dutch eenmanszaak**. The application submitted on 2026-07-11 is still in review and its text no longer describes what Stash is. Nothing has been recalled — see "Do NOT press Recall" above — but if a reviewer asks, the answer has to be the current architecture, not the submitted text.
+
+## What changed
+
+- **Accounts.** Sign in with Apple only. No email/password, no anonymous mode. Apple's app-specific user identifier is the account key; Stash requests no name and no email from Apple.
+- **Access control.** Server-issued invite codes plus a hard per-user quota: 500 videos initial import budget, then 100 per calendar month, with a visible counter in-app.
+- **Shared datastore.** One DynamoDB table (`stash-box-imports`) and one SQS queue in `eu-north-1` hold every user's rows, partitioned by account identifier. The `installation_id="test-group"` pin in `cloud_import_api.py` is being replaced by the real per-user identifier.
+- **Third-party processors.** Audio extracted from a saved video goes to **Groq, Inc.** (US, `whisper-large-v3-turbo`) for transcription. Captions and transcripts go to **AWS Bedrock** in `eu-central-1` for categorisation and summarisation. Both are new since the application text was written.
+- **Controller.** A Dutch eenmanszaak owned by Dmitrijs Sabelniks. Supervisory authority is the Autoriteit Persoonsgegevens, not Latvia's DVI.
+- **Distribution.** External TestFlight beta first, App Store later. The portal still lists Platform = Web, which stays correct for the OAuth + webhook flow.
+
+## Statements in the submitted application this contradicts
+
+Line references are to the sections above in this file, which are left unedited on purpose.
+
+| Submitted text | Status now |
+|---|---|
+| "Where data lives… live in the user's own environment: on the user's iOS device, and processed by a model service the user controls." | **False.** Processing is on an EC2 instance and managed AWS services in `eu-north-1`, operated by the controller, not the user. |
+| "Stash is a single-user personal tool; there is no shared multi-tenant datastore of TikTok content." | **False.** One shared table and one shared queue, partitioned logically by account. |
+| "Nothing is shared with third parties." | **False.** AWS and Groq are sub-processors. |
+| "Only the user's own favourites (and the analysis Stash derives from them) are retained." | **Incomplete but not wrong.** Retention now also covers the account identifier, invite code, quota counters, import bookkeeping and server logs, each with its own retention period in the published policy. |
+| "Export: the user can export their library from the app at any time." | **Was aspirational, now being built.** Do not repeat this claim to TikTok until the export screen ships. |
+| "Deletion: the user can delete any item, or wipe all Stash data, from within the app." | **Was aspirational, now being built** as in-app account deletion (also required by App Store Guideline 5.1.1(v)). |
+| "Users served: EEA + UK only (applicant and initial users based in Latvia / EU)." | **Half stale.** EEA + UK only still holds; the applicant is now Dutch. |
+| Privacy-policy draft in this file ("processed in your own environment… not sold or shared with third parties", "for Latvia: Datu valsts inspekcija") | **Superseded** by the live policy at `https://stash.dmitrijs.dev/privacy`, rewritten 2026-07-25. The draft in this file is kept only as a record of what was submitted. |
+| "Representative + email: `[[name@your-business-domain]]` (must match the website domain)" | **Still unmet.** The live site carried a gmail.com address until 2026-07-25; it is now a `[[TOKEN]]` placeholder awaiting a mailbox on `stash.dmitrijs.dev`. Set that mailbox up before a reviewer looks. |
+
+The **minimisation promise still holds and is the one to defend**: only Favourite Videos entries are read out of the archive; messages, watch history, profile, wallet and every other category are dropped before anything is written to storage. That was the core of the review and it did not change.
+
+## Exact text to send TikTok if the reviewer asks
+
+Paste as-is, adjusting only the entity line.
+
+> Since submitting, Stash has changed in two ways we want on the record.
+>
+> **1. It is now a multi-user product with per-user accounts.** Users sign in with Apple, and each user's data is stored under their own account identifier in infrastructure we operate in AWS eu-north-1 (Stockholm). Our original application described Stash as a single-user tool processing data in the user's own environment. That is no longer accurate and we are not asking you to rely on it. The relevant guarantees now are: each user's data is isolated to their own account and is never shown to another user; the service is invitation-only with a hard per-user import quota; and every user can export their library and delete their account and all server-side data from inside the app.
+>
+> **2. We use two sub-processors.** Amazon Web Services hosts the service and runs the categorisation model on AWS Bedrock in eu-central-1 (Frankfurt). Groq, Inc. performs speech-to-text on the audio track of a saved video and returns a transcript; Groq receives only that audio and no account or identity data. Both are named in our published privacy policy along with the transfer basis for the US transfer to Groq.
+>
+> **What has not changed is the commitment your review was about.** We read only the Favourite Videos entries out of the data archive. Messages, watch history, profile, wallet and every other category are discarded in memory before anything is written to storage, and the archive file itself is deleted immediately after extraction. We requested `portability.all.ongoing` only because Favourite Videos are exposed inside the "Likes and Favourites" section of the full archive; if a narrower scope reaches them we will switch to it.
+>
+> Our controller is also now a Netherlands-registered sole proprietorship rather than a Latvian individual. Our supervisory authority is the Autoriteit Persoonsgegevens. The published privacy policy and terms at https://stash.dmitrijs.dev/privacy and https://stash.dmitrijs.dev/terms reflect all of the above and were updated on 25 July 2026.
+
+## To do before the reviewer reaches us
+
+1. Stand up a mailbox on `stash.dmitrijs.dev` and put it in the portal's representative field, in `privacy.html` and in `terms.html` — the domain-match rule is explicit in the application form.
+2. Fill the `[[LEGAL_NAME]]` / `[[KVK_NUMBER]]` / `[[REGISTERED_ADDRESS]]` placeholders in both published pages. TikTok's reviewers open the live URLs.
+3. Ship in-app export and in-app account deletion before repeating either claim to TikTok or to Apple.
+4. Replace the `installation_id="test-group"` pin with the authenticated user's identifier before any second user exists.

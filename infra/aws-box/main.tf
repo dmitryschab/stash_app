@@ -181,6 +181,25 @@ resource "aws_dynamodb_table" "imports" {
   server_side_encryption {
     enabled = true
   }
+
+  # Refresh-token rows carry a `ttl` attribute so expired sessions are swept without a
+  # cron job. Expiry is still checked in Python on every use: DynamoDB's sweeper is
+  # best-effort and can lag up to 48 h, which is far too long for a credential.
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+}
+
+# Container only. The value is set out of band (`aws secretsmanager put-secret-value`) so
+# no secret material ever lands in Terraform state or in this repo.
+#
+# Expected JSON keys: STASH_JWT_SECRET, GROQ_API_KEY, TIKTOK_CLIENT_SECRET, and — once
+# Apple credentials exist — APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY.
+resource "aws_secretsmanager_secret" "app" {
+  name                    = "${var.name}/app"
+  description             = "Stash box application secrets, read at process start via STASH_SECRETS_ID."
+  recovery_window_in_days = 7
 }
 
 data "aws_iam_policy_document" "box_assume_role" {
@@ -220,14 +239,26 @@ data "aws_iam_policy_document" "import_access" {
   statement {
     effect = "Allow"
     actions = [
+      # BatchWriteItem + DeleteItem back DELETE /v1/me; Scan is how manage_invites lists
+      # codes. ConditionCheckItem is required for conditional writes inside transactions.
+      "dynamodb:BatchWriteItem",
+      "dynamodb:ConditionCheckItem",
+      "dynamodb:DeleteItem",
       "dynamodb:DescribeTable",
       "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:Query",
+      "dynamodb:Scan",
       "dynamodb:TransactWriteItems",
       "dynamodb:UpdateItem",
     ]
     resources = [aws_dynamodb_table.imports.arn]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.app.arn]
   }
 }
 
@@ -326,4 +357,9 @@ output "import_queue_url" {
 
 output "import_dead_letter_queue_url" {
   value = aws_sqs_queue.import_dead_letter.url
+}
+
+# Goes into /etc/stash-webhook/env as STASH_SECRETS_ID.
+output "app_secret_id" {
+  value = aws_secretsmanager_secret.app.name
 }

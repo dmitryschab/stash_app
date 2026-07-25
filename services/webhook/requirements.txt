@@ -2,6 +2,8 @@ fastapi
 uvicorn[standard]
 requests
 pydantic
+pyjwt        # Apple identity-token verification and Stash session tokens
+cryptography # the RS256/ES256 backend PyJWT needs for Apple's keys
 aws-bedrock-token-generator
 yt-dlp
 curl_cffi  # gives yt-dlp a browser impersonation target; without it TikTok fetches fail intermittently

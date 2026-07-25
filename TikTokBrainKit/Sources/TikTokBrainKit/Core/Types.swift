@@ -57,12 +57,16 @@ public struct BoxConfig: Sendable {
     public var baseURL: URL            // e.g. http://box:8000/v1  (runtime config; never committed)
     public var chatModel: String
     public var whisperModel: String
-    public var apiKey: String          // placeholder, default "local" (AtlasFlow pattern)
-    public init(baseURL: URL, chatModel: String, whisperModel: String, apiKey: String = "local") {
+    /// Per-user auth, asked for the token on every request: a bearer captured once when the
+    /// runner was built goes stale the moment the session refreshes mid-drain, and leaves no
+    /// seam for the refresh-on-401 retry.
+    public var auth: StashAuthProvider
+    public init(baseURL: URL, chatModel: String, whisperModel: String,
+                auth: StashAuthProvider = .fixed({ "local" })) {
         self.baseURL = baseURL
         self.chatModel = chatModel
         self.whisperModel = whisperModel
-        self.apiKey = apiKey
+        self.auth = auth
     }
 }
 

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PrivacyInfo.xcprivacy — the App Store privacy manifest, required at the bundle root.
+
+  Every entry below was verified by grepping this target and TikTokBrainKit (which is statically
+  linked in, so its API use is ours to declare), not copied from a template:
+
+    - UserDefaults (CA92.1) is the only required-reason API left. @AppStorage on the box base
+      URL / model names, the cloud-import sync state and the legacy-key housekeeping in
+      PipelineCenter all land here. It reads and writes nothing outside this app's own domain.
+    - File timestamps: nothing left. The single `FileManager.attributesOfItem` call in the repo
+      was the "KEEP OFFLINE" button's size label, deleted with persistent offline copies, so
+      NSPrivacyAccessedAPICategoryFileTimestamp no longer applies.
+    - Disk space, system boot time and active keyboards: never used.
+
+  Collected data is what leaves the device for the Stash backend. The Sign in with Apple request
+  asks for NO scopes, so no name and no email are ever received — the only identifier is Apple's
+  app-specific `sub`, which the server exchanges for its own opaque user id. Nothing here is used
+  for tracking, there are no third-party SDKs, and no tracking domains, hence NSPrivacyTracking
+  false and an empty NSPrivacyTrackingDomains.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<!-- Apple's app-specific user identifier, exchanged for the server's opaque user id;
+		     both are stored so the library can be handed back to the same account. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- The saved-video library itself: TikTok links, captions, creator handles, and the
+		     transcripts and on-screen text derived from them. Submitted to the Stash backend
+		     for analysis and stored there under the user's id. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

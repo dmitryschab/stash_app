@@ -5,6 +5,11 @@
 // screen; now the loop belongs to the app and survives navigation, auto-resumes
 // on foreground/launch, asks iOS for extra time when backgrounded mid-import,
 // and registers a BGProcessingTask so idle/charging wakes continue the queue.
+//
+// Because those triggers are lifecycle-driven — the scenePhase watcher and a background
+// wake both fire while the sign-in gate is still on screen — every entry point that starts
+// work guards on `StashSession.shared.isSignedIn`. The bearer itself is never held here:
+// clients ask `StashSession.authProvider` per request.
 
 import BackgroundTasks
 import SwiftData
@@ -45,6 +50,19 @@ final class PipelineCenter {
             cloudState = state
             cloudStatus = state.status
         }
+        Self.discardLegacyState()
+    }
+
+    /// Housekeeping for installs upgrading from build ≤13, which shipped a shared bearer in
+    /// UserDefaults and could keep video files on the device. Both are gone by design now
+    /// (per-user JWT in the Keychain; no persistent copies), so leaving the old ones lying
+    /// around would be leaving a live credential and someone else's video behind.
+    private static func discardLegacyState() {
+        UserDefaults.standard.removeObject(forKey: "boxApiKey")
+        let offlineVideos = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OfflineVideos", isDirectory: true)
+        try? FileManager.default.removeItem(at: offlineVideos)
     }
 
     /// Cloud import is the default everywhere: pressing Import hands the whole library
@@ -58,14 +76,15 @@ final class PipelineCenter {
         #endif
     }
 
-    /// Box config from the same defaults the Settings screen writes.
+    /// Box config from the same defaults the Settings screen writes. The bearer is not part of
+    /// it: `StashSession.authProvider` is asked per request, so a token refreshed mid-drain
+    /// reaches every client already holding this config.
     static func currentConfig() -> BoxConfig {
         let defaults = UserDefaults.standard
         return makeBoxConfig(
             baseURL: defaults.string(forKey: "boxBaseURL") ?? BoxDefaults.baseURL,
             chatModel: defaults.string(forKey: "chatModel") ?? BoxDefaults.chatModel,
-            whisperModel: defaults.string(forKey: "whisperModel") ?? BoxDefaults.whisperModel,
-            apiKey: defaults.string(forKey: "boxApiKey") ?? BoxDefaults.apiKey)
+            whisperModel: defaults.string(forKey: "whisperModel") ?? BoxDefaults.whisperModel)
     }
 
     private func makeRunner() -> PipelineRunner? {
@@ -73,15 +92,12 @@ final class PipelineCenter {
         return PipelineRunner(deps: Self.makeDeps(config: Self.currentConfig()), container: container)
     }
 
-    /// The cloud-import API lives under the same box base URL and shares the same bearer
-    /// token as the rest of `/v1`, so no separate configuration is needed — Settings can
-    /// still override the base URL/token for local-box development.
+    /// The cloud-import API lives under the same base URL and behind the same per-user JWT as
+    /// the rest of `/v1`, so no separate configuration is needed — Settings can still override
+    /// the base URL for local-box development.
     private static func makeCloudClient() -> CloudImportClient? {
         guard let baseURL = URL(string: UserDefaults.standard.string(forKey: "boxBaseURL") ?? BoxDefaults.baseURL) else { return nil }
-        return CloudImportClient(baseURL: baseURL, authorization: {
-            let key = UserDefaults.standard.string(forKey: "boxApiKey") ?? BoxDefaults.apiKey
-            return key.isEmpty ? BoxDefaults.apiKey : key
-        })
+        return CloudImportClient(baseURL: baseURL, auth: StashSession.authProvider)
     }
 
     /// Builds the pipeline from the Kit's concrete clients. Shared with the per-video re-run.
@@ -142,7 +158,7 @@ final class PipelineCenter {
 
     private func runCloudImport(url: URL) async {
         guard !isImporting, let runner = makeRunner(), let client = Self.makeCloudClient() else {
-            lastError = "Cloud import isn't configured — check the box URL and API key in Settings."
+            lastError = "Cloud import isn't configured — check the base URL in Settings."
             return
         }
         lastError = nil
@@ -172,9 +188,28 @@ final class PipelineCenter {
             return
         }
 
+        // The box charges one unit per submitted video and refuses an over-budget request
+        // whole (cloud_import_store._write_quota), and the largest budget anyone can hold is
+        // 600 — so a bigger library used to 402 forever, under an "Import budget used up"
+        // message for a budget nothing had been spent from. Send the newest slice that fits.
+        // ponytail: no per-video ledger, so importing again after the month turns over
+        // re-submits the newest videos rather than the tail. The honest ceiling is a ~600-video
+        // library; above that the summary says what went and what did not.
+        await StashSession.shared.refreshQuota()  // the counter decides the slice — make it fresh
+        let quota = StashSession.shared.quota
+        let budget = quota?.remaining ?? CloudImportLimits.maxVideosPerImport
+        let submitting = Array(bookmarks.sorted { $0.date > $1.date }.prefix(max(budget, 0)))
+        guard !submitting.isEmpty else {
+            // Only reachable with a known, spent budget: an unknown one submits and lets the
+            // box be the judge.
+            lastError = quota.map { StashError.quotaExhausted($0).localizedDescription }
+                ?? StashError.unauthenticated.localizedDescription
+            return
+        }
+
         do {
             let newCount = try await runner.ingest(bookmarks: bookmarks)
-            let fingerprint = CloudImportSyncState.fingerprint(of: bookmarks)
+            let fingerprint = CloudImportSyncState.fingerprint(of: submitting)
             let clientImportID: UUID
             if cloudState.videoIDsFingerprint == fingerprint,
                let existing = cloudState.clientImportID,
@@ -188,11 +223,20 @@ final class PipelineCenter {
             persistCloudState()
             isImporting = true
             defer { isImporting = false }
-            let submission = try await client.submit(bookmarks: bookmarks, clientImportID: clientImportID)
+            let submission = try await client.submit(bookmarks: submitting, clientImportID: clientImportID)
             cloudState.importID = submission.importID
             persistCloudState()
-            lastSummary = "Submitted \(submission.accepted) videos · \(newCount) new"
+            if submitting.count < bookmarks.count, let quota {
+                let refills = quota.monthResetDate.formatted(date: .abbreviated, time: .omitted)
+                lastSummary = "Submitted the newest \(submission.accepted) of \(bookmarks.count) "
+                    + "· that is the whole budget · \(quota.monthLimit) more on \(refills)"
+            } else {
+                lastSummary = "Submitted \(submission.accepted) videos · \(newCount) new"
+            }
             await syncCloudImport()
+        } catch let error as StashError {
+            // Quota and session failures already read as sentences; prefixing them would not help.
+            lastError = error.localizedDescription
         } catch {
             var message = "Could not submit the cloud import: \(error.localizedDescription)"
             if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
@@ -203,6 +247,7 @@ final class PipelineCenter {
     /// Continues whatever is pending or parked — no file pick needed. Safe to call
     /// on every foreground/launch; does nothing when idle or already running.
     func resumePendingIfNeeded() {
+        guard StashSession.shared.isSignedIn else { return }
         guard !Self.cloudImportEnabled else {
             syncCloudImportIfNeeded()
             return
@@ -277,7 +322,11 @@ final class PipelineCenter {
         let result = await runner.backfillTranscripts { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
-        if result.stoppedEarly {
+        if let quota = result.quotaExhausted {
+            lastError = "Import budget used up — filled \(result.filled), \(result.remaining) "
+                + "still to go. \(quota.monthLimit) more on "
+                + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted) + "."
+        } else if result.stoppedEarly {
             lastError = "Transcription is being throttled — filled \(result.filled), "
                 + "\(result.remaining) still to go. Try again in an hour."
         } else {
@@ -301,11 +350,11 @@ final class PipelineCenter {
     /// changes fast, and frames are cheap once the video is already downloaded.
     private static func makeVisualTextExtractor() -> @Sendable (String, URL) async throws -> String? {
         let config = currentConfig()
-        let baseURL = config.baseURL.absoluteString
-        let apiKey = config.apiKey
+        let baseURL = config.baseURL
+        let auth = config.auth   // closures, not a token: refreshes mid-backfill reach this
         return { videoID, _ in
-            let file = try await OfflineVideoStore.downloadTemporary(
-                videoID: videoID, boxBaseURL: baseURL, apiKey: apiKey)
+            let file = try await BoxVideoDownload.temporaryFile(
+                videoID: videoID, baseURL: baseURL, auth: auth)
             defer { try? FileManager.default.removeItem(at: file) }
             let frames = try await MediaFetcher(keyframeCount: 12).keyframes(fromLocalFile: file)
             defer { frames.forEach { try? FileManager.default.removeItem(at: $0) } }
@@ -328,9 +377,13 @@ final class PipelineCenter {
         let result = await runner.backfillVisualText(visualText: extract) { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
-        if result.stoppedEarly {
+        if let quota = result.quotaExhausted {
+            lastError = "Import budget used up — read \(result.filled), \(result.remaining) "
+                + "still to go. \(quota.monthLimit) more on "
+                + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted) + "."
+        } else if result.stoppedEarly {
             lastError = "Stopped after repeated download failures — read \(result.filled), "
-                + "\(result.remaining) still to go. Check the box and try again."
+                + "\(result.remaining) still to go. Check your connection and try again."
         } else {
             lastSummary = "Read on-screen text for \(result.filled) · \(result.remaining) left"
         }
@@ -340,6 +393,9 @@ final class PipelineCenter {
 
     func appBecameActive() {
         endExtraTime()
+        // Fires from the Scene-level watcher, which runs while the sign-in gate is still up.
+        guard StashSession.shared.isSignedIn else { return }
+        Task { await StashSession.shared.refreshQuota() }
         if Self.cloudImportEnabled {
             syncCloudImportIfNeeded()
         } else {
@@ -388,6 +444,13 @@ final class PipelineCenter {
             return
         }
         let work = Task { [weak self] in
+            // A background launch never rendered RootView, so the Keychain may still be unread
+            // — restore before the guard, or every wake after a cold start would decline.
+            await StashSession.shared.restore()
+            guard StashSession.shared.isSignedIn else {
+                task.setTaskCompleted(success: false)   // nothing we are allowed to do
+                return
+            }
             await self?.drainQueue(runner: runner)
             let remaining = (try? await runner.pendingCount()) ?? 0
             if remaining > 0 { self?.scheduleBackgroundProcessing() }  // next window
@@ -410,11 +473,22 @@ final class PipelineCenter {
     // MARK: - Cloud import synchronization
 
     func syncCloudImportIfNeeded() {
+        guard StashSession.shared.isSignedIn else { return }
         guard Self.cloudImportEnabled, cloudState.importID != nil, !cloudSyncing else { return }
         cloudSyncTask?.cancel()
         cloudSyncTask = Task { [weak self] in
             await self?.syncCloudImport()
         }
+    }
+
+    /// Drops the record of the last cloud import — both the persisted copy and the in-memory
+    /// one, which would otherwise be written straight back. Used by account deletion.
+    func forgetCloudState() {
+        cloudSyncTask?.cancel()
+        cloudSyncTask = nil
+        cloudState = CloudImportSyncState()
+        cloudStatus = nil
+        UserDefaults.standard.removeObject(forKey: Self.cloudStateKey)
     }
 
     private func persistCloudState() {
@@ -460,6 +534,12 @@ final class PipelineCenter {
             scheduleCloudRepoll()
         } catch is CancellationError {
             return
+        } catch let error as StashError {
+            // Polling itself costs nothing, but the box can still refuse the session or report
+            // a spent budget on the way through. Both already read as sentences, and neither is
+            // fixed by re-polling — so no prefix and no "will retry automatically".
+            lastError = error.localizedDescription
+            cloudSyncTask = nil
         } catch {
             var message = "Could not sync the cloud import: \(error.localizedDescription)"
             if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
@@ -487,12 +567,18 @@ final class PipelineCenter {
         do {
             _ = try await analyzer.analyze(meta: VideoMeta(caption: "ping"), transcript: nil, ocrText: nil)
             boxStatus = .online
+        } catch StashError.unauthenticated {
+            // Not a reachability problem: the session is gone and the gate is already taking
+            // over (StashSession signs out when the refresh is refused).
+            boxStatus = .unknown
+        } catch StashError.quotaExhausted {
+            boxStatus = .online  // it answered — the budget is what ran out
         } catch let error as BoxError {
             switch error {
             case .unreachable:
                 boxStatus = .offline
-            case .badResponse(let status) where status == 401 || status == 403:
-                // Reaching the box with a bad token is NOT online — surface it.
+            case .badResponse(let status) where status == 403:
+                // Reaching the box and being refused is NOT online — surface it.
                 boxStatus = .offline
             default:
                 boxStatus = .online  // it answered; model hiccups still count as reachable
@@ -500,5 +586,36 @@ final class PipelineCenter {
         } catch {
             boxStatus = .offline
         }
+    }
+}
+
+// MARK: - Transient video download
+
+/// Fetches a video through the box (`GET {base}/tiktok/download/{id}`, yt-dlp server-side —
+/// pure in-app downloading is impossible against current TikTok controls: pages serve a blank
+/// playAddr without the JS handshake and the CDN 403s cookie-replayed stream URLs) into a
+/// temporary file the caller deletes immediately.
+///
+/// Deliberately temporary-only. Persistent user-facing copies were removed (App Store
+/// guideline 5.2.3); the sole caller is `makeVisualTextExtractor`, which samples frames for
+/// on-device OCR and unlinks the file in the same statement group. Metered like any other
+/// quota route: the response carries `X-Stash-Quota` and an empty budget arrives as
+/// `StashError.quotaExhausted` from the shared funnel.
+enum BoxVideoDownload {
+    static func temporaryFile(videoID: String, baseURL: URL, auth: StashAuthProvider) async throws -> URL {
+        var request = URLRequest(url: baseURL.appendingPathComponent("tiktok/download/\(videoID)"))
+        request.timeoutInterval = 120  // yt-dlp on the box takes 5–20 s per video
+
+        let (data, response) = try await StashHTTP.send(request, on: .shared, auth: auth)
+        // Valid mp4s carry "ftyp" at byte 4; error bodies are small HTML/text.
+        guard response.statusCode == 200,
+              data.count > 50_000,
+              data.subdata(in: 4..<8) == Data("ftyp".utf8) else {
+            throw URLError(.badServerResponse)
+        }
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stash-ocr-\(videoID).mp4")
+        try data.write(to: file, options: .atomic)
+        return file
     }
 }

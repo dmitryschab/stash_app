@@ -200,9 +200,20 @@ public actor PipelineRunner {
         public let filled: Int
         public let attempted: Int
         public let remaining: Int
-        /// True when consecutive transcriber failures aborted the run (almost always the
-        /// cloud Whisper quota), so the caller can say "try again later" instead of "done".
+        /// True when the run aborted instead of reaching the end of its queue.
         public let stoppedEarly: Bool
+        /// Set when the abort was the per-user budget rather than throttling/network, so the
+        /// caller can say "budget used up, N more on the 1st" instead of "try again in an hour".
+        public let quotaExhausted: Quota?
+
+        init(filled: Int, attempted: Int, remaining: Int,
+             stoppedEarly: Bool, quotaExhausted: Quota? = nil) {
+            self.filled = filled
+            self.attempted = attempted
+            self.remaining = remaining
+            self.stoppedEarly = stoppedEarly
+            self.quotaExhausted = quotaExhausted
+        }
     }
 
     /// Give up after this many transcripts fail back-to-back: the free Whisper tier caps
@@ -210,7 +221,7 @@ public actor PipelineRunner {
     /// a request. Stopping leaves the rest for the next run.
     private static let throttleAbortThreshold = 5
 
-    private enum BackfillOutcome { case filled, empty, failed }
+    private enum BackfillOutcome { case filled, empty, failed, quotaExhausted(Quota) }
 
     /// Fetches transcripts for videos that have none, then re-analyzes each one it fills so the
     /// summary and category come from the audio instead of the caption alone.
@@ -240,6 +251,11 @@ public actor PipelineRunner {
             case .filled: filled += 1; consecutiveFailures = 0
             case .empty: consecutiveFailures = 0   // music/no speech is a normal result
             case .failed: consecutiveFailures += 1
+            case .quotaExhausted(let quota):
+                // No point burning the rest of the queue: every further call returns 402.
+                return BackfillResult(filled: filled, attempted: attempted,
+                                      remaining: total - attempted, stoppedEarly: true,
+                                      quotaExhausted: quota)
             }
             progress(attempted, total)
             if consecutiveFailures >= Self.throttleAbortThreshold {
@@ -259,6 +275,8 @@ public actor PipelineRunner {
         let fetched: String?
         do {
             fetched = try await deps.transcriber.transcript(for: video.url)
+        } catch StashError.quotaExhausted(let quota) {
+            return .quotaExhausted(quota)
         } catch {
             return .failed   // left untouched, so the next run retries it
         }
@@ -321,6 +339,11 @@ public actor PipelineRunner {
             case .filled: filled += 1; consecutiveFailures = 0
             case .empty: consecutiveFailures = 0   // no on-screen text is a normal result
             case .failed: consecutiveFailures += 1
+            case .quotaExhausted(let quota):
+                // Each download costs a quota unit, so there is nothing left to spend.
+                return BackfillResult(filled: filled, attempted: attempted,
+                                      remaining: total - attempted, stoppedEarly: true,
+                                      quotaExhausted: quota)
             }
             progress(attempted, total)
             // Repeated failures here mean the box or the network is down, not a quota — either
@@ -345,6 +368,8 @@ public actor PipelineRunner {
         let recognized: String?
         do {
             recognized = try await visualText(video.videoID, video.url)
+        } catch StashError.quotaExhausted(let quota) {
+            return .quotaExhausted(quota)
         } catch {
             return .failed   // untouched, so the next run retries it
         }
@@ -510,6 +535,9 @@ public actor PipelineRunner {
 
     /// `BoxError.unreachable` parks a stage for a later retry; anything else is a hard failure.
     private func stageState(for error: Error) -> StageState {
+        // A session that expired mid-drain is temporary — park the stage so it re-runs after
+        // the user signs back in. An exhausted budget is a hard failure for this pass.
+        if case StashError.unauthenticated = error { return .awaitingBox }
         if let boxError = error as? BoxError {
             switch boxError {
             case .unreachable:
