@@ -40,6 +40,25 @@ final class PipelineCenter {
     private var cloudState = CloudImportSyncState()
     private static let cloudStateKey = "cloudImport.syncState"
 
+    /// A TikTok the share extension handed over, tracked until it is fully processed.
+    ///
+    /// `importID` is cleared once the box's fast pass has landed, but the entry itself only goes
+    /// away after the transcript and on-screen-text passes have run — so a deep pass that could
+    /// not start (app already importing, budget spent, network gone) is retried on the next
+    /// foreground instead of being lost. `id` is the clientImportID, stable across retries.
+    private struct ShareImport: Codable, Equatable {
+        var id: UUID
+        var importID: String?
+        var videoIDs: [String]
+    }
+
+    private var shareImports: [ShareImport] = []
+    private static let shareImportsKey = "sharedInbox.imports"
+    /// Set when a deep pass gave up on a spent budget or a dead box. The poll loop runs every
+    /// eight seconds, and without this it would re-attempt — and be refused — that often.
+    /// Deliberately not persisted: the next foreground is exactly when retrying is worth it.
+    private var deepPassBlocked = false
+
     // MARK: - Wiring
 
     /// Called once from the App with the shared SwiftData container.
@@ -49,6 +68,10 @@ final class PipelineCenter {
            let state = try? JSONDecoder().decode(CloudImportSyncState.self, from: data) {
             cloudState = state
             cloudStatus = state.status
+        }
+        if let data = UserDefaults.standard.data(forKey: Self.shareImportsKey),
+           let imports = try? JSONDecoder().decode([ShareImport].self, from: data) {
+            shareImports = imports
         }
         Self.discardLegacyState()
     }
@@ -274,6 +297,130 @@ final class PipelineCenter {
         }
     }
 
+    // MARK: - Shared links (share extension)
+
+    /// Picks up whatever the share extension left in the app group. Safe to call on every
+    /// foreground: an empty inbox costs one directory listing.
+    ///
+    /// Nothing is read unless the import can actually be attempted. Those files are the only
+    /// record that the share ever happened, so a signed-out or already-busy app leaves them
+    /// where they are rather than draining them onto the floor.
+    func drainSharedInbox() {
+        guard StashSession.shared.isSignedIn, Self.cloudImportEnabled, !isImporting else { return }
+        guard let inbox = SharedInbox(), inbox.pendingCount > 0 else { return }
+        processingTask = Task { [weak self] in
+            await self?.importShared(links: inbox.drain(), returningTo: inbox)
+        }
+    }
+
+    /// Resolves each shared link to a canonical video id and submits them as one cloud import.
+    ///
+    /// Anything that could work on a second attempt goes back into the inbox — a link TikTok was
+    /// unreachable for, and every link in a submission that failed. `ingest` de-duplicates on
+    /// video id, so a retry reuses the rows already inserted instead of doubling them.
+    private func importShared(links: [URL], returningTo inbox: SharedInbox) async {
+        guard !links.isEmpty else { return }
+        guard let runner = makeRunner(), let client = Self.makeCloudClient() else {
+            links.forEach { _ = try? inbox.write($0) }
+            lastError = "Cloud import isn't configured — check the base URL in Settings."
+            return
+        }
+        isImporting = true
+        defer { isImporting = false }
+        lastError = nil
+
+        let batch = await SharedLinkResolver.resolve(links) { try await TikTokLink.resolve($0) }
+        batch.requeue.forEach { _ = try? inbox.write($0) }
+        lastError = batch.rejectionMessage
+        let bookmarks = batch.bookmarks
+        guard !bookmarks.isEmpty else { return }
+
+        // The counter the box charges against; one unit per video here, as with any import.
+        await StashSession.shared.refreshQuota()
+        let clientImportID = UUID()
+        do {
+            _ = try await runner.ingest(bookmarks: bookmarks)
+            let submission = try await client.submit(bookmarks: bookmarks, clientImportID: clientImportID)
+            shareImports.append(ShareImport(
+                id: clientImportID, importID: submission.importID, videoIDs: bookmarks.map(\.id)))
+            persistShareImports()
+            lastSummary = bookmarks.count == 1
+                ? "Saved a shared TikTok — reading it now"
+                : "Saved \(bookmarks.count) shared TikToks — reading them now"
+            syncCloudImportIfNeeded()
+        } catch {
+            bookmarks.forEach { _ = try? inbox.write($0.url) }
+            if let stashError = error as? StashError {
+                lastError = stashError.localizedDescription
+            } else {
+                lastError = "Could not save the shared TikTok: \(error.localizedDescription)"
+                    + " Will try again."
+            }
+        }
+    }
+
+    /// The reason share import exists at all: the box's fast pass classifies from the caption,
+    /// and what a TikTok is actually about is usually spoken or burned into the frames. Once the
+    /// fast pass has landed, fetch the transcript and read the on-screen text for exactly those
+    /// videos — each pass re-analyzes with what it found.
+    private func startDeepPassIfReady() {
+        let ready = shareImports.filter { $0.importID == nil }
+        guard !ready.isEmpty, !isImporting, !deepPassBlocked, let runner = makeRunner() else { return }
+        let ids = Set(ready.map(\.id))
+        let videoIDs = Set(ready.flatMap(\.videoIDs))
+        let extract = Self.makeVisualTextExtractor()
+        processingTask = Task { [weak self] in
+            await self?.drainDeepPass(runner: runner, shares: ids, videoIDs: videoIDs, extract: extract)
+        }
+    }
+
+    private func drainDeepPass(
+        runner: PipelineRunner,
+        shares: Set<UUID>,
+        videoIDs: Set<String>,
+        extract: @escaping @Sendable (String, URL) async throws -> String?
+    ) async {
+        isImporting = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            isImporting = false
+            progress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        let transcripts = await runner.backfillTranscripts(only: videoIDs) { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+        let visual = await runner.backfillVisualText(only: videoIDs, visualText: extract) { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+
+        if let quota = transcripts.quotaExhausted ?? visual.quotaExhausted {
+            // The save itself is safe — only the deep read is missing. Keep the entries so the
+            // next foreground after the budget refills finishes the job.
+            deepPassBlocked = true
+            lastError = "Import budget used up — the shared TikTok is saved, but its transcript "
+                + "and on-screen text are not. \(quota.monthLimit) more on "
+                + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted) + "."
+            return
+        }
+        guard !transcripts.stoppedEarly, !visual.stoppedEarly else {
+            deepPassBlocked = true
+            lastError = "Stopped part-way through reading the shared TikTok — Stash will finish "
+                + "it next time you open the app."
+            return
+        }
+        shareImports.removeAll { shares.contains($0.id) }
+        persistShareImports()
+        lastSummary = "Shared TikTok ready · \(transcripts.filled) transcribed · "
+            + "\(visual.filled) read on screen"
+    }
+
+    private func persistShareImports() {
+        if let data = try? JSONEncoder().encode(shareImports) {
+            UserDefaults.standard.set(data, forKey: Self.shareImportsKey)
+        }
+    }
+
     // MARK: - Re-analysis
 
     /// Re-buckets the existing library against the current category taxonomy: re-runs the
@@ -396,7 +543,9 @@ final class PipelineCenter {
         // Fires from the Scene-level watcher, which runs while the sign-in gate is still up.
         guard StashSession.shared.isSignedIn else { return }
         Task { await StashSession.shared.refreshQuota() }
+        deepPassBlocked = false   // a new foreground is exactly when retrying is worth it
         if Self.cloudImportEnabled {
+            drainSharedInbox()
             syncCloudImportIfNeeded()
         } else {
             resumePendingIfNeeded()
@@ -474,7 +623,8 @@ final class PipelineCenter {
 
     func syncCloudImportIfNeeded() {
         guard StashSession.shared.isSignedIn else { return }
-        guard Self.cloudImportEnabled, cloudState.importID != nil, !cloudSyncing else { return }
+        guard Self.cloudImportEnabled, !cloudSyncing else { return }
+        guard cloudState.importID != nil || !shareImports.isEmpty else { return }
         cloudSyncTask?.cancel()
         cloudSyncTask = Task { [weak self] in
             await self?.syncCloudImport()
@@ -488,7 +638,9 @@ final class PipelineCenter {
         cloudSyncTask = nil
         cloudState = CloudImportSyncState()
         cloudStatus = nil
+        shareImports = []
         UserDefaults.standard.removeObject(forKey: Self.cloudStateKey)
+        UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
     }
 
     private func persistCloudState() {
@@ -498,10 +650,62 @@ final class PipelineCenter {
         cloudStatus = cloudState.status
     }
 
+    /// One poll of everything outstanding. The library import and the share imports are polled
+    /// separately because they are independent: a fresh account can have a shared TikTok in
+    /// flight with no library import at all, and a share made mid-import must not disturb it.
     private func syncCloudImport() async {
-        guard !cloudSyncing, let importID = cloudState.importID, let client = Self.makeCloudClient() else { return }
+        guard !cloudSyncing else { return }
         cloudSyncing = true
         defer { cloudSyncing = false }
+
+        // Not `&&`: short-circuiting would skip the share poll whenever the library one failed.
+        let libraryOK = await syncLibraryImport()
+        let sharesOK = await syncShareImports()
+        if libraryOK, sharesOK {
+            scheduleCloudRepoll()
+        } else {
+            cloudSyncTask = nil
+        }
+    }
+
+    /// Polls the one-off imports the share extension produced, and starts the deep pass for any
+    /// that have finished. Each poll re-reads the whole result set rather than carrying a cursor:
+    /// a share is a handful of videos, and `CloudImportResultUpserter` ignores anything it has
+    /// already applied. Returns false when re-polling cannot help.
+    private func syncShareImports() async -> Bool {
+        guard !shareImports.isEmpty else { return true }
+        if let client = Self.makeCloudClient() {
+            for share in shareImports {
+                guard let importID = share.importID else { continue }
+                do {
+                    let status = try await client.status(importID: importID)
+                    let results = try await client.allResults(importID: importID)
+                    if let container {
+                        try CloudImportResultUpserter.apply(results, to: ModelContext(container))
+                    }
+                    guard status.state == .completed || status.state == .cancelled else { continue }
+                    for index in shareImports.indices where shareImports[index].id == share.id {
+                        shareImports[index].importID = nil
+                    }
+                    persistShareImports()
+                } catch is CancellationError {
+                    return true
+                } catch let error as StashError {
+                    // Session gone or budget spent: neither is fixed by polling again.
+                    lastError = error.localizedDescription
+                    return false
+                } catch {
+                    lastError = "Could not sync the shared TikTok: \(error.localizedDescription)"
+                }
+            }
+        }
+        startDeepPassIfReady()
+        return true
+    }
+
+    /// Returns false when the failure is one that re-polling cannot fix.
+    private func syncLibraryImport() async -> Bool {
+        guard let importID = cloudState.importID, let client = Self.makeCloudClient() else { return true }
 
         do {
             let status = try await client.status(importID: importID)
@@ -531,24 +735,24 @@ final class PipelineCenter {
             if status.state == .completed {
                 lastSummary = "Cloud import complete · \(status.unavailable) unavailable · \(status.partialFailures) partial failures"
             }
-            scheduleCloudRepoll()
         } catch is CancellationError {
-            return
+            return true
         } catch let error as StashError {
             // Polling itself costs nothing, but the box can still refuse the session or report
             // a spent budget on the way through. Both already read as sentences, and neither is
             // fixed by re-polling — so no prefix and no "will retry automatically".
             lastError = error.localizedDescription
-            cloudSyncTask = nil
+            return false
         } catch {
             var message = "Could not sync the cloud import: \(error.localizedDescription)"
             if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
             lastError = message
         }
+        return true
     }
 
     private func scheduleCloudRepoll() {
-        guard cloudState.isActive else {
+        guard cloudState.isActive || !shareImports.isEmpty else {
             cloudSyncTask = nil
             return
         }

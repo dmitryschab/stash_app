@@ -375,6 +375,58 @@ extension PipelineTests {
         XCTAssertEqual(second.attempted, 0)
     }
 
+    /// A shared TikTok needs its transcript and on-screen text immediately, but the library
+    /// behind it is usually full of saves missing both. Without `only`, saving one video would
+    /// drag the whole backlog along and spend the month's budget on the first share.
+    func testBackfillsHonourTheOnlyFilter() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        for (index, id) in ["7000000000000000021", "7000000000000000022"].enumerated() {
+            let video = Video(
+                videoID: id,
+                url: URL(string: "https://www.tiktok.com/@x/video/\(id)")!,
+                bookmarkedAt: Date(timeIntervalSince1970: TimeInterval(800 + index)))
+            video.caption = "POV miso ramen"
+            video.categoryRaw = Category.other.rawValue
+            context.insert(video)
+        }
+        try context.save()
+
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: "boil the noodles"),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        let transcripts = await runner.backfillTranscripts(only: ["7000000000000000021"]) { _, _ in }
+        XCTAssertEqual(transcripts.filled, 1)
+        XCTAssertEqual(transcripts.attempted, 1, "the unnamed video must not be touched")
+
+        let visual = await runner.backfillVisualText(
+            only: ["7000000000000000021"],
+            visualText: { _, _ in "MISO RAMEN" },
+            progress: { _, _ in })
+        XCTAssertEqual(visual.filled, 1)
+        XCTAssertEqual(visual.attempted, 1)
+
+        let named = try XCTUnwrap(fetchVideo("7000000000000000021", in: container))
+        XCTAssertEqual(named.transcript, "boil the noodles")
+        XCTAssertEqual(named.ocrText, "MISO RAMEN")
+
+        let untouched = try XCTUnwrap(fetchVideo("7000000000000000022", in: container))
+        XCTAssertNil(untouched.transcript)
+        XCTAssertNil(untouched.ocrText)
+        XCTAssertEqual(try stages(untouched)[PipelineStage.transcribe.rawValue], .pending)
+
+        // …and the same runner without the filter still sees the one that was skipped.
+        let rest = await runner.backfillTranscripts { _, _ in }
+        XCTAssertEqual(rest.attempted, 1)
+    }
+
     func testReanalyzeAllRebucketsFromStoredFields() async throws {
         let container = try makeContainer()
         let context = ModelContext(container)

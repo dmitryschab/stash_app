@@ -294,6 +294,16 @@ struct ImportView: View {
                 .foregroundStyle(Color.stashInk.opacity(0.7))
             }
             .buttonStyle(.plain)
+
+            // The share extension is invisible from inside the app, and a way in nobody knows
+            // about is not a way in. One line, next to the other way of adding videos.
+            HStack(spacing: 7) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12, weight: .semibold))
+                Micro(text: "Or share a TikTok to Stash to save just that one",
+                      size: 10, tracking: 1.2, color: .stashInk.opacity(0.7))
+            }
+            .foregroundStyle(Color.stashInk.opacity(0.7))
         }
     }
 
@@ -317,6 +327,14 @@ struct ImportView: View {
                 .foregroundStyle(accent)
             }
             Text(quotaSummary(quota))
+                .font(.archivo(13, .semibold))
+                .foregroundStyle(Color.stashInk.opacity(0.65))
+                .fixedSize(horizontal: false, vertical: true)
+            // A shared TikTok is charged three times — importing it, transcribing it and
+            // downloading it to read the frames — so the number is worth stating where the
+            // budget is read rather than leaving it to be discovered by subtraction.
+            Text("Sharing a TikTok into Stash costs 3: one to import it, one for the transcript, "
+                 + "one to read the words on screen.")
                 .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.65))
                 .fixedSize(horizontal: false, vertical: true)

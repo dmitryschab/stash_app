@@ -24,12 +24,16 @@ targets:
         buildPhase: resources
     dependencies:
       - package: TikTokBrainKit
+      # Embeds the share extension in the app bundle.
+      - target: StashShare
     # Sign in with Apple is the only auth method; without this entitlement the
     # ASAuthorizationController request fails at runtime (error 1000).
     entitlements:
       path: Stash.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # The share extension's only channel into the app; see SharedInbox.
+        com.apple.security.application-groups: [group.dev.dmitryschab.Stash]
     info:
       path: Info.plist
       properties:
@@ -52,8 +56,48 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "14"
+        CURRENT_PROJECT_VERSION: "15"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3  # personal team (Dmitrijs Sabelniks) — hosts Orivox too
+        CODE_SIGN_STYLE: Automatic
+
+  # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
+  # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build
+  # must track the app's exactly or App Store Connect refuses the upload.
+  StashShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - ShareExtension
+    dependencies:
+      - package: TikTokBrainKit
+    entitlements:
+      path: ShareExtension/StashShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.dev.dmitryschab.Stash]
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Stash
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            # A single web URL, plus text: TikTok's own sheet often hands the caption and the
+            # link over together as plain text rather than as a bare URL.
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash.Share
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "15"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: S76KJ8Y6C3
         CODE_SIGN_STYLE: Automatic

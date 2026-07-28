@@ -230,8 +230,12 @@ public actor PipelineRunner {
     /// and blew the hourly quota, which is what made ~60% of them fail. Running one at a time
     /// stays under the cap. The run is resumable — it only picks videos that still have no
     /// transcript and were not already attempted — so calling it again continues where it left off.
+    /// `only` narrows the run to specific videos. A share-imported video needs its transcript
+    /// straight away, and without the filter that one save would drag the entire library's
+    /// backlog along with it and spend the whole month's budget on the first share.
     public func backfillTranscripts(
         limit: Int = Int.max,
+        only: Set<String>? = nil,
         progress: @escaping @Sendable (Int, Int) -> Void
     ) async -> BackfillResult {
         let all = (try? ModelContext(container).fetch(
@@ -239,6 +243,7 @@ public actor PipelineRunner {
         let targets = all.filter { video in
             !video.unavailable && video.transcript == nil
                 && stageStates(video)[PipelineStage.transcribe.rawValue] != .done
+                && (only?.contains(video.videoID) ?? true)
         }.map(\.videoID).prefix(limit)
 
         let total = targets.count
@@ -317,8 +322,10 @@ public actor PipelineRunner {
     ///
     /// Resumable on the same terms as the transcript backfill: only videos with no stored
     /// `ocrText` whose ocr stage is not already done are picked up.
+    /// `only` narrows the run to specific videos; see `backfillTranscripts(limit:only:progress:)`.
     public func backfillVisualText(
         limit: Int = Int.max,
+        only: Set<String>? = nil,
         visualText: @escaping @Sendable (String, URL) async throws -> String?,
         progress: @escaping @Sendable (Int, Int) -> Void
     ) async -> BackfillResult {
@@ -327,6 +334,7 @@ public actor PipelineRunner {
         let targets = all.filter { video in
             !video.unavailable && video.ocrText == nil
                 && stageStates(video)[PipelineStage.ocr.rawValue] != .done
+                && (only?.contains(video.videoID) ?? true)
         }.map(\.videoID).prefix(limit)
 
         let total = targets.count

@@ -1,7 +1,7 @@
 # Share a TikTok into Stash
 
 **Date:** 2026-07-28
-**Status:** approved, not implemented
+**Status:** implemented on `feat/share-a-tiktok`
 
 ## The problem
 
@@ -48,7 +48,7 @@ backfills that Settings exposes today.
 
 ### Units and their boundaries
 
-**`SharedInbox`** (`App/Sources/SharedInbox.swift`, compiled into both targets)
+**`SharedInbox`** (`TikTokBrainKit/Sources/TikTokBrainKit/SharedInbox.swift`)
 The only thing the two processes share. Three functions: `write(_ url: URL)`,
 `drain() -> [URL]` (reads and deletes), `containerURL`. One file per shared link named by
 UUID, so the extension writing and the app draining never touch the same file and no locking
@@ -66,11 +66,21 @@ Owns the whole app-side sequence. Called from `appBecameActive()` alongside
 `syncCloudImportIfNeeded()`, guarded on `StashSession.shared.isSignedIn` like every other
 entry point in that file.
 
-**Short-link resolution** (private to `PipelineCenter`)
-`URLSession` follows redirects by default; issue a `GET` with the desktop User-Agent that
-`Enricher` already uses, read `response.url`, extract `/video/(\d+)`. Returns `nil` if no
-numeric id can be found — the caller reports it rather than submitting a request the server
-will reject.
+**`TikTokLink`** (Kit)
+Short-link resolution. `URLSession` follows redirects by default; issue a `GET` with the desktop
+User-Agent that `Enricher` already uses, read `response.url`, extract the numeric id, and
+normalise scheme, host and query to the spelling the box allowlists.
+
+Its `Failure` distinguishes three outcomes, and that distinction is the point: `notTikTok` and
+`unresolved` (TikTok answered, but not with a video) are permanent, while `unreachable` (the
+request itself failed) is not. By the time resolution runs, the inbox file has already been
+deleted — so a link dropped because the network blinked is gone for good.
+
+**`SharedLinkResolver`** (Kit)
+Sorts a batch of links into resolved / hold-for-retry / reject, and owns the message shown for
+the rejects. Extracted from `PipelineCenter` purely so this decision can be tested against a
+stub resolver instead of against TikTok. An unrecognised error counts as retryable: it is not
+evidence the video is gone, and holding a link costs nothing.
 
 **`PipelineRunner.backfillTranscripts` / `backfillVisualText`** — one new parameter
 `only: Set<String>? = nil`, applied in the existing `targets` filter. Without it, a share
@@ -83,10 +93,16 @@ Two lines per method; no behaviour change when `nil`.
 `cloudImport.syncState` — one active import at a time. A shared video creates a second import
 that must be polled without disturbing an in-flight library import.
 
-Solution: a separate persisted `[String]` of share import ids. `syncCloudImport()` polls each
-one after the main state, upserts results through the existing `CloudImportResultUpserter`, and
-drops an id once its status reaches `completed` or `cancelled`. The upserter is already
-idempotent and keyed by `videoID`, so nothing special is needed for overlap.
+Solution: a separate persisted `[ShareImport]` — `{id, importID?, videoIDs}`. `syncCloudImport()`
+polls the library import and the share imports separately (not `&&`: short-circuiting would skip
+the share poll whenever the library one failed), upserting through the existing
+`CloudImportResultUpserter`, which is idempotent and keyed by `videoID`.
+
+`importID` is cleared once the fast pass lands, but the entry survives until the deep pass has
+run. That is what makes a deep pass that could not start — app already importing, budget spent,
+box unreachable — a retry on the next foreground rather than a save that silently never finishes.
+`deepPassBlocked` stops the eight-second poll loop from re-attempting a pass the box just refused;
+it is deliberately not persisted, because the next foreground is exactly when retrying is worth it.
 
 *ponytail: a flat array, not a second state machine. If share imports ever need progress UI of
 their own, promote it to `[CloudImportSyncState]` then.*
@@ -135,8 +151,11 @@ shares are still there when the month turns over.
 
 | Failure | Behaviour |
 |---|---|
-| Short link will not resolve / no numeric id | File deleted, error on the Import screen naming the link |
-| Video private, deleted or region-locked | Server returns `unavailable`; the row lands flagged, as with any import |
+| Not a TikTok link | Extension says so and writes nothing |
+| Video private, deleted, or a login wall | Permanent (`unresolved`): file dropped, error on the Import screen |
+| TikTok unreachable while resolving | Retryable (`unreachable`): link written back, tried again next foreground |
+| Server reports the video unavailable | The row lands flagged, as with any import |
+| Submission fails (network, 5xx) | Every link written back to the inbox; `ingest` de-duplicates on retry |
 | Transcript throttled (Groq hourly cap) | Stage parks `awaitingBox`; the existing backfill picks it up on a later run |
 | Signed out when the app opens | Drain skipped entirely; files stay pending until the next signed-in foreground |
 | Budget exhausted | Drain stops, files stay pending, existing quota message shown |
@@ -144,18 +163,34 @@ shares are still there when the month turns over.
 
 ## Testing
 
-- `SharedInbox` round trip: write → drain returns the URL → directory is empty. Real
-  `FileManager`, temp directory injected.
-- URL extraction from a `public.plain-text` payload with the URL mid-sentence, and from a bare
-  `public.url`.
-- Short-link resolver against a canonical URL, a short URL, and a non-TikTok URL (expects `nil`).
-- `backfillTranscripts(only:)` and `backfillVisualText(only:)` touch only the named ids, against
-  the existing in-memory container and fakes.
-- Manual: share a TikTok URL from Safari in the simulator, confirm the file lands and the video
-  appears with a transcript.
+`swift test` in `TikTokBrainKit`: **69 tests, 0 failures** (was 62 — 7 new files' worth of cases
+across three new suites plus one added to `PipelineTests`).
 
-Existing `PipelineRunner` tests must keep passing unchanged — that is the check that `only: nil`
-changed nothing.
+- `SharedInboxTests` — write/drain round trip, oldest-first ordering, an unparseable file dropped
+  rather than jamming the queue, links written back after a failed submission surviving, and a
+  missing directory reading as empty rather than throwing.
+- `TikTokLinkTests` — id extraction from `/video/` and `/photo/` paths, a link dug out of a
+  sentence, lookalike hosts (`tiktok.com.evil.example`) rejected, short-link resolution via a
+  `URLProtocol` stub, host normalisation to `www.tiktok.com`, and the retryable/permanent split.
+- `SharedLinkResolverTests` — the branch that decides whether a link is held or dropped, including
+  a mixed batch where one dead link must not take the others down with it.
+- `PipelineTests.testBackfillsHonourTheOnlyFilter` — both backfills touch only the named ids, and
+  the unnamed video is still picked up by an unfiltered run.
+
+Existing `PipelineRunner` tests pass unchanged, which is the check that `only: nil` changed nothing.
+
+End-to-end in the simulator (iPhone 17 Pro, headless via `simctl` + `idb`):
+
+1. Signed build installs with `StashShare.appex` embedded and the app group container bound.
+2. Sharing `https://www.tiktok.com/@jazzcat/video/7523456789012345678` from Safari shows **Stash**
+   in the share sheet; tapping it writes that exact URL to `<group>/pending/<uuid>.txt`.
+3. Sharing `https://example.com/article` shows "Not a TikTok link" and writes nothing.
+4. Launching the app signed out leaves the pending file untouched.
+
+Not covered by an automated test: `PipelineCenter`'s orchestration (there is no app test target,
+and it is a `@MainActor` singleton over `StashSession` and `UserDefaults`). The two decisions in
+it worth testing were extracted into `SharedLinkResolver` and the `only:` filter, which are.
+Submitting a real share against the live box is still a manual check.
 
 ## Explicitly out of scope
 
