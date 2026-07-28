@@ -28,7 +28,7 @@ import time
 from boto3.dynamodb.conditions import Attr
 
 from cloud_import_models import INITIAL_LIMIT, MONTH_LIMIT
-from cloud_import_store import _is_conditional_failure, shared_table
+from cloud_import_store import _is_conditional_failure, _now, shared_table
 
 # No I/O/0/1: these get read aloud and typed in by hand.
 ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -118,8 +118,10 @@ def grant_quota(table, user_id: str, units: int) -> dict:
     initial = int(item.get("initialRemaining", INITIAL_LIMIT))
     month = int(item.get("monthRemaining", MONTH_LIMIT))
     reset = int(item.get("monthResetAt", 0)) or int(time.time()) + 30 * 86400
+    # `_now()`, not an epoch int: every other writer of this row stores an ISO string, and a
+    # column with two types is a trap for whoever reads it next.
     updated = {**key, "initialRemaining": initial + units, "monthRemaining": month,
-               "monthResetAt": reset, "updatedAt": int(time.time())}
+               "monthResetAt": reset, "updatedAt": _now()}
     table.put_item(Item=updated)
     return updated
 
