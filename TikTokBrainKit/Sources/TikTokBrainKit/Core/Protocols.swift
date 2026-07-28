@@ -9,6 +9,9 @@ public protocol Transcribing: Sendable { func transcript(for videoURL: URL) asyn
 public protocol Analyzing: Sendable {
     func analyze(meta: VideoMeta, transcript: String?, ocrText: String?) async throws -> Analysis
 }
+/// Resolves the releases a video named to streaming links, leaving `link` nil on any it cannot
+/// match confidently. Takes the whole list rather than one title at a time: a video recommending
+/// five albums is one unit of work, and the implementation paces its own lookups.
 public protocol MusicLinkResolving: Sendable {
-    func universalLink(title: String, artist: String) async throws -> URL?
+    func resolve(_ picks: [MusicPick]) async -> [MusicPick]
 }

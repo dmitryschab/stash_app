@@ -130,15 +130,27 @@ public struct MediaFetcher: MediaFetching {
 }
 
 /// On-device OCR over keyframe PNGs using Vision's accurate English recognizer.
-/// Joins the unique recognized lines (in first-seen order) into a single string.
+///
+/// Emits one line per frame — `[n] top line | next line | …` — rather than a flat pool of unique
+/// strings. Which frame a word came from is the only signal that says a title and an artist
+/// belong together, and flattening threw it away: a video listing five albums produced one
+/// alphabet soup, and the analyzer paired "Polaris" with "M" and "KMC" with nothing. Grouped by
+/// frame and ordered top-to-bottom, the same video reads as five correct title/artist pairs.
+///
+/// Frames whose text is identical to one already emitted are dropped, which is most of them —
+/// on-screen text changes far more slowly than twelve evenly-spaced samples.
 public struct FrameReader: Sendable {
     public init() {}
 
+    /// Marks the grouped format. Text stored before this change has no frame markers, which is
+    /// how `PipelineRunner.backfillVisualText` knows it is worth re-reading.
+    public static let frameMarker = "["
+
     public func recognizeText(in imageURLs: [URL]) async throws -> String {
-        var lines: [String] = []
+        var blocks: [String] = []
         var seen = Set<String>()
 
-        for url in imageURLs {
+        for (index, url) in imageURLs.enumerated() {
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
 
@@ -150,15 +162,22 @@ public struct FrameReader: Sendable {
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             try handler.perform([request])
 
-            for observation in request.results ?? [] {
-                guard let candidate = observation.topCandidates(1).first else { continue }
-                let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty, !seen.contains(text) else { continue }
-                seen.insert(text)
-                lines.append(text)
+            // Reading order: Vision's boundingBox origin is bottom-left, so the highest maxY is
+            // the topmost line. A title sits above its artist on essentially every such card.
+            let observations = (request.results ?? [])
+                .sorted { $0.boundingBox.maxY > $1.boundingBox.maxY }
+            let lines = observations.compactMap { observation -> String? in
+                let text = observation.topCandidates(1).first?.string
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return (text?.isEmpty ?? true) ? nil : text
             }
+            guard !lines.isEmpty else { continue }
+
+            let block = lines.joined(separator: " | ")
+            guard seen.insert(block).inserted else { continue }
+            blocks.append("[\(index + 1)] \(block)")
         }
 
-        return lines.joined(separator: "\n")
+        return blocks.joined(separator: "\n")
     }
 }

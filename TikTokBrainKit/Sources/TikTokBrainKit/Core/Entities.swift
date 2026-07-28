@@ -17,7 +17,10 @@ import SwiftData
     public var summary: String
     public var topics: [String]
     public var recipeJSON: Data?          // JSONEncoder-encoded RecipeData
+    /// Legacy single track. Nothing writes this any more; `music` reads it when `musicJSON` is
+    /// nil so a library saved before multi-pick extraction is not blank until re-analysis runs.
     public var trackJSON: Data?
+    public var musicJSON: Data?           // JSONEncoder-encoded [MusicPick]
     public var codeJSON: Data?
     public var stageStatesJSON: Data      // [String: StageState] encoded; keys: enrich, media, transcribe, ocr, analyze
     public var unavailable: Bool
@@ -38,6 +41,7 @@ import SwiftData
         self.topics = []
         self.recipeJSON = nil
         self.trackJSON = nil
+        self.musicJSON = nil
         self.codeJSON = nil
         let initialStages: [String: StageState] = [
             "enrich": .pending, "media": .pending, "transcribe": .pending, "ocr": .pending, "analyze": .pending,

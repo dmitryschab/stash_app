@@ -40,8 +40,53 @@ public enum Category: String, Codable, Sendable {
 }
 
 public struct RecipeData: Codable, Equatable, Sendable { public var name: String; public var ingredients: [String]; public var steps: [String] }
+/// Legacy single-track shape. Superseded by `MusicPick`; kept only so saves written before
+/// multi-pick extraction, and any in-flight model response still using the old key, still read.
 public struct TrackData: Codable, Equatable, Sendable { public var title: String; public var artist: String; public var universalLink: URL? }
 public struct CodeData: Codable, Equatable, Sendable { public var summary: String; public var links: [URL]; public var techTags: [String] }
+
+/// One release a video recommends.
+///
+/// A video that names a single song produces one of these; one that runs through five albums
+/// produces five. The count is the only difference between the two cases — there is no separate
+/// "list" type to keep in step with this one.
+public struct MusicPick: Codable, Equatable, Sendable {
+    /// Which iTunes entity to search, and what the link should point at. A "top 5 albums" video
+    /// and a "top 5 songs" video need different queries, and only the video knows which it is.
+    public enum Kind: String, Codable, Sendable { case album, track }
+
+    /// Bounds the model's output. No real recommendation video lists more than this, and an
+    /// unbounded array is an unbounded number of iTunes lookups.
+    public static let maxPerVideo = 12
+
+    public var kind: Kind
+    public var title: String
+    /// Empty when the video does not name one. Never guessed — an invented artist is how the
+    /// wrong release gets linked.
+    public var artist: String
+    /// Resolved streaming link, or nil when nothing matched confidently. A nil link is a
+    /// deliberate outcome, not a missing value: the name still shows, unlinked.
+    public var link: URL?
+
+    public init(kind: Kind, title: String, artist: String = "", link: URL? = nil) {
+        self.kind = kind
+        self.title = title
+        self.artist = artist
+        self.link = link
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        // An unrecognised kind is a track: the narrower query, and the one that fails visibly
+        // rather than silently linking a whole album for a single song.
+        kind = (try? values.decode(Kind.self, forKey: .kind)) ?? .track
+        title = (try values.decodeIfPresent(String.self, forKey: .title) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        artist = (try values.decodeIfPresent(String.self, forKey: .artist) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        link = try values.decodeIfPresent(URL.self, forKey: .link)
+    }
+}
 
 public struct Analysis: Codable, Equatable, Sendable {
     public var category: Category
@@ -49,8 +94,47 @@ public struct Analysis: Codable, Equatable, Sendable {
     public var summary: String
     public var topics: [String]
     public var recipe: RecipeData?
-    public var track: TrackData?
+    /// Every release the video recommends, in the order it showed them. Empty for non-music.
+    public var music: [MusicPick]
     public var code: CodeData?
+
+    public init(category: Category, title: String, summary: String, topics: [String] = [],
+                recipe: RecipeData? = nil, music: [MusicPick] = [], code: CodeData? = nil) {
+        self.category = category
+        self.title = title
+        self.summary = summary
+        self.topics = topics
+        self.recipe = recipe
+        self.music = music
+        self.code = code
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case category, title, summary, topics, recipe, music, code
+    }
+    /// Read-only: the pre-multi-pick key. Declared separately so `encode(to:)` stays synthesized
+    /// and nothing ever writes the old shape back out.
+    private enum LegacyKeys: String, CodingKey { case track }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        category = try values.decode(Category.self, forKey: .category)
+        title = try values.decode(String.self, forKey: .title)
+        summary = try values.decode(String.self, forKey: .summary)
+        topics = try values.decodeIfPresent([String].self, forKey: .topics) ?? []
+        recipe = try values.decodeIfPresent(RecipeData.self, forKey: .recipe)
+        code = try values.decodeIfPresent(CodeData.self, forKey: .code)
+
+        if let picks = try values.decodeIfPresent([MusicPick].self, forKey: .music) {
+            music = Array(picks.filter { !$0.title.isEmpty }.prefix(MusicPick.maxPerVideo))
+        } else if let legacy = try? decoder.container(keyedBy: LegacyKeys.self)
+            .decodeIfPresent(TrackData.self, forKey: .track), !legacy.title.isEmpty {
+            music = [MusicPick(kind: .track, title: legacy.title,
+                               artist: legacy.artist, link: legacy.universalLink)]
+        } else {
+            music = []
+        }
+    }
 }
 
 public struct BoxConfig: Sendable {

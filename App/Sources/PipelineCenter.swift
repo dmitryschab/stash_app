@@ -130,7 +130,7 @@ final class PipelineCenter {
             media: MediaFetcher(),
             transcriber: TranscriberClient(config: config),
             analyzer: AnalyzerClient(config: config),
-            musicResolver: MusicLinkResolver(),
+            musicResolver: MusicPickResolver(),
             ocr: { try await FrameReader().recognizeText(in: $0) }
         )
     }

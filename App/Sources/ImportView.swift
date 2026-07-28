@@ -692,7 +692,8 @@ struct SettingsView: View {
         row["transcript"] = video.transcript
         row["ocrText"] = video.ocrText
         row["thumbnailURL"] = video.thumbnailURL?.absoluteString
-        for (key, json) in [("recipe", video.recipeJSON), ("track", video.trackJSON), ("code", video.codeJSON)] {
+        for (key, json) in [("recipe", video.recipeJSON), ("track", video.trackJSON),
+                            ("music", video.musicJSON), ("code", video.codeJSON)] {
             if let json, let object = try? JSONSerialization.jsonObject(with: json) { row[key] = object }
         }
         return row

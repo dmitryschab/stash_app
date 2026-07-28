@@ -29,7 +29,7 @@ struct VideoDetailView: View {
                 header
                 WatchSection(video: video, tint: tint)
                 if let recipe = video.recipe { recipeSection(recipe) }
-                if let track = video.track { trackSection(track) }
+                if !video.music.isEmpty { musicSection(video.music) }
                 if let code = video.codeNote { codeSection(code) }
                 textSection
                 pipelineSection
@@ -149,40 +149,52 @@ struct VideoDetailView: View {
         }
     }
 
+    /// Every release the video recommends. One row each, whether that is one song or five
+    /// albums — a row with no link is the honest outcome when the catalogue had nothing that
+    /// was plausibly this release, not a rendering gap.
     @ViewBuilder
-    private func trackSection(_ track: TrackData) -> some View {
-        sectionHeader("Track")
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 13) {
-                Thumbnail(url: video.thumbnailURL, category: .music, size: 46)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title)
-                        .font(.archivo(16, .bold))
-                        .foregroundStyle(Color.stashInk)
-                    Text(track.artist)
-                        .font(.archivo(12.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
-                }
-                Spacer(minLength: 0)
-            }
-            if let link = track.universalLink {
-                Link(destination: link) {
-                    HStack(spacing: 7) {
-                        Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .bold))
-                        Micro(text: "Open in your music app", size: 10, tracking: 1.2, color: .categoryMusic)
+    private func musicSection(_ picks: [MusicPick]) -> some View {
+        sectionHeader(picks.count == 1 ? "Track" : "\(picks.count) releases")
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(picks.enumerated()), id: \.offset) { index, pick in
+                HStack(spacing: 13) {
+                    if picks.count == 1 {
+                        Thumbnail(url: video.thumbnailURL, category: .music, size: 46)
+                    } else {
+                        Text("\(index + 1)")
+                            .font(.archivo(15, .black))
+                            .foregroundStyle(Color.stashInk.opacity(pick.link != nil ? 0.9 : 0.4))
+                            .frame(width: 22, alignment: .leading)
                     }
-                    .foregroundStyle(Color.categoryMusic)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(pick.title)
+                            .font(.archivo(16, .bold))
+                            .foregroundStyle(Color.stashInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(pickByline(pick))
+                            .font(.archivo(12.5))
+                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                    }
+                    Spacer(minLength: 0)
+                    if let link = pick.link {
+                        Link(destination: link) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(Color.categoryMusic)
+                        }
+                        .accessibilityLabel("Open \(pick.title) in your music app")
+                    }
                 }
-                .padding(.top, 14)
-            } else {
-                Text("No universal link found for this track.")
-                    .font(.archivo(12))
-                    .foregroundStyle(Color.stashInk.opacity(0.5))
-                    .padding(.top, 12)
             }
         }
         .stashOutlineCard()
         .padding(.top, 8)
+    }
+
+    private func pickByline(_ pick: MusicPick) -> String {
+        let kind = pick.kind == .album ? "Album" : "Track"
+        let who = pick.artist.isEmpty ? "" : " · " + pick.artist
+        return pick.link == nil ? kind + who + " · no match found" : kind + who
     }
 
     @ViewBuilder

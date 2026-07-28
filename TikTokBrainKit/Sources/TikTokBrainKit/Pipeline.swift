@@ -188,6 +188,7 @@ public actor PipelineRunner {
         // doesn't keep showing the old card; applyAnalysis re-sets whichever one still applies.
         video.recipeJSON = nil
         video.trackJSON = nil
+        video.musicJSON = nil
         video.codeJSON = nil
         await applyAnalysis(analysis, to: video)
         try? context.save()
@@ -303,6 +304,7 @@ public actor PipelineRunner {
             meta: meta, transcript: fetched, ocrText: video.ocrText) {
             video.recipeJSON = nil
             video.trackJSON = nil
+            video.musicJSON = nil
             video.codeJSON = nil
             await applyAnalysis(analysis, to: video)
         }
@@ -332,9 +334,13 @@ public actor PipelineRunner {
         let all = (try? ModelContext(container).fetch(
             FetchDescriptor<Video>(sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
         let targets = all.filter { video in
-            !video.unavailable && video.ocrText == nil
-                && stageStates(video)[PipelineStage.ocr.rawValue] != .done
-                && (only?.contains(video.videoID) ?? true)
+            guard !video.unavailable, only?.contains(video.videoID) ?? true else { return false }
+            if let existing = video.ocrText {
+                // Read before frame grouping shipped. The flat pool it produced is what made the
+                // analyzer pair titles with the wrong artists, so it is worth the unit to re-read.
+                return !existing.hasPrefix(FrameReader.frameMarker)
+            }
+            return stageStates(video)[PipelineStage.ocr.rawValue] != .done
         }.map(\.videoID).prefix(limit)
 
         let total = targets.count
@@ -391,13 +397,19 @@ public actor PipelineRunner {
             return .empty
         }
 
-        video.ocrText = recognized
+        // Always stored in the marked format, whatever produced it. The re-read above is
+        // triggered by the absence of a marker, so text stored without one would be re-read on
+        // every run — a silent, unbounded spend. A reader that returns one unmarked blob is
+        // recorded as a single frame, which is what it is.
+        let marked = recognized.hasPrefix(FrameReader.frameMarker) ? recognized : "[1] " + recognized
+        video.ocrText = marked
         let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
                              author: video.author, thumbnailURL: video.thumbnailURL)
         if let analysis = try? await deps.analyzer.analyze(
-            meta: meta, transcript: video.transcript, ocrText: recognized) {
+            meta: meta, transcript: video.transcript, ocrText: marked) {
             video.recipeJSON = nil
             video.trackJSON = nil
+            video.musicJSON = nil
             video.codeJSON = nil
             await applyAnalysis(analysis, to: video)
         }
@@ -519,13 +531,11 @@ public actor PipelineRunner {
         if let recipe = analysis.recipe {
             video.recipeJSON = try? encoder.encode(recipe)
         }
-        if var track = analysis.track {
-            // Resolve a universal song.link for music (best-effort; a failure just leaves it nil).
-            if track.universalLink == nil {
-                track.universalLink = try? await deps.musicResolver.universalLink(
-                    title: track.title, artist: track.artist)
-            }
-            video.trackJSON = try? encoder.encode(track)
+        if !analysis.music.isEmpty {
+            // Best-effort: a pick nothing matched keeps a nil link and shows as a plain name.
+            let resolved = await deps.musicResolver.resolve(analysis.music)
+            video.musicJSON = try? encoder.encode(resolved)
+            video.trackJSON = nil   // the legacy single-track copy is now stale
         }
         if let code = analysis.code {
             video.codeJSON = try? encoder.encode(code)

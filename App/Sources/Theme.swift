@@ -276,8 +276,27 @@ extension Video {
     var needsLook: Bool { unavailable || categoryRaw.isEmpty }
 
     var recipe: RecipeData? { Self.decode(recipeJSON, as: RecipeData.self) }
-    var track: TrackData? { Self.decode(trackJSON, as: TrackData.self) }
     var codeNote: CodeData? { Self.decode(codeJSON, as: CodeData.self) }
+
+    /// Every release this save recommends, in the order the video showed them.
+    ///
+    /// Falls back to the legacy single `trackJSON` so a library saved before multi-pick
+    /// extraction still reads as one pick until the re-analysis pass rewrites it.
+    var music: [MusicPick] {
+        if let picks = Self.decode(musicJSON, as: [MusicPick].self) { return picks }
+        guard let legacy = Self.decode(trackJSON, as: TrackData.self), !legacy.title.isEmpty else {
+            return []
+        }
+        return [MusicPick(kind: .track, title: legacy.title,
+                          artist: legacy.artist, link: legacy.universalLink)]
+    }
+
+    /// The single pick, when there is exactly one. Nil for a recommendation list — callers that
+    /// show one song must not silently show the first of five.
+    var soleMusicPick: MusicPick? {
+        let picks = music
+        return picks.count == 1 ? picks[0] : nil
+    }
 
     var stageStates: [String: StageState] {
         (try? JSONDecoder().decode([String: StageState].self, from: stageStatesJSON)) ?? [:]
@@ -291,9 +310,12 @@ extension Video {
     }
 
     /// The best display title for a row, honoring the category payload.
+    ///
+    /// A recommendation list keeps the video's own title: naming it after the first of five
+    /// releases would misrepresent four of them.
     var rowTitle: String {
         if let recipe, !recipe.name.isEmpty { return recipe.name }
-        if let track, !track.title.isEmpty { return track.title }
+        if let pick = soleMusicPick, !pick.title.isEmpty { return pick.title }
         if !title.isEmpty { return title }
         return subtitle
     }
@@ -301,10 +323,11 @@ extension Video {
     /// A one-line meta string for rows ("5 ingredients · 4 steps", "M83 · synthwave"…).
     var rowMeta: String {
         if let recipe { return "\(recipe.ingredients.count) ingredients · \(recipe.steps.count) steps" }
-        if let track {
+        if let pick = soleMusicPick {
             let tag = topics.first.map { " · \($0)" } ?? ""
-            return track.artist + tag
+            return pick.artist + tag
         }
+        if music.count > 1 { return "\(music.count) releases" }
         if let codeNote, !codeNote.techTags.isEmpty {
             return codeNote.techTags.prefix(3).joined(separator: " · ")
         }

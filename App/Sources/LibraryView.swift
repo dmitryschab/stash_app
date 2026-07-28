@@ -394,7 +394,7 @@ private struct LibraryRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            if let link = video.track?.universalLink {
+            if let link = video.soleMusicPick?.link {
                 Link(destination: link) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 14, weight: .bold))

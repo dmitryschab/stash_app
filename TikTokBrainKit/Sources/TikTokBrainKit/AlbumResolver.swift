@@ -13,8 +13,8 @@ public struct AlbumRef: Codable, Equatable, Sendable {
 }
 
 /// Resolves a track title/artist to its album, and an album to its full tracklist,
-/// via the public iTunes Search API. Best-effort with the same guard rails as
-/// `MusicLinkResolver`: empty titles and "original sound" placeholders return `nil`.
+/// via the public iTunes Search API. Best-effort: empty titles and "original sound"
+/// placeholders return `nil`, and so does a hit that does not resemble what was asked for.
 public struct AlbumResolver {
     private let session: URLSession
 
@@ -32,13 +32,20 @@ public struct AlbumResolver {
             URLQueryItem(name: "term", value: "\(trimmed) \(artist)".trimmingCharacters(in: .whitespacesAndNewlines)),
             URLQueryItem(name: "media", value: "music"),
             URLQueryItem(name: "entity", value: "song"),
-            URLQueryItem(name: "limit", value: "1"),
+            URLQueryItem(name: "limit", value: "5"),
         ]
         guard let url = components?.url else { return nil }
 
         let (data, _) = try await session.data(from: url)
         let decoded = try JSONDecoder().decode(Response.self, from: data)
-        guard let hit = decoded.results.first,
+        // Gated on the way in, like `MusicPickResolver`. Without this a single save filed under
+        // whatever the search happened to return first, and the album page then presented that
+        // record's real tracklist as the video's content.
+        guard let hit = decoded.results.first(where: {
+                  MatchConfidence.accepts(
+                      askedTitle: trimmed, askedArtist: artist,
+                      returnedTitle: $0.trackName ?? "", returnedArtist: $0.artistName ?? "")
+              }),
               let collectionID = hit.collectionId,
               let albumTitle = hit.collectionName,
               let trackCount = hit.trackCount else { return nil }

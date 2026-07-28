@@ -44,11 +44,88 @@ struct MusicAlbum: Identifiable {
     }
 }
 
-/// Buckets music saves into albums using whatever the store has resolved so far.
+/// One video's recommendation list — five albums in one clip, kept together as the unit they
+/// were presented as. Its releases deliberately do NOT also scatter into the album grid: the
+/// set is what the video was about, and splitting it loses that.
+struct MusicList: Identifiable {
+    let video: Video
+    let picks: [MusicPick]
+    var id: String { video.videoID }
+    var title: String { video.title }
+    /// The wall cell has no artist line to show — the whole point is that there are several.
+    var subtitle: String { "\(picks.count) releases" }
+    var linkedCount: Int { picks.filter { $0.link != nil }.count }
+}
+
+/// One cell on the wall.
+enum MusicShelfItem: Identifiable {
+    case album(MusicAlbum)
+    case list(MusicList)
+
+    var id: String {
+        switch self {
+        case .album(let album): "album:" + album.id
+        case .list(let list): "list:" + list.id
+        }
+    }
+    var title: String {
+        switch self {
+        case .album(let album): album.title
+        case .list(let list): list.title
+        }
+    }
+    var artist: String {
+        switch self {
+        case .album(let album): album.artist
+        case .list(let list): list.subtitle
+        }
+    }
+    var latestSave: Date {
+        switch self {
+        case .album(let album): album.latestSave
+        case .list(let list): list.video.bookmarkedAt
+        }
+    }
+    var saveCount: Int {
+        switch self {
+        case .album(let album): album.saves.count
+        case .list(let list): list.picks.count
+        }
+    }
+    var isWhole: Bool {
+        switch self {
+        case .album(let album): album.isWhole
+        case .list: false     // a list is never "the whole album"
+        }
+    }
+    var coverageLabel: String {
+        switch self {
+        case .album(let album): album.coverageLabel
+        case .list(let list): "\(list.linkedCount) of \(list.picks.count) linked"
+        }
+    }
+    var clipsLabel: String {
+        switch self {
+        case .album(let album): album.clipsLabel
+        case .list: "1 clip"
+        }
+    }
+}
+
+/// Splits music saves into the two wall units: a video recommending several releases becomes one
+/// list; a video about a single song files under its album, grouped with every other save of it.
+func shelfItems(_ videos: [Video], refs: [String: AlbumRef]) -> [MusicShelfItem] {
+    let lists = videos.filter { $0.music.count > 1 }
+        .map { MusicShelfItem.list(MusicList(video: $0, picks: $0.music)) }
+    let singles = videos.filter { $0.music.count == 1 }
+    return lists + groupAlbums(singles, refs: refs).map(MusicShelfItem.album)
+}
+
+/// Buckets single-release saves into albums using whatever the store has resolved so far.
 private func groupAlbums(_ videos: [Video], refs: [String: AlbumRef]) -> [MusicAlbum] {
     var byKey: [String: MusicAlbum] = [:]
     for video in videos {
-        guard let track = video.track else { continue }
+        guard let track = video.soleMusicPick else { continue }
         let key: String
         let save: MusicAlbum.Save
         if let ref = refs[video.videoID] {
@@ -114,7 +191,7 @@ final class AlbumStore {
         var dirty = false
         for video in videos {
             guard refs[video.videoID] == nil, !attempted.contains(video.videoID),
-                  let track = video.track else { continue }
+                  let track = video.soleMusicPick else { continue }
             attempted.insert(video.videoID)
             guard let ref = try? await resolver.album(title: track.title, artist: track.artist) else { continue }
             refs[video.videoID] = ref
@@ -149,36 +226,41 @@ struct MusicView: View {
     }
 
     private var musicSaves: [Video] {
-        videos.filter { $0.category == .music && $0.track != nil }
+        videos.filter { $0.category == .music && !$0.music.isEmpty }
     }
 
-    private var allAlbums: [MusicAlbum] {
-        groupAlbums(musicSaves, refs: store.refs)
+    /// Only single-release saves need an album lookup; a list is already its own unit.
+    private var singleSaves: [Video] {
+        musicSaves.filter { $0.music.count == 1 }
     }
 
-    private func shelf(_ albums: [MusicAlbum]) -> [MusicAlbum] {
+    private var allItems: [MusicShelfItem] {
+        shelfItems(musicSaves, refs: store.refs)
+    }
+
+    private func shelf(_ items: [MusicShelfItem]) -> [MusicShelfItem] {
         switch sorting {
         case .recent:
-            albums.sorted { $0.latestSave > $1.latestSave }
+            items.sorted { $0.latestSave > $1.latestSave }
         case .mostSaved:
-            albums.sorted { ($0.saves.count, $0.latestSave) > ($1.saves.count, $1.latestSave) }
+            items.sorted { ($0.saveCount, $0.latestSave) > ($1.saveCount, $1.latestSave) }
         case .wholeAlbums:
-            albums.filter(\.isWhole).sorted { $0.latestSave > $1.latestSave }
+            items.filter(\.isWhole).sorted { $0.latestSave > $1.latestSave }
         }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                let albums = allAlbums
+                let items = allItems
                 VStack(alignment: .leading, spacing: 0) {
-                    StashHeader(title: "Music", trailing: "\(albums.count) albums · \(musicSaves.count) saves")
+                    StashHeader(title: "Music", trailing: "\(items.count) records · \(musicSaves.count) saves")
                         .padding(.top, 8)
                     chips.padding(.top, 14)
                     if musicSaves.isEmpty {
                         emptyState.padding(.top, 48)
                     } else {
-                        mosaic(shelf(albums)).padding(.top, 22)
+                        mosaic(shelf(items)).padding(.top, 22)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -187,7 +269,7 @@ struct MusicView: View {
             .background(Color.stashBackground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
         }
-        .task(id: musicSaves.count) { await store.resolve(musicSaves) }
+        .task(id: singleSaves.count) { await store.resolve(singleSaves) }
     }
 
     private var chips: some View {
@@ -214,17 +296,22 @@ struct MusicView: View {
         }
     }
 
-    private func mosaic(_ albums: [MusicAlbum]) -> some View {
+    private func mosaic(_ items: [MusicShelfItem]) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 22) {
-            ForEach(albums) { album in
-                let s = scatter(album.id)
-                NavigationLink { AlbumDetailView(album: album, store: store) } label: {
-                    SleeveTile(album: album)
+            ForEach(items) { item in
+                let s = scatter(item.id)
+                NavigationLink {
+                    switch item {
+                    case .album(let album): AlbumDetailView(album: album, store: store)
+                    case .list(let list): MusicListDetailView(list: list)
+                    }
+                } label: {
+                    SleeveTile(item: item)
                 }
                 .buttonStyle(.plain)
                 .rotationEffect(.degrees(s.angle))
                 .offset(y: s.dy)
-                .accessibilityLabel("\(album.title) by \(album.artist), \(album.clipsLabel)")
+                .accessibilityLabel("\(item.title), \(item.artist), \(item.clipsLabel)")
             }
         }
         .animation(.easeOut(duration: 0.3), value: sorting)
@@ -245,16 +332,16 @@ struct MusicView: View {
 
 /// One mosaic cell: the sleeve plus its coverage caption.
 private struct SleeveTile: View {
-    let album: MusicAlbum
+    let item: MusicShelfItem
 
     var body: some View {
         VStack(spacing: 7) {
-            SleeveArt(album: album)
+            SleeveArt(title: item.title, artist: item.artist)
             HStack {
-                Micro(text: album.coverageLabel, size: 9.5, tracking: 1.1,
-                      color: album.isWhole ? .categoryOther : .stashInk.opacity(0.55))
+                Micro(text: item.coverageLabel, size: 9.5, tracking: 1.1,
+                      color: item.isWhole ? .categoryOther : .stashInk.opacity(0.55))
                 Spacer()
-                Micro(text: album.clipsLabel, size: 9.5, tracking: 1.1, color: .stashInk.opacity(0.45))
+                Micro(text: item.clipsLabel, size: 9.5, tracking: 1.1, color: .stashInk.opacity(0.45))
             }
             .padding(.horizontal, 2)
         }
@@ -275,8 +362,8 @@ private struct SleeveStyle {
         .categoryHome, .categoryMusic, .categoryOther, .stashInk,
     ]
 
-    init(for album: MusicAlbum) {
-        let hash = stableHash(album.title + album.artist)
+    init(title: String, artist: String) {
+        let hash = stableHash(title + artist)
         if hash % 5 == 0 {
             background = .stashSurface
             foreground = .stashInk
@@ -292,10 +379,11 @@ private struct SleeveStyle {
 /// The typographic cover: short one-word titles go giant and centered; everything
 /// else stacks bottom-left with the artist in caps underneath.
 struct SleeveArt: View {
-    let album: MusicAlbum
+    let title: String
+    let artist: String
 
-    private var style: SleeveStyle { SleeveStyle(for: album) }
-    private var isGiant: Bool { album.title.count <= 8 && !album.title.contains(" ") }
+    private var style: SleeveStyle { SleeveStyle(title: title, artist: artist) }
+    private var isGiant: Bool { title.count <= 8 && !title.contains(" ") }
 
     var chipColor: Color { style.outlined ? .categoryMusic : style.background }
 
@@ -310,7 +398,7 @@ struct SleeveArt: View {
             }
             .overlay {
                 if isGiant {
-                    Text(album.title.uppercased())
+                    Text(title.uppercased())
                         .font(.archivo(42, .black))
                         .minimumScaleFactor(0.3)
                         .lineLimit(1)
@@ -318,12 +406,12 @@ struct SleeveArt: View {
                         .padding(14)
                 } else {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(album.title.lowercased())
+                        Text(title.lowercased())
                             .font(.archivo(26, .black))
                             .minimumScaleFactor(0.5)
                             .lineLimit(3)
                             .foregroundStyle(style.foreground)
-                        Micro(text: album.artist, size: 8.5, tracking: 1.8,
+                        Micro(text: artist, size: 8.5, tracking: 1.8,
                               color: style.foreground.opacity(0.75))
                             .lineLimit(1)
                     }
@@ -364,7 +452,7 @@ struct AlbumDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
-                SleeveArt(album: album)
+                SleeveArt(title: album.title, artist: album.artist)
                     .frame(width: 196, height: 196)
                     .rotationEffect(.degrees(-1.4))
                     .shadow(color: .black.opacity(0.2), radius: 14, y: 10)
@@ -402,7 +490,7 @@ struct AlbumDetailView: View {
             Micro(text: "Album", size: 10, tracking: 1.8, color: .stashOnAccent)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 7)
-                .background(SleeveArt(album: album).chipColor, in: Capsule())
+                .background(SleeveArt(title: album.title, artist: album.artist).chipColor, in: Capsule())
         }
         .padding(.top, 8)
     }
@@ -588,6 +676,157 @@ struct AlbumDetailView: View {
     }
 }
 
+// MARK: - Recommendation list detail
+
+/// One video's set of releases. Deliberately plainer than the album page: there is no single
+/// cover, no tracklist and no year to show, and every row here came off the video's own frames
+/// rather than out of a catalogue.
+///
+/// A row with no link is not a failure to render — it is the honest outcome when nothing in the
+/// catalogue plausibly matched the name. The alternative, shipped until now, was a confident
+/// album page built on a guess.
+struct MusicListDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    let list: MusicList
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                topBar
+                SleeveArt(title: list.title, artist: list.subtitle)
+                    .frame(width: 196, height: 196)
+                    .rotationEffect(.degrees(-1.4))
+                    .shadow(color: .black.opacity(0.2), radius: 14, y: 10)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 18)
+                masthead
+                picksSection
+                clipLink.padding(.top, 26)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, stashTabBarClearance)
+        }
+        .background(Color.stashBackground.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.stashInk)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back")
+            Spacer()
+            Micro(text: "Selection", size: 10, tracking: 1.8, color: .stashOnAccent)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 7)
+                .background(SleeveArt(title: list.title, artist: list.subtitle).chipColor, in: Capsule())
+        }
+        .padding(.top, 8)
+    }
+
+    private var masthead: some View {
+        VStack(spacing: 5) {
+            Text(list.title)
+                .font(.archivo(27, .black))
+                .foregroundStyle(Color.stashInk)
+                .multilineTextAlignment(.center)
+            Micro(text: bylines, size: 10, tracking: 1.8, color: .stashInk.opacity(0.5))
+            Micro(text: "\(list.picks.count) releases · saved in "
+                  + list.video.bookmarkedAt.formatted(.dateTime.month(.wide)),
+                  size: 9.5, tracking: 1.2, color: .categoryRecipe)
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 18)
+    }
+
+    private var bylines: String {
+        list.video.author.isEmpty ? "From your TikToks" : "@" + list.video.author
+    }
+
+    private var picksSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Micro(text: "In this video · \(list.picks.count)", size: 10, tracking: 2, color: .categoryRecipe)
+            ForEach(Array(list.picks.enumerated()), id: \.offset) { index, pick in
+                row(index: index, pick: pick)
+            }
+        }
+        .padding(.top, 22)
+    }
+
+    @ViewBuilder
+    private func row(index: Int, pick: MusicPick) -> some View {
+        let body = HStack(spacing: 11) {
+            Text("\(index + 1)")
+                .font(.archivo(12, .black))
+                .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.45))
+                .frame(width: 18, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pick.title)
+                    .font(.archivo(13.5, .bold))
+                    .foregroundStyle(Color.stashInk)
+                    .lineLimit(2)
+                Micro(text: subtitle(for: pick), size: 9, tracking: 1.2,
+                      color: .stashInk.opacity(0.5))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: pick.link != nil ? "arrow.up.right" : "magnifyingglass")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color.stashInk.opacity(pick.link != nil ? 1 : 0.4))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.stashInk.opacity(pick.link != nil ? 1 : 0.3), lineWidth: 1.5)
+        )
+
+        // A pick with no confident catalogue match still gets you somewhere: Spotify search on
+        // the name the video showed. Better than a dead row, and honest about being a search.
+        Button { openURL(pick.link ?? spotifySearch(for: pick)) } label: { body }
+            .buttonStyle(.plain)
+            .accessibilityLabel(pick.link != nil
+                                ? "Open \(pick.title)"
+                                : "Search Spotify for \(pick.title)")
+    }
+
+    private func subtitle(for pick: MusicPick) -> String {
+        let kind = pick.kind == .album ? "Album" : "Track"
+        let who = pick.artist.isEmpty ? "" : " · " + pick.artist
+        return pick.link == nil ? kind + who + " · search" : kind + who
+    }
+
+    /// Spotify claims `/search/*` in its AASA, so on a device with the app this opens Spotify.
+    /// Whole query as one path component — titles contain "/" ("Reflections / Secret Portraits").
+    private func spotifySearch(for pick: MusicPick) -> URL {
+        let query = "\(pick.title) \(pick.artist)".trimmingCharacters(in: .whitespaces)
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? query
+        return URL(string: "https://open.spotify.com/search/\(encoded)")
+            ?? URL(string: "https://open.spotify.com")!
+    }
+
+    private var clipLink: some View {
+        Link(destination: list.video.url) {
+            HStack(spacing: 9) {
+                Image(systemName: "play.fill").font(.system(size: 12, weight: .bold))
+                Micro(text: "Open the clip", size: 10, tracking: 1.4, color: .stashInk)
+            }
+            .foregroundStyle(Color.stashInk)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+        }
+    }
+}
+
 #Preview("Music wall") {
     MusicView()
         .modelContainer(SampleData.previewContainer)
@@ -596,7 +835,7 @@ struct AlbumDetailView: View {
 #Preview("Album detail") {
     let saves: [MusicAlbum.Save] = SampleData.makeSampleVideos()
         .filter { $0.category == .music }
-        .map { .init(video: $0, trackName: $0.track?.title ?? "", trackNumber: nil) }
+        .map { .init(video: $0, trackName: $0.music.first?.title ?? "", trackNumber: nil) }
     return AlbumDetailView(
         album: MusicAlbum(
             id: "album-1", title: "Currents", artist: "Tame Impala", year: 2015,

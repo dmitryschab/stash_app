@@ -174,14 +174,14 @@ public struct AnalyzerClient: Analyzing {
       "summary": string,
       "topics": [string],            // short lowercase topic keywords
       "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
-      "track": { "title": string, "artist": string, "universalLink": null } | null,
+      "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
       "code": { "summary": string, "links": [string], "techTags": [string] } | null
     }
-    Only recipe, music and coding have a payload object; include the one matching the chosen \
-    category and set the other two to null. For every other category (fitness, style, travel, \
-    home, learning, comedy, other) set recipe, track and code all to null. Set "universalLink" \
-    to null; the app resolves music links separately. If information is missing, use empty \
-    strings or empty arrays rather than inventing details.
+    Only recipe, music and coding carry a payload; fill the one matching the chosen category \
+    and leave the others empty. For every other category (fitness, style, travel, home, \
+    learning, comedy, other) set recipe and code to null and "music" to []. Never include a \
+    "link" field; the app resolves streaming links separately. If information is missing, use \
+    empty strings or empty arrays rather than inventing details.
     Rules (validated on an 855-video run — see pipeline-lab/PROMPT.md):
     - Captions and transcripts may be in any language; ALWAYS answer in English. \
     Title max 60 characters.
@@ -192,10 +192,14 @@ public struct AnalyzerClient: Analyzing {
     hotels/flights -> "travel"; home decor/cleaning/DIY/renovation/gardening -> "home"; \
     facts/how-to/study/science/history -> "learning"; skits/jokes/memes/pranks -> "comedy". \
     Use "other" only when none fit.
-    - Music: if the video is an album/artist RECOMMENDATION LIST (not one song), set \
-    track.title to the list's theme and track.artist to the main artist(s), or "" if several. \
-    For one song, identify title+artist from well-known lyrics — but NEVER invent an artist \
-    you are not confident about; use "" instead of guessing.
+    - Music: list EVERY distinct release the video recommends, in the order it shows them, one \
+    entry each — a video running through five albums has five entries, not one. Do NOT collapse \
+    a list into its theme or genre: "jungle selection", "russian shoegaze" and the like are \
+    descriptions, never titles. Read the names off the on-screen text; it is usually the only \
+    place they appear. Set "kind" to "album" for a record/EP/mixtape/compilation and "track" \
+    for a single song. Copy each title as written. Set "artist" to the act named next to that \
+    title, or "" — NEVER invent an artist you are not confident about, and never reuse one \
+    entry's artist for another. A video about one song is simply one entry.
     - NEVER output placeholder text like "No Content Provided"/"Untitled Video". If caption \
     and transcript are both empty: title "Saved video", summary "No caption or audio was \
     available for this save."

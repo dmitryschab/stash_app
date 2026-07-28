@@ -96,16 +96,15 @@ final class PipelineTests: XCTestCase {
                        RecipeData(name: "Miso Ramen",
                                   ingredients: ["miso paste", "noodles"],
                                   steps: ["boil water", "serve"]))
-        XCTAssertNil(recipe.trackJSON)
+        XCTAssertNil(recipe.musicJSON)
 
-        // Music video: track payload carries the resolved universal link.
+        // Music video: the pick list carries the resolved universal link.
         let music = try XCTUnwrap(fetchVideo("7000000000000000002", in: container))
         XCTAssertFalse(music.unavailable)
         XCTAssertEqual(music.categoryRaw, Category.music.rawValue)
-        let trackData = try JSONDecoder().decode(TrackData.self, from: XCTUnwrap(music.trackJSON))
-        XCTAssertEqual(trackData.title, "Example Song")
-        XCTAssertEqual(trackData.artist, "Example Artist")
-        XCTAssertEqual(trackData.universalLink, songLink)
+        let picks = try JSONDecoder().decode([MusicPick].self, from: XCTUnwrap(music.musicJSON))
+        XCTAssertEqual(picks, [MusicPick(kind: .track, title: "Example Song",
+                                         artist: "Example Artist", link: songLink)])
         XCTAssertNil(music.recipeJSON)
 
         // Enrich threw: video is flagged unavailable and its later stages are skipped.
@@ -292,7 +291,9 @@ private struct StubTranscriber: Transcribing {
 
 private struct StubMusicResolver: MusicLinkResolving {
     var link: URL?
-    func universalLink(title: String, artist: String) async throws -> URL? { link }
+    func resolve(_ picks: [MusicPick]) async -> [MusicPick] {
+        picks.map { var pick = $0; pick.link = link; return pick }
+    }
 }
 
 extension PipelineTests {
@@ -329,7 +330,8 @@ extension PipelineTests {
         XCTAssertFalse(first.stoppedEarly)
 
         let updated = try XCTUnwrap(fetchVideo("7000000000000000012", in: container))
-        XCTAssertEqual(updated.ocrText, "MISO RAMEN\n2 eggs\nboil 4 minutes")
+        // Stored in the frame-marked format so the legacy re-read cannot pick it up again.
+        XCTAssertEqual(updated.ocrText, "[1] MISO RAMEN\n2 eggs\nboil 4 minutes")
         XCTAssertEqual(updated.categoryRaw, Category.recipe.rawValue)
 
         let second = await runner.backfillVisualText(
@@ -415,7 +417,7 @@ extension PipelineTests {
 
         let named = try XCTUnwrap(fetchVideo("7000000000000000021", in: container))
         XCTAssertEqual(named.transcript, "boil the noodles")
-        XCTAssertEqual(named.ocrText, "MISO RAMEN")
+        XCTAssertEqual(named.ocrText, "[1] MISO RAMEN")
 
         let untouched = try XCTUnwrap(fetchVideo("7000000000000000022", in: container))
         XCTAssertNil(untouched.transcript)
@@ -425,6 +427,138 @@ extension PipelineTests {
         // …and the same runner without the filter still sees the one that was skipped.
         let rest = await runner.backfillTranscripts { _, _ in }
         XCTAssertEqual(rest.attempted, 1)
+    }
+
+    /// The end of the chain this change exists for: a video recommending five releases stores
+    /// five, in order, and every one of them was offered to the resolver.
+    func testAFiveReleaseVideoStoresFivePicksAndResolvesEach() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "7666837555224136981",
+            url: URL(string: "https://www.tiktok.com/@reznikmusic/video/7666837555224136981")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 900))
+        video.caption = "5 jungle projects"
+        video.categoryRaw = Category.other.rawValue
+        context.insert(video)
+        try context.save()
+
+        let picks = ["Dreamcore, Vol. 1", "Atlantis (I Need You)",
+                     "Reflections / Secret Portraits", "Genesis", "Polaris"]
+            .map { MusicPick(kind: .album, title: $0) }
+        let seen = SeenPicks()
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: ""),
+            analyzer: FixedAnalyzer(analysis: Analysis(
+                category: .music, title: "5 jungle projects", summary: "Jungle picks.",
+                topics: ["jungle"], music: picks)),
+            musicResolver: RecordingMusicResolver(seen: seen),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        await runner.reanalyzeAll { _, _ in }
+
+        let stored = try XCTUnwrap(fetchVideo("7666837555224136981", in: container))
+        let decoded = try JSONDecoder().decode([MusicPick].self, from: XCTUnwrap(stored.musicJSON))
+        XCTAssertEqual(decoded.map(\.title), picks.map(\.title))
+        XCTAssertEqual(seen.titles, picks.map(\.title), "every pick reached the resolver")
+        XCTAssertNil(stored.trackJSON, "the legacy single-track copy is cleared, not left stale")
+    }
+
+    /// A library saved before multi-pick extraction must not go blank between this shipping and
+    /// the re-analysis pass finishing.
+    func testALegacyTrackOnlyVideoStillDecodesAsOnePick() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "7000000000000000031",
+            url: URL(string: "https://www.tiktok.com/@x/video/7000000000000000031")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 100))
+        video.trackJSON = try JSONEncoder().encode(
+            TrackData(title: "Example Song", artist: "Example Artist",
+                      universalLink: URL(string: "https://song.link/x")))
+        context.insert(video)
+        try context.save()
+
+        // Mirrors the app's `Video.music` accessor: musicJSON first, legacy trackJSON after.
+        let stored = try XCTUnwrap(fetchVideo("7000000000000000031", in: container))
+        XCTAssertNil(stored.musicJSON)
+        let legacy = try JSONDecoder().decode(TrackData.self, from: XCTUnwrap(stored.trackJSON))
+        XCTAssertEqual(legacy.title, "Example Song")
+        XCTAssertEqual(legacy.universalLink?.absoluteString, "https://song.link/x")
+    }
+
+    /// On-screen text read before frame grouping is a flat pool with no sense of which title
+    /// goes with which artist — the thing that made the analyzer pair "Polaris" with "M". It is
+    /// worth one unit to read again. Text already in the marked format is not.
+    func testLegacyFlatOCRIsReReadExactlyOnce() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        for (id, stored) in [("7000000000000000041", "Polaris\nM\nKMC"),
+                             ("7000000000000000042", "[1] Polaris | KMC")] {
+            let video = Video(videoID: id,
+                              url: URL(string: "https://www.tiktok.com/@x/video/\(id)")!,
+                              bookmarkedAt: Date(timeIntervalSince1970: 1000))
+            video.categoryRaw = Category.music.rawValue
+            video.ocrText = stored
+            context.insert(video)
+        }
+        try context.save()
+
+        let read = SeenPicks()
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+            transcriber: StubTranscriber(transcript: ""),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+        let extractor: @Sendable (String, URL) async throws -> String? = { id, _ in
+            read.record([id])
+            return "[1] Polaris | KMC"
+        }
+
+        let first = await runner.backfillVisualText(visualText: extractor) { _, _ in }
+        XCTAssertEqual(first.attempted, 1)
+        XCTAssertEqual(read.titles, ["7000000000000000041"],
+                       "only the flat one is re-read; the marked one is left alone")
+
+        // Terminates: the re-read stored marked text, so a second run finds nothing.
+        let second = await runner.backfillVisualText(visualText: extractor) { _, _ in }
+        XCTAssertEqual(second.attempted, 0, "re-reading must not repeat every run")
+    }
+
+    /// A reader that returns unmarked text still gets stored marked, or the check above would
+    /// re-read it forever — an unbounded spend with no visible cause.
+    func testUnmarkedReaderOutputIsStoredMarked() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(videoID: "7000000000000000043",
+                          url: URL(string: "https://www.tiktok.com/@x/video/7000000000000000043")!,
+                          bookmarkedAt: Date(timeIntervalSince1970: 1000))
+        video.categoryRaw = Category.music.rawValue
+        context.insert(video)
+        try context.save()
+
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+            transcriber: StubTranscriber(transcript: ""),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        _ = await runner.backfillVisualText(visualText: { _, _ in "no markers here" }) { _, _ in }
+        let stored = try XCTUnwrap(fetchVideo("7000000000000000043", in: container))
+        XCTAssertEqual(stored.ocrText, "[1] no markers here")
+
+        let second = await runner.backfillVisualText(visualText: { _, _ in "unused" }) { _, _ in }
+        XCTAssertEqual(second.attempted, 0)
     }
 
     func testReanalyzeAllRebucketsFromStoredFields() async throws {
@@ -472,7 +606,7 @@ private struct StubAnalyzer: Analyzing {
                 recipe: RecipeData(name: "Miso Ramen",
                                    ingredients: ["miso paste", "noodles"],
                                    steps: ["boil water", "serve"]),
-                track: nil,
+                music: [],
                 code: nil)
         }
         if meta.hashtags.contains("music") {
@@ -482,7 +616,7 @@ private struct StubAnalyzer: Analyzing {
                 summary: "A catchy track.",
                 topics: ["pop"],
                 recipe: nil,
-                track: TrackData(title: "Example Song", artist: "Example Artist", universalLink: nil),
+                music: [MusicPick(kind: .track, title: "Example Song", artist: "Example Artist")],
                 code: nil)
         }
         return Analysis(
@@ -491,7 +625,7 @@ private struct StubAnalyzer: Analyzing {
             summary: "",
             topics: [],
             recipe: nil,
-            track: nil,
+            music: [],
             code: nil)
     }
 }
@@ -509,5 +643,31 @@ private final class ProgressRecorder: @unchecked Sendable {
     func record(_ done: Int, _ total: Int) {
         lock.lock(); defer { lock.unlock() }
         storage.append((done, total))
+    }
+}
+
+/// Returns one canned analysis regardless of input — for asserting what the pipeline does with
+/// the model's answer, rather than what the model answers.
+private struct FixedAnalyzer: Analyzing {
+    let analysis: Analysis
+    func analyze(meta: VideoMeta, transcript: String?, ocrText: String?) async throws -> Analysis {
+        analysis
+    }
+}
+
+/// Records which picks were offered for resolution, so the test can assert none was dropped
+/// on the way from the model's answer to the catalogue lookup.
+final class SeenPicks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String] = []
+    func record(_ values: [String]) { lock.lock(); stored.append(contentsOf: values); lock.unlock() }
+    var titles: [String] { lock.lock(); defer { lock.unlock() }; return stored }
+}
+
+private struct RecordingMusicResolver: MusicLinkResolving {
+    let seen: SeenPicks
+    func resolve(_ picks: [MusicPick]) async -> [MusicPick] {
+        seen.record(picks.map(\.title))
+        return picks
     }
 }

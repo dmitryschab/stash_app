@@ -1,7 +1,7 @@
 # Many songs from one TikTok
 
 **Date:** 2026-07-28
-**Status:** approved, implementing
+**Status:** implemented on `feat/share-a-tiktok`
 
 ## The problem
 
@@ -33,7 +33,15 @@ recognized text is checked in at `Tests/Fixtures/jungle-picks-ocr.txt` and conta
 The caption says so too: *"I've collected 5 music projects in the Jungle genre"* (Russian).
 
 Adding `ru-RU` to the recognizer and disabling language correction was measured and changed
-nothing material. **The OCR layer is not at fault and is not being touched.**
+nothing material. The recognizer is not at fault.
+
+**What the recognizer *did* get wrong is structure, not accuracy** — found by running the new
+prompt against Bedrock with this fixture. `FrameReader` flattened every frame into one pool of
+unique lines, and which frame a line came from is the only signal that a title and an artist
+belong together. On the flat pool the analyzer returned seven entries with two right, pairing
+"Polaris" with "M" and "KMC" with nothing. Grouped per frame and ordered top-to-bottom, the same
+model on the same frames returned exactly five, every artist correct. That fix is in scope; the
+recognizer settings still are not.
 
 ## What ships
 
@@ -74,12 +82,30 @@ The server-side fast-pass prompt (`services/webhook/api_v1.py`) is deliberately 
 It runs before any OCR exists and has only the caption to work from — it cannot see the names,
 and asking it to try would invite exactly the invention this spec removes.
 
-### 3. `MusicPickResolver` — the confidence gate
+### 3. `FrameReader` — one line per frame
+
+OCR output becomes `[n] top line | next line | …`, one line per frame, ordered by
+`boundingBox.maxY` so a title precedes the artist under it. Frames whose text repeats one already
+emitted are dropped — most of them, since on-screen text changes far slower than twelve samples.
+
+Text stored before this change has no `[` marker, which is how `backfillVisualText` knows a save
+is worth re-reading; that costs one unit per video and is what the quota grant funds. Whatever a
+reader returns is stored *marked*, single-frame if it has no markers of its own — without that,
+unmarked text would be re-read on every run, an unbounded spend with no visible cause.
+
+### 4. `MusicPickResolver` — the confidence gate
 
 `MusicLinkResolver` and `AlbumResolver` merge into one resolver. Per pick: query iTunes with
-`entity=album` or `entity=song` according to `kind`, then compare what came back against what was
-asked for. Below threshold, or a contradicted artist, the link is dropped and the name stands
-alone.
+`entity=album` or `entity=song`, then compare what came back against what was asked for. Below
+threshold, or a contradicted artist, the link is dropped and the name stands alone.
+
+`kind` is a preference, not a constraint: measured against the source video the model labelled
+all five albums `track`, because a wall of sleeves with a title under each gives it nothing to
+distinguish an album from a single. A miss on the stated kind is retried against the other. The
+gate applies to both passes, so the fallback can only find a right answer, never invent one.
+
+`AlbumResolver.album` is gated too. It was the same ungated `limit=1` search on the single-save
+path, and leaving it would have kept the identical failure for videos about one song.
 
 Scoring is token overlap on case-folded alphanumeric words — Jaccard over the two title token
 sets, requiring ≥ 0.6, plus: if the pick names an artist, the result's artist must share a token
@@ -93,7 +119,7 @@ configurable threshold is a setting nobody would ever change deliberately.*
 The existing `AlbumResolver.tracklist(collectionID:)` survives untouched; the album detail screen
 still needs it.
 
-### 4. Music tab
+### 5. Music tab
 
 - **One pick** — unchanged. Resolved to its album by `AlbumStore` and grouped across videos, so
   "1 of 6 tracks saved" keeps working.
@@ -106,7 +132,7 @@ They are changed to take those two strings so both card kinds render through the
 The trade-off was named and accepted: an album recommended inside a list is findable through that
 list, not through the main grid.
 
-### 5. Re-analysis and how it is paid for
+### 6. Re-analysis and how it is paid for
 
 Every `/v1/chat/completions` call reserves one quota unit (`api_v1.py`), so a full-library pass
 costs one unit per video against a 500 + 100/month budget. A `grant-quota` subcommand is added to
@@ -141,8 +167,24 @@ Fixtures `jungle-picks-ocr.txt` and `jungle-picks-meta.json` hold the real recog
 metadata from the source video, so the analyzer prompt can be exercised against genuine input
 rather than invented strings.
 
-Not automatically testable: whether the model actually extracts five picks from that text. That
-is a prompt-quality question, checked by hand against the fixture and then on the device.
+Also covered: legacy flat OCR is re-read exactly once and the re-read terminates, and a reader
+returning unmarked text has it stored marked.
+
+Not automatically testable: whether the model extracts five picks from that text. That was
+checked by hand — the fixture was sent to Bedrock through the box with the shipped prompt, twice.
+Flat OCR gave seven entries, two correct. Frame-grouped OCR gave five, all correct:
+
+| On screen | Extracted |
+|---|---|
+| Dreamcore, Vol. 1 | dreamstation, Enkei, wiv |
+| Atlantis (I Need You) | LTJ Bukem |
+| Reflections | New Balance |
+| GENESIS | Nedaj |
+| Polaris | KMC |
+
+Still unverified on the device: whether these five obscure netlabel releases exist in the iTunes
+catalogue at all. Where they do not, the gate leaves them as names — the correct outcome, and
+visibly fewer links than the wrong-album screen this replaces.
 
 ## Explicitly out of scope
 

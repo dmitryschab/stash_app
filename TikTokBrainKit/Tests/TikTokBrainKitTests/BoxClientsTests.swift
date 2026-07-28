@@ -140,7 +140,7 @@ final class BoxClientsTests: XCTestCase {
         XCTAssertEqual(analysis.recipe?.name, "Miso Ramen")
         XCTAssertEqual(analysis.recipe?.ingredients, ["miso paste", "noodles"])
         XCTAssertEqual(analysis.recipe?.steps, ["boil water", "serve"])
-        XCTAssertNil(analysis.track)
+        XCTAssertEqual(analysis.music, [])
 
         // Analyzer posts to /chat/completions with a JSON object response_format.
         let sentBody = try XCTUnwrap(BoxStubURLProtocol.lastRequestBody)

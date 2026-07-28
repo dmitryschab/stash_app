@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Mint, list and revoke invite codes. Runs ON the box, never exposed as an API route.
+"""Account administration: invite codes and quota grants. Runs ON the box, never an API route.
 
     sudo -u stash /opt/stash-webhook/venv/bin/python manage_invites.py mint --uses 1
     sudo -u stash /opt/stash-webhook/venv/bin/python manage_invites.py mint --uses 50 --demo
     sudo -u stash /opt/stash-webhook/venv/bin/python manage_invites.py list
     sudo -u stash /opt/stash-webhook/venv/bin/python manage_invites.py revoke STASH-4KQ9-7WTM
+    sudo -u stash /opt/stash-webhook/venv/bin/python manage_invites.py accounts
+    sudo -u stash /opt/stash-webhook/venv/bin/python manage_invites.py grant-quota <userID> --units 900
 
 Deliberately a CLI and not an admin endpoint: an invite minter reachable over HTTP is a
 second authentication surface to get right, and there is exactly one operator.
@@ -25,6 +27,7 @@ import time
 
 from boto3.dynamodb.conditions import Attr
 
+from cloud_import_models import INITIAL_LIMIT, MONTH_LIMIT
 from cloud_import_store import _is_conditional_failure, shared_table
 
 # No I/O/0/1: these get read aloud and typed in by hand.
@@ -85,6 +88,42 @@ def revoke(table, code: str) -> bool:
     return True
 
 
+def list_accounts(table) -> list[str]:
+    """Every account partition. Same scan-is-fine reasoning as `list_invites`."""
+    users, start_key = set(), None
+    while True:
+        arguments = {"ProjectionExpression": "PK"}
+        if start_key:
+            arguments["ExclusiveStartKey"] = start_key
+        page = table.scan(**arguments)
+        for item in page.get("Items", []):
+            key = str(item["PK"])
+            if key.startswith("INSTALL#"):
+                users.add(key[len("INSTALL#"):])
+        start_key = page.get("LastEvaluatedKey")
+        if not start_key:
+            return sorted(users)
+
+
+def grant_quota(table, user_id: str, units: int) -> dict:
+    """Add `units` to an account's initial budget.
+
+    Writes the row directly rather than going through `DynamoImportStore.refund_quota`, which
+    clamps at INITIAL_LIMIT/MONTH_LIMIT — correct for paying back a charge, useless for lifting
+    a ceiling. Re-analysing a whole library costs one unit per video, which is what this exists
+    for; there is no in-app path to it and no reason for one.
+    """
+    key = {"PK": f"INSTALL#{user_id}", "SK": "QUOTA"}
+    item = table.get_item(Key=key).get("Item") or {}
+    initial = int(item.get("initialRemaining", INITIAL_LIMIT))
+    month = int(item.get("monthRemaining", MONTH_LIMIT))
+    reset = int(item.get("monthResetAt", 0)) or int(time.time()) + 30 * 86400
+    updated = {**key, "initialRemaining": initial + units, "monthRemaining": month,
+               "monthResetAt": reset, "updatedAt": int(time.time())}
+    table.put_item(Item=updated)
+    return updated
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stash invite code administration")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -100,6 +139,12 @@ def main(argv: list[str] | None = None) -> int:
 
     revoker = commands.add_parser("revoke", help="expire an invite code immediately")
     revoker.add_argument("code")
+
+    commands.add_parser("accounts", help="list account user IDs")
+
+    granter = commands.add_parser("grant-quota", help="add units to an account's initial budget")
+    granter.add_argument("user_id")
+    granter.add_argument("--units", type=int, required=True)
 
     args = parser.parse_args(argv)
     table = shared_table()
@@ -120,6 +165,18 @@ def main(argv: list[str] | None = None) -> int:
                 "spent" if int(item.get("usedCount", 0)) >= int(item.get("maxUses", 0)) else "open")
             print(f"{item.get('code', item['PK']):<20} {item.get('usedCount', 0)}/{item.get('maxUses', 0)}"
                   f"  {state:<8} {'demo ' if item.get('demo') else ''}{item.get('label', '')}")
+        return 0
+
+    if args.command == "accounts":
+        for user_id in list_accounts(table):
+            print(user_id)
+        return 0
+
+    if args.command == "grant-quota":
+        if args.units < 1:
+            parser.error("--units must be at least 1")
+        item = grant_quota(table, args.user_id.strip(), args.units)
+        print(f"{args.user_id}  initial={item['initialRemaining']}  month={item['monthRemaining']}")
         return 0
 
     code = args.code.strip().upper()
