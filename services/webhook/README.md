@@ -13,7 +13,7 @@ answers 401 without one; there is no shared bearer token.
 
 - `GET  /health` — liveness, dependency reachability, and whether signature verification is on
 - `POST /webhook/tiktok` — receives events, verifies HMAC (fail-closed), logs to `/var/lib/stash-webhook/events.jsonl`, returns 200
-- `POST /v1/auth/apple` — Sign in with Apple; needs an invite code on first sign-in
+- `POST /v1/auth/apple` — Sign in with Apple; open to anyone, a code is optional
 - `POST /v1/auth/refresh` — rotates a refresh token for a new session
 - `GET  /v1/me`, `DELETE /v1/me`, `GET /v1/me/export` — account, erasure, data export
 - `POST /v1/imports` — accepts up to 1200 normalized bookmarks (a whole library) and returns immediately with an import ID; the box processes them in the background
@@ -24,7 +24,9 @@ answers 401 without one; there is no shared bearer token.
 - `GET  /v1/tiktok/download/{id}` — transient mp4 bytes for the visual-text backfill (quota-metered)
 
 ## Invite codes
-Minted on the box, never over HTTP:
+No longer a gate — sign-up is open and the App Store price is what limits who arrives.
+A code's only remaining job is `--demo`, which stamps `demo: true` on the account it
+creates so App Review lands in a seeded library. Minted on the box, never over HTTP:
 ```sh
 sudo bash -c 'set -a; . /etc/stash-webhook/env; set +a; \
   /opt/stash-webhook/venv/bin/python /opt/stash-webhook/manage_invites.py mint --uses 1'
