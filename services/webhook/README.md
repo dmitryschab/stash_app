@@ -49,10 +49,15 @@ The client secret is NOT stored in this repo. It belongs in the Secrets Manager 
 alongside the other credentials, not in the env file — that file now also carries the
 table/queue/secret-id settings, so a `tee` over it takes the service down:
 ```sh
-aws secretsmanager put-secret-value --secret-id "$(terraform -chdir=../../infra/aws-box output -raw app_secret_id)" \
-  --secret-string '{"STASH_JWT_SECRET":"...","TIKTOK_CLIENT_SECRET":"<from TikTok developer portal>","GROQ_API_KEY":"..."}'
-sudo systemctl restart stash-webhook   # /health then shows "verify": true
+./set-tiktok-secret.sh   # prompts with echo off, merges, restarts, prints /health
 ```
+Use the script rather than a hand-written `put-secret-value`. The blob holds five other
+keys — `STASH_JWT_SECRET`, `GROQ_API_KEY` and the Apple trio — and `put-secret-value`
+**replaces** the whole thing, so spelling out a three-key JSON silently deletes the Apple
+credentials. The service then still starts, still signs people in, and only fails when
+`DELETE /v1/me` cannot revoke an Apple grant — a 5.1.1(v) rejection you find in review.
+The script reads the current blob, adds one key, asserts nothing else moved, then writes.
+
 Until a secret is set the webhook is fail-closed: it rejects every event with 401
 unless `STASH_DEV_MODE=1` is explicitly present.
 
