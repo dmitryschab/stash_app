@@ -86,20 +86,20 @@
   <div class="wrap">
     <article>
       <h1>Privacy policy</h1>
-      <p class="updated">Last updated 25 July 2026 · Applies to the Stash iOS app and this website</p>
+      <p class="updated">Last updated 16 August 2026 · Applies to the Stash iOS app and this website</p>
 
       <div class="callout">
-        <p><strong>Who is responsible for your data.</strong> The controller is Dmitrijs Sabelniks, a sole proprietorship (eenmanszaak) registered in the Netherlands, KvK number 70958416, registered address Gasthuisring 14-21, 5041 DS Tilburg, Netherlands. Write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a> about anything on this page.</p>
+        <p><strong>Who is responsible for your data.</strong> The controller is Dmitrijs Sabelniks, a sole proprietorship (eenmanszaak) registered in the Netherlands, KvK number 70958416, VAT identification number NL002463368B81, registered address Gasthuisring 14-21, 5041 DS Tilburg, Netherlands. Write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a> about anything on this page.</p>
       </div>
 
-      <p class="intro">Stash takes the TikTok videos you saved to your own Favourites and builds a searchable library out of them: recipes become recipe cards, music becomes a track list, how-to videos become summaries. Doing that means your data leaves your phone and is processed on servers we run and by two providers we use. This page says exactly what we hold, where it goes, how long it stays, and how to remove all of it. Stash is an invitation-only beta.</p>
+      <p class="intro">Stash takes the TikTok videos you saved to your own Favourites and builds a searchable library out of them: recipes become recipe cards, music becomes a track list, how-to videos become summaries. Doing that means your data leaves your phone and is processed on servers we run and by two providers we use. This page says exactly what we hold, where it goes, how long it stays, and how to remove all of it.</p>
 
       <h2>What we collect</h2>
       <dl>
         <dt>Your Apple account identifier</dt>
         <dd>Signing in with Apple gives us a stable identifier that is unique to Stash. It is how we recognise you across devices and how everything below is keyed. <strong>Stash asks Apple for no name and no email address</strong> — we never receive them, not even a private relay address.</dd>
-        <dt>Your invite code and quota counters</dt>
-        <dd>The code you used to join, and running counts of how many videos you have imported, so we can hold the beta to its capacity limits.</dd>
+        <dt>Your quota counters</dt>
+        <dd>Running counts of how many videos you have imported, so we can hold each account to its allowance.</dd>
         <dt>Your Favourites list</dt>
         <dd>For each saved video: the TikTok video ID and link, the date you saved it, the creator's handle, the caption, hashtags, thumbnail URL, and duration.</dd>
         <dt>The library Stash derives from it</dt>
@@ -112,19 +112,21 @@
       <p>Stash has no analytics SDK, no advertising SDK and no crash-reporting SDK. We do not track you across other companies' apps or websites, and we do not sell your data.</p>
 
       <h2>How your favourites reach Stash</h2>
-      <p>There are two routes, and today only the first one is live.</p>
+      <p>Both live routes start with an action you take. Stash never reaches into your TikTok account by itself.</p>
       <dl>
+        <dt>Sharing a video into Stash (live)</dt>
+        <dd>You tap Share on a TikTok and pick Stash. The extension records the link and nothing else — it sends no data anywhere. The next time you open Stash, that one video is fetched and analysed like any other.</dd>
         <dt>Your own TikTok data export (live)</dt>
         <dd>You request your data from TikTok, download the file yourself, and pick it in Stash. Stash reads the Favourite Videos entries out of it and ignores every other category in the file — messages, watch history, profile, wallet and the rest are never sent to our servers and never written to storage.</dd>
-        <dt>TikTok Data Portability API (not live)</dt>
-        <dd>We have applied to TikTok for continuous access to your Favourites so the library can stay in sync without you exporting anything. The application is still in review. If it is approved, connecting is an explicit authorisation you give inside TikTok, and you can revoke it from TikTok's own settings at any time. This page will be updated before that route is switched on.</dd>
+        <dt>TikTok Data Portability API (not available)</dt>
+        <dd>Stash cannot connect to your TikTok account, cannot read it, and never asks for your TikTok password. We would like to offer this route so a library could stay in sync without you exporting anything. If it ever becomes available, connecting would be an explicit authorisation you give inside TikTok and revocable from TikTok's own settings at any time, and this page will be updated before the route is switched on.</dd>
       </dl>
 
       <h2>Why we process it, and on what legal basis</h2>
       <dl>
         <dt>Running your account, importing your favourites, analysing them and counting your quota</dt>
         <dd>Article 6(1)(b) GDPR — necessary to perform the service you signed up for. Without this data there is no library.</dd>
-        <dt>Keeping the service up, logging requests, preventing abuse, and enforcing the invite gate</dt>
+        <dt>Keeping the service up, logging requests, preventing abuse, and enforcing the quota</dt>
         <dd>Article 6(1)(f) GDPR — our legitimate interest in running a small service on a fixed budget without it being scraped or overrun. We weighed this against your interests: the data involved is limited to logs and counters, it is not used to profile you, and it is deleted on the schedule below.</dd>
       </dl>
       <p>We do not rely on consent for any of the above, so there is no consent for you to withdraw — instead, deleting your account (below) ends the processing entirely. If we ever add something genuinely optional, we will ask for consent separately and it will be refusable without losing the rest.</p>
@@ -224,10 +226,11 @@
   <div class="wrap foot">
     <div class="links">
       <a href="/">Home</a>
+      <a href="/support">Support</a>
       <a href="/terms">Terms of service</a>
       <a href="mailto:privacy@stash.dmitrijs.dev">Contact</a>
     </div>
-    <div class="meta">Stash · Dmitrijs Sabelniks · KvK 70958416 · <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a></div>
+    <div class="meta">Stash · Dmitrijs Sabelniks · KvK 70958416 · BTW NL002463368B81 · <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a></div>
   </div>
 </footer>
 </body>

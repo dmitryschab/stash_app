@@ -1,5 +1,9 @@
 # Stash — TikTok Data Portability API application draft
 
+> **REJECTED 2026-08-15.** This file is now the historical record of what was submitted on
+> 2026-07-11 and is kept unedited. The live resubmission is
+> [`resubmission-2026-08-15.md`](resubmission-2026-08-15.md) — go there.
+
 > Draft to adapt before submitting. Fields in `[[ ]]` are yours to fill (business/legal). Have your own counsel review the privacy text — this is a solid starting draft, not legal advice.
 
 ## Applicant details

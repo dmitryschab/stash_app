@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stash — a searchable library built from your own TikTok export</title>
-<meta name="description" content="Stash is an invite-only iPhone beta. You request your own data export from TikTok, import it, and the videos you saved to Favourites come back as recipe cards, a track list and how-to summaries.">
+<title>Stash — a searchable library built from the TikTok videos you save</title>
+<meta name="description" content="Stash is a €5 iPhone app. Share a TikTok into it, or import your own TikTok data export, and the videos you saved come back as recipe cards, a track list and how-to summaries you can search.">
 <link rel="icon" type="image/png" href="/assets/stash-logo-clean.png">
 <style>
   :root {
@@ -69,6 +69,16 @@
     color: var(--accent); background: var(--accent-soft);
     padding: 5px 12px; border-radius: 999px; margin-bottom: 22px;
   }
+  .cta { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    background: var(--text); color: var(--bg);
+    font-size: 1rem; font-weight: 600; letter-spacing: -0.01em;
+    padding: 13px 22px; border-radius: 999px;
+  }
+  .btn:hover { text-decoration: none; opacity: 0.88; }
+  .btn svg { width: 18px; height: 18px; }
+  .cta .price { color: var(--muted); font-size: 0.96rem; }
   section { padding: 30px 0; }
   h2 { font-size: 1.35rem; letter-spacing: -0.015em; margin: 0 0 6px; }
   .sub { color: var(--muted); margin: 0 0 24px; max-width: 60ch; }
@@ -123,6 +133,7 @@
       Stash
     </div>
     <nav class="navlinks">
+      <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
     </nav>
@@ -132,9 +143,18 @@
 <main>
   <div class="wrap">
     <div class="hero">
-      <span class="pill">Invite-only beta · iPhone</span>
-      <h1>A searchable library, built from your own TikTok export</h1>
-      <p class="lede">You ask TikTok for your data, hand the file to Stash, and the videos you saved to Favourites come back as recipe cards, a track list and how-to summaries you can search.</p>
+      <span class="pill">For iPhone · one payment, no subscription</span>
+      <h1>A searchable library, built from the TikTok videos you save</h1>
+      <p class="lede">Share a video into Stash as you watch it, or import the data export TikTok gives you, and your saves come back as recipe cards, a track list and how-to summaries you can actually search.</p>
+      <!-- App Store ID 6789977520, read off the altool upload logs. The URL is stable from the
+           moment the record exists, but it 404s until Apple actually releases the app. -->
+      <div class="cta">
+        <a class="btn" href="https://apps.apple.com/app/id6789977520">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.8c0-2.2 1.8-3.3 1.9-3.4-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-2.9-.8-1.5 0-2.9.9-3.7 2.2-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.7 2.2 1.1 0 1.5-.7 2.8-.7s1.7.7 2.9.7c1.2 0 1.9-1.1 2.6-2.2.8-1.2 1.2-2.4 1.2-2.5-.1 0-2.3-.9-2.3-3.4zM14.2 5.9c.6-.7 1-1.7.9-2.7-.9 0-2 .6-2.6 1.3-.6.6-1.1 1.6-.9 2.6 1 .1 2-.5 2.6-1.2z"/></svg>
+          Download on the App Store
+        </a>
+        <span class="price">€5 · iOS 17 or later</span>
+      </div>
     </div>
   </div>
 
@@ -145,18 +165,18 @@
       <div class="steps">
         <div class="step">
           <span class="n">1</span>
-          <h3>Join with an invite</h3>
-          <p>Stash is an invite-only beta for iPhone. You sign in with Apple and enter your code — Stash asks Apple for no name and no email address.</p>
+          <h3>Get Stash</h3>
+          <p>One payment on the App Store, then sign in with Apple. Stash asks Apple for no name and no email address — only an anonymous identifier.</p>
         </div>
         <div class="step">
           <span class="n">2</span>
-          <h3>Ask TikTok for your data</h3>
-          <p>In TikTok's own settings: Account → Download your data, in JSON format. TikTok prepares the file and you download it yourself.</p>
+          <h3>Send it videos</h3>
+          <p>Tap Share on any TikTok and pick Stash to save it there and then. For everything you saved before, ask TikTok for your data export and import the file.</p>
         </div>
         <div class="step">
           <span class="n">3</span>
-          <h3>Import the file</h3>
-          <p>Pick it in Stash. Stash reads only the Favourite Videos entries in it and builds your library from those.</p>
+          <h3>The library builds itself</h3>
+          <p>Stash reads the caption, listens to the audio and reads the text on screen, then writes each video up and files it by what it is.</p>
         </div>
       </div>
     </section>
@@ -171,7 +191,7 @@
         </div>
         <div class="card">
           <h3>Track list</h3>
-          <p>Music you saved becomes a track list with title and artist, and a link out to play it.</p>
+          <p>Music you saved becomes a track list with title and artist, and a link out to play it — including releases named out loud but never written in the caption.</p>
         </div>
         <div class="card">
           <h3>How-to summaries</h3>
@@ -189,29 +209,26 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         <div>
           <h2>Where your data actually goes</h2>
-          <p>This does not all happen on your phone. Our servers <strong>download each video you saved</strong> from TikTok and delete the file as soon as they are done with it — no copies are kept. The audio goes to <strong>Groq</strong> for speech-to-text, and the caption, transcript and on-screen text go to <strong>AWS Bedrock</strong> in Frankfurt to produce the title, summary and category. The rest of your export — messages, watch history, profile, wallet — is ignored on your phone and never reaches us. The <a href="/privacy">privacy policy</a> names every provider, region and retention period.</p>
+          <p>This does not all happen on your phone. Our servers <strong>download each video you saved</strong> from TikTok and delete the file as soon as they are done with it — no copies are kept. The audio goes to <strong>Groq</strong> for speech-to-text, and the caption, transcript and on-screen text go to <strong>AWS Bedrock</strong> in Frankfurt to produce the title, summary and category. If you import an export, the rest of it — messages, watch history, profile, wallet — is ignored on your phone and never reaches us. The <a href="/privacy">privacy policy</a> names every provider, region and retention period.</p>
         </div>
       </div>
     </section>
 
     <section>
-      <h2>Where this stands today</h2>
-      <p class="sub">Stash is early software run by one person. These are the limits, not a roadmap.</p>
+      <h2>What Stash does and does not do</h2>
+      <p class="sub">The limits, stated plainly, so you know before you pay.</p>
       <div class="cards">
         <div class="card">
-          <h3>Invite-only, and free</h3>
-          <p>The beta is capacity-limited: you need an invite code. Each account can import 500 videos, then 100 more per month, because every import costs real money to transcribe and analyse.</p>
+          <h3>One payment, no subscription</h3>
+          <p>Each account can process 500 videos to begin with, then 100 more each month. Transcribing and analysing a video costs real money, so the allowance is a real limit rather than a sales tactic.</p>
         </div>
         <div class="card">
           <h3>iPhone only</h3>
-          <p>iOS 17 or later, distributed through TestFlight. There is no iPad app, no Android app and no web version.</p>
+          <p>iOS 17 or later. There is no iPad app, no Android app and no web version.</p>
         </div>
-        <!-- ponytail: "still in review" is hand-written here and in privacy.html; nothing reads the
-             application's real state. Ceiling: the day TikTok approves Data Portability, both pages
-             need a manual edit, and a stale one is exactly the claim a reviewer would catch. -->
         <div class="card">
           <h3>No TikTok account connection</h3>
-          <p>Stash cannot read your TikTok account or post to it, and never asks for your TikTok password. We applied for TikTok's Data Portability API on 11 July 2026 and it is still in review; until then, the export you request yourself is the only way in.</p>
+          <p>Stash never asks for your TikTok password, cannot read your account and cannot post to it. Everything it knows comes from a video you shared into it or a data export you requested yourself.</p>
         </div>
         <div class="card">
           <h3>You can take it all back</h3>
@@ -225,11 +242,12 @@
 <footer>
   <div class="wrap foot">
     <div class="links">
+      <a href="/support">Support</a>
       <a href="/privacy">Privacy policy</a>
       <a href="/terms">Terms of service</a>
       <a href="mailto:support@stash.dmitrijs.dev">Contact</a>
     </div>
-    <div class="meta">Stash · Dmitrijs Sabelniks · KvK 70958416 · <a href="mailto:support@stash.dmitrijs.dev">support@stash.dmitrijs.dev</a></div>
+    <div class="meta">Stash · Dmitrijs Sabelniks · KvK 70958416 · BTW NL002463368B81 · <a href="mailto:support@stash.dmitrijs.dev">support@stash.dmitrijs.dev</a></div>
   </div>
 </footer>
 </body>

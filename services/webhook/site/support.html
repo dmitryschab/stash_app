@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash — support</title>
+<meta name="description" content="Help with Stash: getting your TikTok data export, sharing a video into the app, import allowances, exporting your library and deleting your account.">
+<link rel="icon" type="image/png" href="/assets/stash-logo-clean.png">
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --surface: #ffffff;
+    --text: #1b1b22;
+    --muted: #5b5b68;
+    --border: #e6e6ec;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --radius: 14px;
+    --maxw: 760px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101014;
+      --surface: #17171d;
+      --text: #ecedf2;
+      --muted: #a2a2b0;
+      --border: #26262f;
+      --accent: #8b83ff;
+      --accent-soft: #1e1c34;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+  header { border-bottom: 1px solid var(--border); background: var(--surface); }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 62px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 1.12rem; letter-spacing: -0.01em; }
+  .brand img { width: 24px; height: 30px; object-fit: contain; display: block; }
+  .brand a { color: var(--text); }
+  .navlinks a { color: var(--muted); font-size: 0.95rem; margin-left: 20px; }
+  .navlinks a:hover { color: var(--text); text-decoration: none; }
+  h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); letter-spacing: -0.025em; margin: 54px 0 10px; }
+  .lede { color: var(--muted); font-size: 1.08rem; margin: 0 0 14px; }
+  .contact {
+    background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 22px; margin: 26px 0 40px;
+  }
+  .contact p { margin: 0; }
+  h2 { font-size: 1.28rem; letter-spacing: -0.015em; margin: 40px 0 6px; }
+  h3 { font-size: 1.02rem; margin: 26px 0 4px; }
+  p { margin: 0 0 12px; }
+  ol, ul { margin: 0 0 12px; padding-left: 22px; color: var(--text); }
+  li { margin-bottom: 6px; }
+  .muted { color: var(--muted); }
+  footer {
+    border-top: 1px solid var(--border); background: var(--surface);
+    margin-top: 56px; padding: 34px 0;
+  }
+  .foot { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: center; justify-content: space-between; }
+  .foot .links a { color: var(--muted); margin-right: 20px; font-size: 0.95rem; }
+  .foot .meta { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <div class="brand">
+      <img src="/assets/stash-logo-clean.png" alt="" aria-hidden="true">
+      <a href="/">Stash</a>
+    </div>
+    <nav class="navlinks">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Support</h1>
+  <p class="lede">Everything below is answered by a person, not a bot. If your question is not here, write and it will be.</p>
+
+  <div class="contact">
+    <p><strong>Email <a href="mailto:support@stash.dmitrijs.dev">support@stash.dmitrijs.dev</a></strong><br>
+    <span class="muted">Replies within two working days. Tell us your iOS version and what you were doing when it went wrong — it saves a round trip.</span></p>
+  </div>
+
+  <h2>Getting videos into Stash</h2>
+
+  <h3>Saving one video while you are watching it</h3>
+  <p>In TikTok, tap <strong>Share</strong>, then pick <strong>Stash</strong> from the row of apps. The sheet closes straight away and nothing appears to happen — that is deliberate. The video is picked up the next time you open Stash, and it arrives with its caption, transcript, on-screen text and summary already written. You can share several in a row; they all queue.</p>
+  <p class="muted">If Stash is not in the share row, scroll right and tap <strong>More</strong>, then switch Stash on.</p>
+
+  <h3>Bringing in everything you saved before</h3>
+  <p>TikTok will give you your own data on request, and your Favourites are in it. In TikTok:</p>
+  <ol>
+    <li>Profile → menu → <strong>Settings and privacy</strong></li>
+    <li><strong>Account</strong> → <strong>Download your data</strong></li>
+    <li>Choose <strong>JSON</strong> as the file format, not TXT, and request the file</li>
+    <li>TikTok takes a few days to prepare it. When it is ready, download it from the same screen</li>
+    <li>In Stash: <strong>Library → Import</strong>, and pick the file</li>
+  </ol>
+  <p>Stash reads only the Favourite Videos entries. Messages, watch history, profile and wallet data are ignored on your phone and never leave it.</p>
+
+  <h3>Why did TikTok send me a TXT file?</h3>
+  <p>The format is chosen at request time and cannot be changed afterwards. Request the data again and select JSON.</p>
+
+  <h2>Your allowance</h2>
+  <p>Each account can process <strong>500 videos to begin with, then 100 more per calendar month</strong>. The counter is visible in the app. Transcribing and analysing a video costs real money, so this is a genuine limit rather than an upsell — there is nothing to upgrade to.</p>
+  <p>Videos that fail to process do not count against the allowance.</p>
+
+  <h2>Your data</h2>
+
+  <h3>Exporting your library</h3>
+  <p><strong>Settings → Export my data</strong> writes a file containing everything Stash holds about you and hands it to the iOS share sheet, so you can put it in Files, mail it to yourself, or send it anywhere else.</p>
+
+  <h3>Deleting your account</h3>
+  <p><strong>Settings → Delete account</strong>. This removes your library from our servers, deletes the account record, and revokes the Sign in with Apple grant so Stash cannot recognise you again. It cannot be undone, and it is immediate — there is no grace period in which we still hold your data.</p>
+
+  <h3>What we send to other companies</h3>
+  <p>The audio of a saved video goes to Groq for speech-to-text. The caption, transcript and on-screen text go to AWS Bedrock in Frankfurt to write the title, summary and category. Neither receives your identity. The <a href="/privacy">privacy policy</a> names every provider, region and retention period.</p>
+
+  <h2>Refunds</h2>
+  <p>Purchases are handled by Apple, so refunds are too. Use <a href="https://reportaproblem.apple.com">reportaproblem.apple.com</a> with the Apple ID you bought Stash with. We cannot issue a refund ourselves, but tell us what went wrong anyway — if it is our bug we would like to fix it.</p>
+
+  <h2>Trouble</h2>
+
+  <h3>A video came in with no summary</h3>
+  <p>Some videos have no speech, no caption and no readable text on screen, and there is simply nothing to write about. Others fail because the video was deleted or made private after you saved it. Both cases leave the entry in your library with whatever we did get.</p>
+
+  <h3>An import stopped partway</h3>
+  <p>Imports run on our servers and survive the app being closed — reopening Stash picks the progress back up. If it has genuinely stalled, close the app fully and reopen it; anything already processed is kept and not charged against your allowance twice.</p>
+
+  <h3>Signing in does nothing</h3>
+  <p>Stash uses Sign in with Apple only. If the button does nothing, check that you are signed into iCloud on the device, then try again. If you deleted your account, signing in creates a fresh empty one — the old library is gone.</p>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/privacy">Privacy policy</a>
+      <a href="/terms">Terms of service</a>
+      <a href="mailto:support@stash.dmitrijs.dev">Contact</a>
+    </div>
+    <div class="meta">Stash · Dmitrijs Sabelniks · KvK 70958416 · BTW NL002463368B81</div>
+  </div>
+</footer>
+</body>
+</html>
