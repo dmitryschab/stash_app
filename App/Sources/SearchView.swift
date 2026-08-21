@@ -15,7 +15,7 @@ struct SearchView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            StashScrollView(tab: .search) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Search")
                         .font(.archivo(40, .heavy))

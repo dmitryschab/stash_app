@@ -26,7 +26,7 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                ScrollView {
+                StashScrollView(tab: .library) {
                     VStack(alignment: .leading, spacing: 0) {
                         header
                         pills.padding(.top, 14)

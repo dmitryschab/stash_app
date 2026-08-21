@@ -45,7 +45,7 @@ struct CookView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            StashScrollView(tab: .cook) {
                 VStack(alignment: .leading, spacing: 0) {
                     StashHeader(title: "Cook", trailing: trailing)
                         .padding(.top, 8)

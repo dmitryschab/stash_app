@@ -274,7 +274,7 @@ struct MusicView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            StashScrollView(tab: .music) {
                 let items = allItems
                 VStack(alignment: .leading, spacing: 0) {
                     StashHeader(title: "Music", trailing: "\(items.count) records · \(musicSaves.count) saves")

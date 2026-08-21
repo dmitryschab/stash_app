@@ -96,6 +96,9 @@ struct RootView: View {
         }
     }()
 
+    /// Bumped when the tab already on screen is tapped again; each section watches it.
+    @State private var reselect = TabReselect()
+
     // Observes import progress so the sync pill shows on every tab, not just Import.
     private var center = PipelineCenter.shared
     private var session = StashSession.shared
@@ -133,12 +136,13 @@ struct RootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .environment(\.tabReselect, reselect)
 
             VStack(spacing: 8) {
                 if center.isImporting, let progress = center.progress, progress.total > 0 {
                     ImportSyncPill(done: progress.done, total: progress.total)
                 }
-                StashTabBar(selection: $tab)
+                StashTabBar(selection: $tab, reselect: $reselect)
             }
         }
         // The scenePhase watcher already fired by the time sign-in completes, so kick the
@@ -198,12 +202,14 @@ private struct ImportSyncPill: View {
 /// The solid ink pill: four equal slots, cream icons, uppercase micro labels.
 struct StashTabBar: View {
     @Binding var selection: StashTab
+    @Binding var reselect: TabReselect
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(StashTab.allCases, id: \.self) { tab in
                 Button {
-                    selection = tab
+                    // Tapping the tab you are on is not a no-op: it means "take me back up".
+                    if selection == tab { reselect.bump(tab) } else { selection = tab }
                 } label: {
                     VStack(spacing: 3) {
                         Image(systemName: tab.symbol)

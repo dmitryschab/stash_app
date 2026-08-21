@@ -12,7 +12,7 @@ struct TodayView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            StashScrollView(tab: .today) {
                 VStack(alignment: .leading, spacing: 0) {
                     header
                     if picks.isEmpty {
