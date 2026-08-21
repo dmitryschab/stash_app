@@ -161,12 +161,15 @@ private func groupAlbums(_ videos: [Video], refs: [String: AlbumRef]) -> [MusicA
 final class AlbumStore {
     private(set) var refs: [String: AlbumRef] = [:]       // videoID → album
     private(set) var tracklists: [Int: [String]] = [:]    // collectionID → names in order
+    private(set) var sleeves: [Int: URL] = [:]            // collectionID → sleeve on disk
     private var attempted: Set<String> = []               // session-only miss cache; retries next launch
     private let resolver = AlbumResolver()
 
     private struct Snapshot: Codable {
         var refs: [String: AlbumRef]
         var tracklists: [Int: [String]]
+        /// Absent from caches written before covers existed; those refetch on the next pass.
+        var sleeves: [Int: URL]?
     }
 
     /// Not private: account deletion has to be able to remove it, and it holds resolved album
@@ -182,6 +185,11 @@ final class AlbumStore {
            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
             refs = snapshot.refs
             tracklists = snapshot.tracklists
+            // Signing out wipes the sleeve folder but not this file, so drop anything whose
+            // bytes are gone rather than handing the wall a dead file URL.
+            sleeves = (snapshot.sleeves ?? [:]).filter {
+                FileManager.default.fileExists(atPath: $0.value.path)
+            }
         }
     }
 
@@ -190,14 +198,29 @@ final class AlbumStore {
     func resolve(_ videos: [Video]) async {
         var dirty = false
         for video in videos {
-            guard refs[video.videoID] == nil, !attempted.contains(video.videoID),
-                  let track = video.soleMusicPick else { continue }
-            attempted.insert(video.videoID)
-            guard let ref = try? await resolver.album(title: track.title, artist: track.artist) else { continue }
-            refs[video.videoID] = ref
-            dirty = true
+            if refs[video.videoID] == nil, !attempted.contains(video.videoID),
+               let track = video.soleMusicPick {
+                attempted.insert(video.videoID)
+                if let ref = try? await resolver.album(title: track.title, artist: track.artist) {
+                    refs[video.videoID] = ref
+                    dirty = true
+                }
+            }
+            // Separate from the lookup above: a ref cached before covers existed, or one whose
+            // sleeve was wiped with the thumbnail folder, still needs its bytes fetching.
+            if let ref = refs[video.videoID], sleeves[ref.collectionID] == nil,
+               let remote = ref.artworkURL,
+               let local = try? await ThumbnailStore.download(remote, videoID: "album-\(ref.collectionID)") {
+                sleeves[ref.collectionID] = local
+                dirty = true
+            }
         }
         if dirty { save() }
+    }
+
+    /// The sleeve for a wall cell, or nil when it is unresolved, art-less, or not fetched yet.
+    func sleeve(for album: MusicAlbum) -> URL? {
+        album.collectionID.flatMap { sleeves[$0] }
     }
 
     func loadTracklist(_ collectionID: Int) async {
@@ -209,7 +232,7 @@ final class AlbumStore {
     }
 
     private func save() {
-        let snapshot = Snapshot(refs: refs, tracklists: tracklists)
+        let snapshot = Snapshot(refs: refs, tracklists: tracklists, sleeves: sleeves)
         try? JSONEncoder().encode(snapshot).write(to: Self.cacheURL)
     }
 }
@@ -296,6 +319,15 @@ struct MusicView: View {
         }
     }
 
+    /// A list cell deliberately gets no cover: it stands for several releases at once, and
+    /// picking one of their sleeves would claim the clip was about that one.
+    private func sleeve(for item: MusicShelfItem) -> URL? {
+        switch item {
+        case .album(let album): store.sleeve(for: album)
+        case .list: nil
+        }
+    }
+
     private func mosaic(_ items: [MusicShelfItem]) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 22) {
             ForEach(items) { item in
@@ -306,7 +338,7 @@ struct MusicView: View {
                     case .list(let list): MusicListDetailView(list: list)
                     }
                 } label: {
-                    SleeveTile(item: item)
+                    SleeveTile(item: item, artwork: sleeve(for: item))
                 }
                 .buttonStyle(.plain)
                 .rotationEffect(.degrees(s.angle))
@@ -333,10 +365,11 @@ struct MusicView: View {
 /// One mosaic cell: the sleeve plus its coverage caption.
 private struct SleeveTile: View {
     let item: MusicShelfItem
+    var artwork: URL? = nil
 
     var body: some View {
         VStack(spacing: 7) {
-            SleeveArt(title: item.title, artist: item.artist)
+            SleeveArt(title: item.title, artist: item.artist, artwork: artwork)
             HStack {
                 Micro(text: item.coverageLabel, size: 9.5, tracking: 1.1,
                       color: item.isWhole ? .categoryOther : .stashInk.opacity(0.55))
@@ -381,6 +414,10 @@ private struct SleeveStyle {
 struct SleeveArt: View {
     let title: String
     let artist: String
+    /// The real cover once iTunes has been asked and its bytes are on disk. Everything else —
+    /// an unresolved single, a release with no art, the first pass before the lookup lands —
+    /// keeps the typographic sleeve, which is a designed cover rather than a missing one.
+    var artwork: URL? = nil
 
     private var style: SleeveStyle { SleeveStyle(title: title, artist: artist) }
     private var isGiant: Bool { title.count <= 8 && !title.contains(" ") }
@@ -388,6 +425,23 @@ struct SleeveArt: View {
     var chipColor: Color { style.outlined ? .categoryMusic : style.background }
 
     var body: some View {
+        if let artwork {
+            // The typographic sleeve doubles as the placeholder, so a cover that is still
+            // decoding shows the designed cover rather than a hole in the mosaic.
+            AsyncImage(url: artwork) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                typographic
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.14), radius: 8, y: 6)
+        } else {
+            typographic
+        }
+    }
+
+    private var typographic: some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(style.background)
             .overlay {
@@ -452,7 +506,7 @@ struct AlbumDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
-                SleeveArt(title: album.title, artist: album.artist)
+                SleeveArt(title: album.title, artist: album.artist, artwork: store.sleeve(for: album))
                     .frame(width: 196, height: 196)
                     .rotationEffect(.degrees(-1.4))
                     .shadow(color: .black.opacity(0.2), radius: 14, y: 10)

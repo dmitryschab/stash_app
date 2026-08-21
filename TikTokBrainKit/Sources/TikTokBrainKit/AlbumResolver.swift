@@ -10,6 +10,9 @@ public struct AlbumRef: Codable, Equatable, Sendable {
     public var trackNumber: Int?
     public var trackName: String
     public var albumURL: URL?
+    /// The sleeve on Apple's CDN. Optional because it decodes as nil out of caches written
+    /// before covers existed, and because a catalogue entry can carry no art.
+    public var artworkURL: URL?
 }
 
 /// Resolves a track title/artist to its album, and an album to its full tracklist,
@@ -57,8 +60,16 @@ public struct AlbumResolver {
             trackCount: trackCount,
             trackNumber: hit.trackNumber,
             trackName: hit.trackName ?? trimmed,
-            albumURL: hit.collectionViewUrl.flatMap(URL.init(string:))
+            albumURL: hit.collectionViewUrl.flatMap(URL.init(string:)),
+            artworkURL: Self.artwork(hit.artworkUrl100)
         )
+    }
+
+    /// iTunes only ever returns the 100 px sleeve, but the CDN serves any size at the same
+    /// path — swapping the segment is the documented way to ask for a usable one.
+    static func artwork(_ urlString: String?, size: Int = 600) -> URL? {
+        guard let urlString else { return nil }
+        return URL(string: urlString.replacingOccurrences(of: "100x100", with: "\(size)x\(size)"))
     }
 
     /// The album's track names in play order.
@@ -87,6 +98,7 @@ public struct AlbumResolver {
             let collectionId: Int?
             let collectionName: String?
             let collectionViewUrl: String?
+            let artworkUrl100: String?
             let releaseDate: String?
             let trackCount: Int?
             let trackNumber: Int?

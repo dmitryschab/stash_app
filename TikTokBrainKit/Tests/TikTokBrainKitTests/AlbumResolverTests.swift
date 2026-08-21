@@ -56,6 +56,32 @@ final class AlbumResolverTests: XCTestCase {
         XCTAssertEqual(ref?.albumURL?.absoluteString, "https://music.apple.com/us/album/currents/1440838039")
     }
 
+    /// iTunes only offers the 100 px sleeve; the CDN serves the same path at any size.
+    func testSearchUpscalesTheSleeve() async throws {
+        stub(#"""
+        {"resultCount": 1, "results": [{
+            "wrapperType": "track",
+            "trackName": "Midnight City",
+            "artistName": "M83",
+            "collectionId": 1440843425,
+            "collectionName": "Hurry Up, We're Dreaming",
+            "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/cb/x.jpg/100x100bb.jpg",
+            "trackCount": 22
+        }]}
+        """#)
+
+        let ref = try await AlbumResolver(session: makeSession())
+            .album(title: "Midnight City", artist: "M83")
+
+        XCTAssertEqual(ref?.artworkURL?.absoluteString,
+                       "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/cb/x.jpg/600x600bb.jpg")
+    }
+
+    /// A catalogue entry with no art must not become a broken sleeve.
+    func testArtworkIsNilWhenITunesOffersNone() {
+        XCTAssertNil(AlbumResolver.artwork(nil))
+    }
+
     func testLookupOrdersTracklistAndSkipsCollection() async throws {
         stub(#"""
         {"resultCount": 4, "results": [
