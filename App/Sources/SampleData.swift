@@ -99,6 +99,14 @@ enum SampleData {
     /// Twenty analyzed videos covering all ten library segments — Cook, Music, Today, Search
     /// and the mind map each need real content of their own — plus one "needs a look" entry.
     static func makeSampleVideos() -> [Video] {
+        let videos = sampleVideos()
+        // These ids are invented, so nothing on TikTok will ever answer for them — the covers
+        // have to be drawn here or every tile stays a grey placeholder.
+        SampleCovers.draw(for: videos)
+        return videos
+    }
+
+    private static func sampleVideos() -> [Video] {
         [
             make(
                 id: "7234567890123456789",
