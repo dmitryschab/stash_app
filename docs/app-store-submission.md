@@ -202,8 +202,9 @@ prints `demo` next to the code, so check it there before pasting the code into t
 carries an `expiresAt` by construction, so "never expires" is not on offer; pick a horizon that
 survives a rejection and a resubmission.
 
-- Reviewer code: `[[MINT_A_FRESH_DEMO_CODE]]` — the old `STASH-JJGG-7HW9` predates the open sign-up
-  change; mint a new one against the deployed build and verify `demo` shows in `list`.
+- Reviewer code: **`STASH-W73N-E7HX`** — minted 2026-08-21 against the deployed open-sign-up build,
+  50 uses, expires 2026-12-19, and `manage_invites.py list` shows it as `demo`. The older
+  `STASH-JJGG-7HW9` predates the change and should be revoked once this version is through review.
 - Keep it live until the version clears review, then `manage_invites.py revoke <CODE>`, which
   expires it in place so `list` still shows it was used.
 
@@ -225,7 +226,7 @@ HOW TO GET IN
    sign in; there is no invitation, no waitlist and no approval step.
 2. IMPORTANT, so you do not land in an empty app: on the sign-in screen, tap "Have a code?"
    below the button and enter
-       [[MINT_A_FRESH_DEMO_CODE]]
+       STASH-W73N-E7HX
    before signing in. That code seeds your account with a demo library of about 20 already-
    processed videos, so you can browse, search and open detail views straight away without a
    TikTok account. It is a reviewer convenience, not a gate: signing in without it works and
