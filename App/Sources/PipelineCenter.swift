@@ -74,6 +74,34 @@ final class PipelineCenter {
             shareImports = imports
         }
         Self.discardLegacyState()
+        refreshThumbnails()
+    }
+
+    // MARK: - Cover art
+
+    private var thumbnailTask: Task<Void, Never>?
+    /// A refresh asked for while one was already running; the in-flight pass fetched its work
+    /// list before those videos landed, so it would miss them.
+    private var thumbnailsPending = false
+
+    /// Fills in any missing cover art, then leaves it alone. Fire and forget: TikTok cover URLs
+    /// expire within hours, so the picture has to come from bytes on disk, and the app is the
+    /// only place that knows a video is still missing them.
+    func refreshThumbnails() {
+        guard let container else { return }
+        guard thumbnailTask == nil else {
+            thumbnailsPending = true
+            return
+        }
+        thumbnailTask = Task { [weak self] in
+            await ThumbnailStore.backfill(container: container)
+            guard let self else { return }
+            thumbnailTask = nil
+            if thumbnailsPending {
+                thumbnailsPending = false
+                refreshThumbnails()
+            }
+        }
     }
 
     /// Housekeeping for installs upgrading from build ≤13, which shipped a shared bearer in
@@ -540,6 +568,9 @@ final class PipelineCenter {
 
     func appBecameActive() {
         endExtraTime()
+        // Cover art comes from TikTok's public oEmbed endpoint, not the box, so it is worth
+        // retrying on a foreground the sign-in gate is still covering.
+        refreshThumbnails()
         // Fires from the Scene-level watcher, which runs while the sign-in gate is still up.
         guard StashSession.shared.isSignedIn else { return }
         Task { await StashSession.shared.refreshQuota() }
@@ -681,7 +712,8 @@ final class PipelineCenter {
                     let status = try await client.status(importID: importID)
                     let results = try await client.allResults(importID: importID)
                     if let container {
-                        try CloudImportResultUpserter.apply(results, to: ModelContext(container))
+                        let applied = try CloudImportResultUpserter.apply(results, to: ModelContext(container))
+                        if applied > 0 { refreshThumbnails() }
                     }
                     guard status.state == .completed || status.state == .cancelled else { continue }
                     for index in shareImports.indices where shareImports[index].id == share.id {
@@ -718,7 +750,10 @@ final class PipelineCenter {
                 let page = try await client.results(importID: importID, cursor: cursor)
                 if let container {
                     let applied = try CloudImportResultUpserter.apply(page.results, to: ModelContext(container))
-                    if applied > 0 { lastSummary = "Synced \(applied) cloud results" }
+                    if applied > 0 {
+                        lastSummary = "Synced \(applied) cloud results"
+                        refreshThumbnails()
+                    }
                 }
                 guard let nextCursor = page.nextCursor else {
                     cloudState.nextResultsCursor = nil
