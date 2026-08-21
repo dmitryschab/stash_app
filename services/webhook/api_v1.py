@@ -54,7 +54,7 @@ YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 # tokens are what cost money, and n/best_of/stream multiply them — so the outbound body is
 # rebuilt from an allowlist and max_tokens is clamped. Clamped per call still is not a bound
 # on the total, so the route is quota-metered too: one unit per answer Bedrock actually
-# returned, which is what caps an invited account at its budget instead of at our bill.
+# returned, which is what caps an account at its budget instead of at our bill.
 CHAT_MAX_BYTES = 32_000
 CHAT_MAX_OUTPUT_TOKENS = 1024  # a full recipe Analysis object measures ~600
 

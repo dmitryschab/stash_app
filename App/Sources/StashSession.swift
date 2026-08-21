@@ -21,8 +21,9 @@ import TikTokBrainKit
 // MARK: - Errors
 
 enum StashSessionError: Error, LocalizedError, Equatable {
-    /// First sign-in for this Apple ID and the beta is closed: 403 {"detail": "invite required"}.
-    case inviteRequired
+    /// A code was supplied on first sign-in and the server refused it: 403. Sign-up itself is
+    /// open, so this never fires for a buyer who left the field alone.
+    case codeRejected
     case invalidAppleToken
     case notSignedIn
     case server(Int)
@@ -30,7 +31,7 @@ enum StashSessionError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .inviteRequired: "Stash is invite-only right now. Enter your invite code to continue."
+        case .codeRejected: "That code was not accepted."
         case .invalidAppleToken: "Apple could not verify that sign-in. Try again."
         case .notSignedIn: "You are signed out."
         case .server(let status): "The Stash server refused the request (HTTP \(status))."
@@ -130,7 +131,7 @@ final class StashSession {
             mapping: { status in
                 switch status {
                 case 401: StashSessionError.invalidAppleToken
-                case 403: StashSessionError.inviteRequired
+                case 403: StashSessionError.codeRejected
                 default: StashSessionError.server(status)
                 }
             })

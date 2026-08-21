@@ -17,10 +17,12 @@ Item layout (all in the one imports table):
   PK="RT#<digest>",      SK="META"          the lookup row a refresh call reads
   PK="INVITE#<code>",    SK="META"          invite code, redeemed by conditional write
 
-A `demo` invite (manage_invites.py --demo) stamps `demo: true` on the account it creates,
-and every session response plus /v1/me echoes it. That is the whole server side of the App
-Review demo library — the library itself is local SwiftData, so seeding it here would mean
-inventing a discovery path for imports the client never created. See SampleData.swift.
+Invite codes no longer gate sign-up (decided 2026-08-16: the €5 App Store price is the gate,
+and an invite wall is what TikTok's reviewer read as internal use). They survive for one job:
+a `demo` invite (manage_invites.py --demo) stamps `demo: true` on the account it creates, and
+every session response plus /v1/me echoes it. That is the whole server side of the App Review
+demo library — the library itself is local SwiftData, so seeding it here would mean inventing
+a discovery path for imports the client never created. See SampleData.swift.
 
 The Apple `sub` is never persisted: the user id is uuid5("stash-user/" + sub), so a
 dump of this table cannot be joined back to an Apple account identifier.
@@ -425,17 +427,22 @@ def auth_apple(body: AppleAuthRequest):
     user = _get_user(table, user_id)
     demo = bool((user or {}).get("demo"))
     if user is None:
+        # Sign-up is open: the €5 App Store price is the gate, not an invite code (decided
+        # 2026-08-16 — an invite wall is what TikTok's reviewer read as internal use). Codes
+        # still exist for one reason: a `--demo` invite stamps demo=true, which seeds App
+        # Review a populated library. So a code is optional, and only a *wrong* one is refused.
         code = (body.invite_code or "").strip().upper()
         invite = redeem_invite(table, code) if code else None
-        # An invalid code and a spent/expired one return the identical 403 so this
-        # endpoint cannot be used to probe which codes exist.
-        if invite is None:
-            raise HTTPException(status_code=403, detail="invite required")
-        demo = bool(invite.get("demo"))
+        if code and invite is None:
+            # A spent, expired and never-minted code are indistinguishable here on purpose,
+            # so this endpoint cannot be used to probe which codes exist.
+            raise HTTPException(status_code=403, detail="that code was not accepted")
+        demo = bool((invite or {}).get("demo"))
         try:
             _create_user(table, user_id, demo)
         except Exception as error:
-            _return_invite(table, code)
+            if code:
+                _return_invite(table, code)
             # A conditional failure here means the row appeared between the read above and
             # this write — a concurrent sign-in, or the client retrying after a response it
             # never saw. Same Apple sub, so it is the same person: hand the invite use back

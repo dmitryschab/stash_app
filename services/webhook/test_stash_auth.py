@@ -168,9 +168,19 @@ def test_unknown_kid_does_not_reach_apple(table, apple):
 # ------------------------------------------------------------------ invites
 
 
-def test_first_time_sub_without_invite_is_refused(table, apple):
+def test_first_time_sub_without_a_code_gets_an_ordinary_account(table, apple):
+    """Sign-up is open — the App Store price is the gate. A code is optional."""
     with TestClient(app) as client:
-        assert sign_in(client, apple).status_code == 403
+        response = sign_in(client, apple)
+    assert response.status_code == 200, response.text
+    assert response.json()["demo"] is False
+    assert table.items[("INSTALL#" + stash_auth.user_id_for(USER_A), "USER")]
+
+
+def test_a_wrong_code_is_still_refused(table, apple):
+    """Silently ignoring a bad code would hand App Review an empty library after they
+    typed the demo code correctly-but-not-quite. Only a supplied-and-wrong code 403s."""
+    with TestClient(app) as client:
         assert sign_in(client, apple, code="STASH-NOPE-NOPE").status_code == 403
     assert ("INSTALL#" + stash_auth.user_id_for(USER_A), "USER") not in table.items
 
@@ -188,7 +198,7 @@ def test_expired_and_spent_invites_are_indistinguishable_from_invalid(table, app
     with TestClient(app) as client:
         response = sign_in(client, apple, USER_A, expired)
     assert response.status_code == 403
-    assert response.json()["detail"] == "invite required"
+    assert response.json()["detail"] == "that code was not accepted"
 
 
 def test_returning_sub_needs_no_invite(table, apple):

@@ -9,8 +9,11 @@
 // privacy answers for nothing. The button is Apple's own `SignInWithAppleButton`; custom-drawn
 // lookalikes get rejected.
 //
-// The invite field stays hidden until the server answers 403 "invite required", so returning
-// users are never asked for a code they do not have.
+// Sign-up is open — the App Store price is the gate, not an invite code. The code field is
+// therefore hidden behind a "Have a code?" button rather than shown to every buyer: its only
+// remaining job is letting App Review redeem a `--demo` code, which seeds them a populated
+// library. The App Review notes have to name that button, or a reviewer signs in successfully
+// and lands in an empty app.
 //
 // This is also where the two disclosures live, because it is the last screen before any data
 // moves: who processes the saves (Groq, AWS Bedrock — guideline 5.1.2(i)) and what pressing
@@ -25,7 +28,7 @@ struct SignInView: View {
     private var session = StashSession.shared
 
     @State private var inviteCode = ""
-    @State private var needsInvite = false
+    @State private var showsCodeField = false
     @State private var isWorking = false
     @State private var error: String?
 
@@ -53,7 +56,7 @@ struct SignInView: View {
                 .frame(maxWidth: 300)
                 .padding(.top, 10)
 
-            if needsInvite { inviteField.padding(.top, 24) }
+            if showsCodeField { inviteField.padding(.top, 24) } else { codeToggle.padding(.top, 20) }
             if let error { errorLine(error).padding(.top, 18) }
 
             Spacer()
@@ -80,7 +83,7 @@ struct SignInView: View {
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.stashBackground.ignoresSafeArea())
-        .animation(.easeInOut(duration: 0.2), value: needsInvite)
+        .animation(.easeInOut(duration: 0.2), value: showsCodeField)
     }
 
     /// Guideline 5.1.2(i): the two third parties that see the user's saves, named before the
@@ -119,9 +122,19 @@ struct SignInView: View {
             .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
     }
 
+    /// Deliberately quiet: a buyer never needs this, and a prominent code box on a paid app's
+    /// first screen reads as "you also need permission to be here".
+    private var codeToggle: some View {
+        Button { showsCodeField = true } label: {
+            Micro(text: "Have a code?", size: 10, tracking: 1.8,
+                  color: .stashInk.opacity(0.45))
+        }
+        .buttonStyle(.plain)
+    }
+
     private var inviteField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Micro(text: "Invite code", size: 10, tracking: 1.8)
+            Micro(text: "Code", size: 10, tracking: 1.8)
             TextField("", text: $inviteCode)
                 .font(.archivo(17, .semibold))
                 .foregroundStyle(Color.stashInk)
@@ -182,11 +195,10 @@ struct SignInView: View {
                                          appleUserID: appleUserID,
                                          authorizationCode: authorizationCode,
                                          inviteCode: code.isEmpty ? nil : code)
-            } catch StashSessionError.inviteRequired {
-                error = code.isEmpty
-                    ? StashSessionError.inviteRequired.localizedDescription
-                    : "That invite code was not accepted."
-                needsInvite = true
+            } catch StashSessionError.codeRejected {
+                // Only reachable with a non-empty code — the server accepts sign-ups without one.
+                error = "That code was not accepted."
+                showsCodeField = true
             } catch {
                 self.error = error.localizedDescription
             }
