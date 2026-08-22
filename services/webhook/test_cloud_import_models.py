@@ -15,10 +15,30 @@ def test_accepts_canonical_tiktok_url():
     assert item.videoID in item.url
 
 
+def test_accepts_data_export_share_url():
+    """The only URL shape a real "Download your data" export produces."""
+    item = BookmarkInput(
+        videoID="7642061063495748894",
+        url="https://www.tiktokv.com/share/video/7642061063495748894/",
+        bookmarkedAt=datetime.now(timezone.utc),
+    )
+    assert item.videoID == "7642061063495748894"
+
+
+def test_rejects_share_url_with_different_video_id():
+    with pytest.raises(ValidationError):
+        BookmarkInput(
+            videoID="1",
+            url="https://www.tiktokv.com/share/video/2/",
+            bookmarkedAt=datetime.now(timezone.utc),
+        )
+
+
 @pytest.mark.parametrize(
     "url",
     [
         "http://www.tiktok.com/@x/video/1",
+        "https://evil.tiktokv.com.attacker.test/share/video/1/",
         "https://evil.test/video/1",
         "file:///etc/passwd",
     ],
@@ -80,3 +100,11 @@ def test_rejects_duplicate_video_ids():
             clientImportID="11111111-1111-4111-8111-111111111111",
             videos=[item, item],
         )
+
+
+def test_result_revision_supersedes_broken_extractor_rows():
+    """Libraries imported against the stale yt-dlp hold revision-1 "unavailable" rows, and the
+    client only applies a strictly greater revision — so fresh results must not be revision 1."""
+    from cloud_import_models import VideoResult
+
+    assert VideoResult(videoID="1").analysis_revision > 1

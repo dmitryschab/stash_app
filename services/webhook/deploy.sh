@@ -15,6 +15,11 @@ sudo cp -- requirements.txt stash-webhook.service stash-import-worker.service /o
 [ -d /opt/stash-webhook/venv ] || sudo python3 -m venv /opt/stash-webhook/venv
 sudo /opt/stash-webhook/venv/bin/pip install --quiet --upgrade pip
 sudo /opt/stash-webhook/venv/bin/pip install --quiet -r requirements.txt
+# yt-dlp is the one dependency that must float upward: TikTok changes its page every few weeks
+# and a stale extractor returns no metadata at all, which this pipeline records as "unavailable"
+# for every video in the import. `-r requirements.txt` leaves an already-installed unpinned
+# package alone, so without this the box silently rots between deploys.
+sudo /opt/stash-webhook/venv/bin/pip install --quiet --upgrade yt-dlp
 
 echo ">>> self-check"
 cd /opt/stash-webhook

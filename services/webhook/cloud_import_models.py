@@ -16,8 +16,13 @@ ALLOWED_TIKTOK_HOSTS = {
     "tiktok.com",
     "vm.tiktok.com",
     "vt.tiktok.com",
+    # "Download your data" writes every favourite as https://www.tiktokv.com/share/video/<id>/,
+    # never the canonical @user/video form. Leaving these off the allowlist 422'd whole-library
+    # imports at the first row — a real export is 100% tiktokv.com.
+    "www.tiktokv.com",
+    "tiktokv.com",
 }
-CANONICAL_VIDEO_PATH = re.compile(r"^/@[^/]+/video/(\d+)(?:/)?$")
+CANONICAL_VIDEO_PATH = re.compile(r"^(?:/@[^/]+)?/(?:share/)?video/(\d+)(?:/)?$")
 
 
 def validate_tiktok_url(url: str) -> str:
@@ -148,7 +153,12 @@ class ImportStatus(ContractModel):
 
 class VideoResult(ContractModel):
     video_id: str = Field(alias="videoID")
-    analysis_revision: int = Field(alias="analysisRevision", default=1)
+    # Bumped 1 -> 2 when the stale-yt-dlp bug was fixed. The client upserter only applies a
+    # result whose revision is strictly greater than the one already stored, so every library
+    # that imported against the broken extractor holds revision-1 rows reading "Unavailable".
+    # Leaving this at 1 would make re-importing a no-op for exactly those users. Bump this
+    # again after any change that makes previously-stored results wrong.
+    analysis_revision: int = Field(alias="analysisRevision", default=2)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)
