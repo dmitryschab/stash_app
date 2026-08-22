@@ -2,8 +2,9 @@
 //
 // A pushed detail screen, Set List style: circular back button + category pill, big Archivo
 // title, the category payload (recipe / track / code) under micro headers in the category
-// color, OCR/transcript disclosures, pipeline stage states, and the ink pill TikTok action
-// with a per-video "re-run pipeline" underneath.
+// color, and the ink pill TikTok action with a per-video "re-run pipeline" underneath. The
+// pipeline stage list that used to sit above the actions is gone — it was a troubleshooting
+// aid, and the Import screen still shows the run as a whole.
 
 import SwiftUI
 import SwiftData
@@ -31,7 +32,6 @@ struct VideoDetailView: View {
                 if !video.music.isEmpty { musicSection(video.music) }
                 if let code = video.codeNote { codeSection(code) }
                 textSection
-                pipelineSection
                 actions
             }
             .padding(.horizontal, 20)
@@ -226,43 +226,6 @@ struct VideoDetailView: View {
     /// just no longer take up the detail screen with raw machine output.
     @ViewBuilder
     private var textSection: some View { EmptyView() }
-
-    // MARK: - Pipeline
-
-    private var pipelineSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("Pipeline")
-            VStack(spacing: 0) {
-                let states = video.stageStates
-                ForEach(pipelineStageOrder, id: \.self) { stage in
-                    let state = states[stage] ?? .pending
-                    HStack(spacing: 12) {
-                        ZStack {
-                            Circle().fill(state.tint).frame(width: 22, height: 22)
-                            Image(systemName: state == .done ? "checkmark" : state.symbol)
-                                .font(.system(size: 10, weight: .heavy))
-                                .foregroundStyle(Color.stashOnAccent)
-                        }
-                        Text(stage.capitalized)
-                            .font(.archivo(15, .bold))
-                            .foregroundStyle(Color.stashInk)
-                        Spacer()
-                        Micro(text: state.label, size: 10, tracking: 1.2, color: .stashInk.opacity(0.5))
-                    }
-                    .padding(.vertical, 11)
-                    .padding(.horizontal, 16)
-                    if stage != pipelineStageOrder.last {
-                        Divider().overlay(Color.stashInk.opacity(0.12)).padding(.horizontal, 16)
-                    }
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.stashInk.opacity(0.9), lineWidth: 1.5)
-            )
-            .padding(.top, 8)
-        }
-    }
 
     // MARK: - Actions
 
