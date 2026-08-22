@@ -14,33 +14,52 @@ import TikTokBrainKit
 struct CookView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     @State private var focus: String?   // selected topic chip; nil = all
+    @State private var browsingTopics = false
 
     private var recipes: [Video] {
         videos.filter { $0.category == .recipe && $0.recipe != nil }
     }
 
-    /// Chips never remove tiles from the wall — non-matching tiles dim instead.
     private func matches(_ video: Video) -> Bool {
         guard let focus else { return true }
         return video.topics.contains(focus)
     }
 
-    /// Top topics across all recipe saves, by save count.
-    private var topicChips: [String] {
+    /// What the wall draws. A chosen filter removes the rest rather than dimming them: at 233
+    /// recipes the dimmed majority was most of the scroll, so "chicken" still meant paging past
+    /// two hundred greyed tiles to find thirty.
+    private var shown: [Video] {
+        recipes.filter(matches)
+    }
+
+    /// Every topic across the recipe saves with how many carry it, most-used first.
+    /// A 233-recipe library runs to ~350 of these, so the row shows the head and the
+    /// picker owns the rest.
+    private var topics: [TopicCount] {
         var counts: [String: Int] = [:]
         for video in recipes {
             for topic in video.topics { counts[topic, default: 0] += 1 }
         }
         return counts
-            .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
-            .prefix(5)
-            .map(\.key)
+            .map { TopicCount(name: $0.key, count: $0.value) }
+            .sorted { ($0.count, $1.name) > ($1.count, $0.name) }
+    }
+
+    /// The five most-used topics — plus whatever is in focus, which the picker may have set
+    /// to something far down the tail. A selected chip you cannot see reads as no selection.
+    ///
+    /// A topic on one recipe is a label, not a way through the library, so it never pads the
+    /// row: a sparse shelf shows three real chips rather than three plus two one-offs.
+    private var rowTopics: [TopicCount] {
+        let head = Array(topics.filter { $0.count >= TopicPicker.browseFloor }.prefix(5))
+        guard let focus, !head.contains(where: { $0.name == focus }) else { return head }
+        let selected = topics.first { $0.name == focus } ?? TopicCount(name: focus, count: 0)
+        return [selected] + head.dropLast()
     }
 
     private var trailing: String {
         guard focus != nil else { return "\(recipes.count) recipes" }
-        let hits = recipes.filter(matches).count
-        return "\(hits) of \(recipes.count) in focus"
+        return "\(shown.count) of \(recipes.count)"
     }
 
     var body: some View {
@@ -49,8 +68,8 @@ struct CookView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     StashHeader(title: "Cook", trailing: trailing)
                         .padding(.top, 8)
-                    if !topicChips.isEmpty {
-                        chips.padding(.top, 14)
+                    if !topics.isEmpty {
+                        chips.padding(.top, 8)
                     }
                     if recipes.isEmpty {
                         emptyState.padding(.top, 48)
@@ -69,40 +88,25 @@ struct CookView: View {
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                chip("all", isOn: focus == nil) { focus = nil }
-                ForEach(topicChips, id: \.self) { topic in
-                    chip(topic, isOn: focus == topic) {
-                        focus = focus == topic ? nil : topic
+                TopicChip(label: "all", isOn: focus == nil) { focus = nil }
+                ForEach(rowTopics) { topic in
+                    TopicChip(label: topic.name, count: topic.count, isOn: focus == topic.name) {
+                        focus = focus == topic.name ? nil : topic.name
                     }
                 }
+                TopicChip(label: "more", symbol: "ellipsis", isOn: false) { browsingTopics = true }
             }
         }
-    }
-
-    private func chip(_ label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Micro(text: label, size: 9.5, tracking: 0.8, color: isOn ? .stashOnInk : .stashInk.opacity(0.65))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background {
-                    if isOn {
-                        Capsule().fill(Color.stashInk)
-                    } else {
-                        Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2)
-                    }
-                }
+        .sheet(isPresented: $browsingTopics) {
+            TopicPicker(topics: topics, focus: $focus)
         }
-        .buttonStyle(.plain)
     }
 
     private var wall: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-            ForEach(recipes, id: \.videoID) { video in
-                let hit = matches(video)
+            ForEach(shown, id: \.videoID) { video in
                 NavigationLink { RecipeDetailView(video: video) } label: {
                     WallTile(video: video)
-                        .opacity(hit ? 1 : 0.22)
-                        .saturation(hit ? 1 : 0.08)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(video.rowTitle)
@@ -124,6 +128,187 @@ struct CookView: View {
     }
 }
 
+// MARK: - Topic filters
+
+/// A topic and how many recipes carry it.
+struct TopicCount: Identifiable, Equatable {
+    let name: String
+    let count: Int
+    var id: String { name }
+}
+
+/// One filter chip. The pill stays small; the tap target does not.
+///
+/// The old chip was ~28 pt tall with its hit area ending at the pill's edge, sitting in a
+/// horizontal strip nested inside the vertical scroll view — so a tap that drifted a few
+/// points became a scroll and the chip "wasn't pressable". A 44 pt `contentShape` (Apple's
+/// minimum) around the same visual pill is the whole fix.
+struct TopicChip: View {
+    let label: String
+    var count: Int? = nil
+    var symbol: String? = nil
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(foreground)
+            }
+            Micro(text: label, size: 9.5, tracking: 0.8, color: foreground)
+            if let count {
+                Micro(text: "\(count)", size: 9.5, tracking: 0.4,
+                      color: foreground.opacity(isOn ? 0.6 : 0.4))
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background {
+            if isOn {
+                Capsule().fill(Color.stashInk)
+            } else {
+                Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2)
+            }
+        }
+        .padding(.vertical, 7)          // pads the target, not the pill
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(count.map { "\(label), \($0) recipes" } ?? label)
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : [.isButton])
+    }
+
+    private var foreground: Color { isOn ? .stashOnInk : .stashInk.opacity(0.65) }
+}
+
+/// The full topic list behind the row's "more" chip: every topic, most-used first, with a
+/// search field for the long tail. A real library runs to ~350 topics of which two thirds
+/// sit on a single recipe, so scrolling to one is hopeless and searching for it is not.
+struct TopicPicker: View {
+    let topics: [TopicCount]
+    @Binding var focus: String?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    /// Below this a topic is a label on one recipe, not a way through the library. They stay
+    /// out of the browse list and out of the chip row, and stay findable by name.
+    static let browseFloor = 2
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var shown: [TopicCount] {
+        guard !trimmed.isEmpty else { return topics.filter { $0.count >= Self.browseFloor } }
+        return topics.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    private var hiddenCount: Int { topics.count - topics.filter { $0.count >= Self.browseFloor }.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            field.padding(.horizontal, 20).padding(.top, 14)
+            if shown.isEmpty {
+                Text("No topic matched.")
+                    .font(.archivo(14, .semibold))
+                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 28)
+                Spacer()
+            } else {
+                list
+            }
+        }
+        .background(Color.stashBackground.ignoresSafeArea())
+    }
+
+    private var header: some View {
+        HStack {
+            Text("Filter")
+                .font(.archivo(28, .heavy))
+                .foregroundStyle(Color.stashInk)
+            Spacer()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.stashInk)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+    }
+
+    private var field: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Color.stashInk)
+            TextField("chicken, soup, meal prep", text: $query)
+                .font(.archivo(15, .semibold))
+                .foregroundStyle(Color.stashInk)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 50)
+        .background(Color.stashSurface, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+    }
+
+    private var list: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                row(label: "All recipes", count: nil, isOn: focus == nil) { focus = nil }
+                ForEach(shown) { topic in
+                    row(label: topic.name, count: topic.count, isOn: focus == topic.name) {
+                        focus = topic.name
+                    }
+                }
+                if trimmed.isEmpty, hiddenCount > 0 {
+                    Text("\(hiddenCount) more topics sit on a single recipe each — search to find them.")
+                        .font(.archivo(12, .medium))
+                        .foregroundStyle(Color.stashInk.opacity(0.45))
+                        .padding(.vertical, 18)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        }
+        .padding(.top, 8)
+    }
+
+    private func row(label: String, count: Int?, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                Text(label)
+                    .font(.archivo(15, isOn ? .heavy : .semibold))
+                    .foregroundStyle(Color.stashInk)
+                Spacer()
+                if let count {
+                    Micro(text: "\(count)", size: 10, tracking: 0.4, color: .stashInk.opacity(0.4))
+                }
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isOn ? Color.categoryRecipe : Color.stashInk.opacity(0.2))
+            }
+            .frame(height: 46)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.stashInk.opacity(0.08)).frame(height: 1)
+        }
+    }
+}
+
 /// One wall tile: the thumbnail edge to edge, jewel placeholder until it loads.
 private struct WallTile: View {
     let video: Video
@@ -141,6 +326,11 @@ private struct WallTile: View {
         }
         .frame(height: 104)
         .frame(maxWidth: .infinity)
+        // `clipShape` clips the drawing, not the touch region: a scaledToFill image overflows
+        // its frame, so without this each tile was tappable well beyond its own square — far
+        // enough up to swallow the filter chips' taps.
+        .clipped()
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

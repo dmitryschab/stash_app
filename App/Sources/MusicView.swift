@@ -434,6 +434,8 @@ struct SleeveArt: View {
                 typographic
             }
             .aspectRatio(1, contentMode: .fit)
+            .clipped()                       // touch region too, not just the drawing
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: .black.opacity(0.14), radius: 8, y: 6)
         } else {

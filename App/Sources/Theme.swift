@@ -372,6 +372,8 @@ struct Thumbnail: View {
             }
         }
         .frame(width: size, height: size)
+        .clipped()                           // touch region too, not just the drawing
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
