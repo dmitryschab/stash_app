@@ -1,31 +1,62 @@
 // SearchView.swift
 //
-// The Search tab: one big field over everything the pipeline extracted — titles, captions,
-// summaries, transcripts, OCR text, topics — with a per-result match strength and the field
-// that matched. Meaning, not just keywords (the transcript is in the index).
+// Search has no tab. Hold the pill, push right, and the pill itself becomes the field
+// (StashTabBar); what opens above it is `SearchOverlay`: one list over everything the pipeline
+// extracted — titles, captions, summaries, transcripts, OCR text, topics — with a per-result
+// match strength and the field that matched. Meaning, not just keywords (the transcript is in
+// the index). `SearchGrip` is the gesture arithmetic, kept out of the view so it can be checked.
 
 import SwiftUI
 import SwiftData
 import TikTokBrainKit
 
-struct SearchView: View {
+/// The hold-and-push numbers. Progress drives the pill's morph (0 = tabs, 1 = field);
+/// `commits` decides what a release does.
+enum SearchGrip {
+    /// Hold this long before the push is honoured — a tap must stay a tap, because the pill is
+    /// also the reselect target.
+    static let holdDuration: TimeInterval = 0.35
+    /// How far right the finger travels for the morph to complete.
+    static let travel: CGFloat = 140
+    /// Where a release commits instead of springing back.
+    static let commitTravel: CGFloat = 70
+    /// A held pill already shows the magnifier peeking in at the left edge.
+    static let heldProgress: CGFloat = 0.1
+
+    /// Morph progress for a horizontal drag of `dx` points. Leftward travel does nothing.
+    static func progress(dx: CGFloat) -> CGFloat {
+        min(1, heldProgress + max(0, dx) / travel)
+    }
+
+    static func commits(dx: CGFloat) -> Bool {
+        dx >= commitTravel
+    }
+
+    static func selfTest() -> Bool {
+        progress(dx: 0) == heldProgress
+            && progress(dx: -20) == heldProgress
+            && progress(dx: travel) == 1
+            && progress(dx: 400) == 1
+            && progress(dx: 35) > heldProgress && progress(dx: 35) < 1
+            && !commits(dx: commitTravel - 1) && commits(dx: commitTravel)
+    }
+}
+
+/// What the grip opens: results (or the prompts) on a cream sheet over the current tab. The
+/// field itself lives in the pill — this only reads the query.
+struct SearchOverlay: View {
+    @Binding var query: String
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
-    @State private var query = ""
-    @FocusState private var focused: Bool
 
     var body: some View {
         NavigationStack {
-            StashScrollView(tab: .search) {
+            ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Search")
-                        .font(.archivo(40, .heavy))
-                        .foregroundStyle(Color.stashInk)
+                    StashHeader(title: "Search", trailing: "\(videos.count) saves")
                         .padding(.top, 8)
 
-                    field.padding(.top, 14)
-
                     Micro(text: "Meaning, not just keywords", size: 10, tracking: 1.8)
-                        .padding(.top, 18)
+                        .padding(.top, 14)
 
                     if videos.isEmpty {
                         emptyLibrary.padding(.top, 44)
@@ -43,7 +74,8 @@ struct SearchView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, stashTabBarClearance)
             }
-            .background(Color.stashBackground.ignoresSafeArea())
+            .scrollDismissesKeyboard(.interactively)
+            .background(Color.stashBackground.opacity(0.96).ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
         }
     }
@@ -96,24 +128,6 @@ struct SearchView: View {
 
     // MARK: - Pieces
 
-    private var field: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Color.stashInk)
-            TextField("that bread video", text: $query)
-                .font(.archivo(15, .semibold))
-                .foregroundStyle(Color.stashInk)
-                .focused($focused)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-        }
-        .padding(.horizontal, 18)
-        .frame(height: 50)
-        .background(Color.stashSurface, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
-    }
-
     /// Search over nothing is worse than a blank screen: the canned "try asking" chips promise
     /// results that cannot exist. Say the index is empty and offer the one thing that fills it.
     private var emptyLibrary: some View {
@@ -129,7 +143,7 @@ struct SearchView: View {
             Micro(text: "Try asking", size: 10, tracking: 1.8)
             FlowChips(
                 chips: ["Songs like Midnight City", "Dinner under 20 min", "That Swift trick"],
-                onTap: { query = $0; focused = true }
+                onTap: { query = $0 }
             )
         }
     }
@@ -230,6 +244,6 @@ struct FlexibleWrap: Layout {
 }
 
 #Preview {
-    SearchView()
+    SearchOverlay(query: .constant("bread"))
         .modelContainer(SampleData.previewContainer)
 }

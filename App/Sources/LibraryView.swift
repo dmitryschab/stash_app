@@ -11,11 +11,10 @@ import TikTokBrainKit
 
 struct LibraryView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
-    // Simulator smoke runs can open a specific segment: `-initialSegment coding|other`.
-    // Recipes and music are not shelves here any more — they have their own tabs.
+    // Simulator smoke runs can open a specific segment: `-initialSegment other`.
+    // Recipes, music and coding are not shelves here any more — they have their own tabs.
     @State private var segment: Category = {
         switch UserDefaults.standard.string(forKey: "initialSegment") {
-        case "coding": .coding
         case "other": .other
         default: .fitness
         }
