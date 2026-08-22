@@ -371,10 +371,15 @@ struct FeaturedArt: View {
 
 extension View {
     /// `stashCard`, with the save's thumbnail dimmed into the fill.
+    ///
+    /// The art takes no touches: `scaledToFill` makes the image taller than the card, and
+    /// `clipped()` trims what is drawn, not what is hit — build 21 shipped a Library whose
+    /// header buttons and shelf pills were all "inside" the featured card's thumbnail.
     func stashArtCard(fill: Color, art: URL?) -> some View {
         padding(18)
-            .background { FeaturedArt(url: art, tint: fill) }
+            .background { FeaturedArt(url: art, tint: fill).allowsHitTesting(false) }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
