@@ -36,7 +36,13 @@ def _delete(queue, message) -> None:
 def _classify(error: Exception) -> PipelineError:
     response = getattr(error, "response", None)
     status = getattr(response, "status_code", None)
-    retryable = isinstance(error, (requests.Timeout, requests.ConnectionError)) or status == 429 or (status is not None and status >= 500)
+    # An exception nobody anticipated is treated as transient, not terminal: the only
+    # bounded cost is MAX_FAST_PASS_ATTEMPTS redeliveries, while the old default of
+    # "permanently failed" turned every stray blip into a dead video row that no retry,
+    # and no re-import, would ever repair (40 of a 941-video library died this way).
+    # A genuinely deterministic crash still settles: the attempt budget runs out and
+    # fail_video records a terminal failure.
+    retryable = status is None or status == 429 or status >= 500
     return PipelineError(str(error), retryable, f"provider_{status}" if status else "worker_error")
 
 
@@ -72,12 +78,16 @@ def handle_message(message: dict, store_for, pipeline, queue) -> HandleResult:
             raise PipelineError("video URL missing", False, "invalid_metadata")
         result = pipeline.process(url)
     except PipelineError as error:
+        log.warning("fast pass failed video=%s code=%s retryable=%s: %s",
+                    video_id, error.code, error.retryable, error)
         store.fail_video(import_id, video_id, error.retryable, error.code)
         if error.retryable:
             return HandleResult(deleted=False, retryable=True)
         _delete(queue, message)
         return HandleResult(deleted=True, retryable=False)
     except Exception as error:
+        # The journal is the only place this error exists — fail_video keeps just a code.
+        log.exception("unexpected error processing video=%s import=%s", video_id, import_id)
         classified = _classify(error)
         store.fail_video(import_id, video_id, classified.retryable, classified.code)
         if classified.retryable:

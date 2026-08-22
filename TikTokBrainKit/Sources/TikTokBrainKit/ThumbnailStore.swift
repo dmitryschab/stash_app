@@ -122,8 +122,22 @@ public enum ThumbnailStore {
 
     static func oEmbedEndpoint(for videoURL: URL) -> URL? {
         var components = URLComponents(string: "https://www.tiktok.com/oembed")
-        components?.queryItems = [URLQueryItem(name: "url", value: videoURL.absoluteString)]
+        components?.queryItems = [URLQueryItem(name: "url", value: canonicalForOEmbed(videoURL).absoluteString)]
         return components?.url
+    }
+
+    /// oEmbed only answers for the canonical `@author/video/<id>` spelling — it 400s on the
+    /// `www.tiktokv.com/share/video/<id>/` form that every "Download your data" export stores,
+    /// which silently left an imported library with no covers at all. The author is not in the
+    /// export, but oEmbed does not check it: `@i` resolves the same as the real handle.
+    static func canonicalForOEmbed(_ videoURL: URL) -> URL {
+        // A URL that already carries an author is left alone — the real handle is what oEmbed
+        // prefers, and rewriting it would throw away information for no gain.
+        if videoURL.path.hasPrefix("/@") { return videoURL }
+        guard let id = TikTokLink.videoID(in: videoURL),
+              let canonical = URL(string: "https://www.tiktok.com/@i/video/\(id)")
+        else { return videoURL }
+        return canonical
     }
 
     static func coverURL(fromOEmbed data: Data) -> URL? {

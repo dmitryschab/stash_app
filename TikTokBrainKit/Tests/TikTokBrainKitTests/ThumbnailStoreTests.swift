@@ -63,3 +63,35 @@ final class ThumbnailStoreTests: XCTestCase {
         return output as Data
     }
 }
+
+// MARK: - oEmbed URL canonicalisation
+
+extension ThumbnailStoreTests {
+    /// The shape every "Download your data" export stores. oEmbed 400s on it verbatim, so an
+    /// imported library showed placeholder covers for every single save.
+    func testOEmbedEndpointCanonicalisesDataExportShareURL() throws {
+        let share = URL(string: "https://www.tiktokv.com/share/video/7642061063495748894/")!
+        let endpoint = try XCTUnwrap(ThumbnailStore.oEmbedEndpoint(for: share))
+        let query = try XCTUnwrap(URLComponents(url: endpoint, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "url" })?.value)
+        XCTAssertEqual(query, "https://www.tiktok.com/@i/video/7642061063495748894")
+    }
+
+    /// A real handle is what oEmbed prefers, so a URL that already has one is untouched.
+    func testOEmbedEndpointKeepsCanonicalURLIntact() throws {
+        let canonical = URL(string: "https://www.tiktok.com/@chef/video/123")!
+        let endpoint = try XCTUnwrap(ThumbnailStore.oEmbedEndpoint(for: canonical))
+        let query = try XCTUnwrap(URLComponents(url: endpoint, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "url" })?.value)
+        XCTAssertEqual(query, "https://www.tiktok.com/@chef/video/123")
+    }
+
+    /// Nothing numeric to work with: pass the URL through rather than inventing one.
+    func testOEmbedEndpointPassesThroughUnparseableURL() throws {
+        let odd = URL(string: "https://www.tiktok.com/@chef")!
+        let endpoint = try XCTUnwrap(ThumbnailStore.oEmbedEndpoint(for: odd))
+        let query = try XCTUnwrap(URLComponents(url: endpoint, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "url" })?.value)
+        XCTAssertEqual(query, "https://www.tiktok.com/@chef")
+    }
+}

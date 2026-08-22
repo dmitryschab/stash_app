@@ -208,3 +208,34 @@ def test_a_job_for_a_deleted_account_is_dropped():
 
     assert result == HandleResult(deleted=True, retryable=False)
     assert queue.deleted == ["receipt-1"]
+
+
+def test_unexpected_exception_is_retried_not_buried():
+    """A stray exception (no HTTP status) must stay in the queue for redelivery — the
+    attempt budget in fail_video bounds it. Marking it terminally failed created rows
+    that no retry and no re-import could ever repair."""
+    store = FakeStore()
+    queue = FakeQueue()
+    pipeline = SimpleNamespace(process=lambda *_args: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    result = handle_message(message(), stores(store), pipeline, queue)
+
+    assert result == HandleResult(deleted=False, retryable=True)
+    assert store.failed == [(True, "worker_error")]
+    assert queue.deleted == []
+
+
+def test_provider_4xx_is_still_terminal():
+    """A definite client-side provider error (e.g. 403) keeps failing the same way on
+    every retry — it must settle immediately, not burn the attempt budget."""
+    store = FakeStore()
+    queue = FakeQueue()
+    error = RuntimeError("denied")
+    error.response = SimpleNamespace(status_code=403)
+    pipeline = SimpleNamespace(process=lambda *_args: (_ for _ in ()).throw(error))
+
+    result = handle_message(message(), stores(store), pipeline, queue)
+
+    assert result == HandleResult(deleted=True, retryable=False)
+    assert store.failed == [(False, "provider_403")]
+    assert queue.deleted == ["receipt-1"]
