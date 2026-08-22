@@ -28,6 +28,12 @@ extension EnvironmentValues {
     }
 }
 
+/// The id of a section's whole content; a `scrollTo` here is "the very top of the page". The
+/// TimeRail uses it for its newest stop, so that one lands on the header, not on the first
+/// month's label halfway down. (A module constant: `StashScrollView` is generic, and generic
+/// types cannot hold a static.)
+let stashSectionTopID = "stash.section.top"
+
 /// A section's scroll view: `ScrollView`, plus the return-to-top on tab reselect.
 ///
 /// ponytail: the whole content is the scroll anchor rather than a zero-height marker planted
@@ -38,7 +44,7 @@ struct StashScrollView<Content: View>: View {
     @ViewBuilder var content: Content
 
     @Environment(\.tabReselect) private var reselect
-    private let topID = "stash.section.top"
+    private let topID = stashSectionTopID
 
     var body: some View {
         ScrollViewReader { proxy in

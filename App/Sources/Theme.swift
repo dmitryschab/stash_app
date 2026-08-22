@@ -515,7 +515,7 @@ struct TimeRail: View {
         VStack(spacing: 9) {
             ForEach(entries) { entry in
                 Button {
-                    withAnimation { proxy.scrollTo(entry.target, anchor: .top) }
+                    withAnimation { proxy.scrollTo(destination(of: entry.target), anchor: .top) }
                 } label: {
                     Micro(
                         text: entry.label,
@@ -547,12 +547,18 @@ struct TimeRail: View {
                 .onChanged { value in
                     guard let target = target(at: value.location.y), target != scrubTarget else { return }
                     scrubTarget = target
-                    proxy.scrollTo(target, anchor: .top)
+                    proxy.scrollTo(destination(of: target), anchor: .top)
                 }
                 .onEnded { _ in scrubTarget = nil }
         )
         .sensoryFeedback(.selection, trigger: scrubTarget)
         .padding(.trailing, 4)
+    }
+
+    /// The newest stop is the top of the page, header and featured card included — landing
+    /// on the first month's label leaves the rest of the way up to the thumb.
+    private func destination(of target: String) -> String {
+        target == entries.first?.target ? stashSectionTopID : target
     }
 
     /// Which rail entry sits under a finger `y` points down the rail.
