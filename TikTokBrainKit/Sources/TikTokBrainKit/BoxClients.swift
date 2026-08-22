@@ -200,6 +200,8 @@ public struct AnalyzerClient: Analyzing {
     for a single song. Copy each title as written. Set "artist" to the act named next to that \
     title, or "" — NEVER invent an artist you are not confident about, and never reuse one \
     entry's artist for another. A video about one song is simply one entry.
+    - Recipe: write every quantity in metric — grams, millilitres, °C, centimetres. Convert \
+    cups, ounces, pounds and °F rather than copying them; teaspoons and tablespoons may stay.
     - NEVER output placeholder text like "No Content Provided"/"Untitled Video". If caption \
     and transcript are both empty: title "Saved video", summary "No caption or audio was \
     available for this save."

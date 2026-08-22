@@ -280,7 +280,14 @@ extension Video {
     /// "needs a look" pile shown at the end of each library segment.
     var needsLook: Bool { unavailable || categoryRaw.isEmpty }
 
-    var recipe: RecipeData? { Self.decode(recipeJSON, as: RecipeData.self) }
+    /// The recipe as the kitchen reads it: US quantities rewritten to metric on the way out
+    /// (`Metric.localize`), so saves analyzed before the prompt asked for metric read right too.
+    var recipe: RecipeData? {
+        guard var recipe = Self.decode(recipeJSON, as: RecipeData.self) else { return nil }
+        recipe.ingredients = recipe.ingredients.map(Metric.localize)
+        recipe.steps = recipe.steps.map(Metric.localize)
+        return recipe
+    }
     var codeNote: CodeData? { Self.decode(codeJSON, as: CodeData.self) }
 
     /// Every release this save recommends, in the order the video showed them.
