@@ -11,17 +11,20 @@ import TikTokBrainKit
 
 struct LibraryView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
-    // Simulator smoke runs can open a specific segment: `-initialSegment music|coding|other`.
+    // Simulator smoke runs can open a specific segment: `-initialSegment coding|other`.
+    // Recipes and music are not shelves here any more — they have their own tabs.
     @State private var segment: Category = {
         switch UserDefaults.standard.string(forKey: "initialSegment") {
-        case "music": .music
         case "coding": .coding
         case "other": .other
-        default: .recipe
+        default: .fitness
         }
     }()
     @State private var selectedTopic: String?
     @State private var showSettings = false
+    /// True once the shelf on screen is the one *you* asked for — a tapped pill, or the
+    /// `-initialSegment` a smoke run opened with. Until then the biggest shelf wins.
+    @State private var pickedShelf = UserDefaults.standard.string(forKey: "initialSegment") != nil
 
     var body: some View {
         NavigationStack {
@@ -63,12 +66,34 @@ struct LibraryView: View {
             }
         }
         .onChange(of: segment) { _, _ in selectedTopic = nil }
+        // Saves arrive after the first render (SwiftData query, then imports), so the
+        // biggest shelf is not known at init — follow it until you pick one yourself.
+        .onChange(of: shelves.first) { _, top in
+            if !pickedShelf, let top { segment = top }
+        }
+        .onAppear { if !pickedShelf, let top = shelves.first { segment = top } }
     }
 
     // MARK: - Data
 
     private var inSegment: [Video] {
         videos.filter { !$0.needsLook && $0.category == segment }
+    }
+
+    /// Shelves in the order this library actually uses them, biggest first. A library that
+    /// is mostly coding opens on coding; empty shelves fall to the end but stay reachable.
+    private var shelves: [Category] {
+        var counts: [Category: Int] = [:]
+        for video in videos where !video.needsLook {
+            guard let category = video.category else { continue }
+            counts[category, default: 0] += 1
+        }
+        return libraryShelves.enumerated()
+            .sorted { a, b in
+                let (countA, countB) = (counts[a.element, default: 0], counts[b.element, default: 0])
+                return countA == countB ? a.offset < b.offset : countA > countB
+            }
+            .map(\.element)
     }
 
     /// Segment narrowed by the selected topic chip (nil = all).
@@ -154,8 +179,11 @@ struct LibraryView: View {
     private var pills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(librarySegments, id: \.self) { category in
-                    Button { segment = category } label: {
+                ForEach(shelves, id: \.self) { category in
+                    Button {
+                        segment = category
+                        pickedShelf = true
+                    } label: {
                         Micro(
                             text: category.displayName,
                             size: 11,

@@ -225,6 +225,11 @@ let librarySegments: [Category] = [
     .recipe, .fitness, .style, .travel, .home, .learning, .comedy, .music, .coding, .other,
 ]
 
+/// The Library tab's shelves: every segment that has no tab of its own. Recipes live on
+/// Cook and music on Music, both richer than a list row, so a Library copy of either was
+/// the same saves a second time.
+let libraryShelves: [Category] = librarySegments.filter { $0 != .recipe && $0 != .music }
+
 // MARK: - Stage state display
 
 extension StageState {
