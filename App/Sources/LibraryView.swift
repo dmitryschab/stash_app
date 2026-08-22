@@ -55,8 +55,9 @@ struct LibraryView: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .sheet(isPresented: $showSettings) { SettingsView() }
                 .overlay(alignment: .trailing) {
-                    if railEntries.count >= 2 {
-                        timeRail(proxy)
+                    let entries = timeRailEntries(for: sections)
+                    if entries.count >= 2 {
+                        TimeRail(entries: entries, proxy: proxy)
                     }
                 }
             }
@@ -93,41 +94,9 @@ struct LibraryView: View {
             .map(\.key)
     }
 
-    /// Rows after the featured card, grouped into month runs (list is newest-first,
-    /// so consecutive grouping is enough).
-    private var sections: [MonthSection] {
-        let calendar = Calendar.current
-        let currentYear = calendar.component(.year, from: Date())
-        var out: [MonthSection] = []
-        for video in filtered.dropFirst() {
-            let parts = calendar.dateComponents([.year, .month], from: video.bookmarkedAt)
-            guard let year = parts.year, let month = parts.month else { continue }
-            let id = "\(year)-\(month)"
-            if out.last?.id != id {
-                var title = calendar.monthSymbols[month - 1].uppercased()
-                if year != currentYear { title += " '\(String(year % 100))" }
-                out.append(MonthSection(id: id, title: title, year: year, month: month, videos: []))
-            }
-            out[out.count - 1].videos.append(video)
-        }
-        return out
-    }
-
-    /// Rail: month abbreviations for the current year, a single year marker per
-    /// older year, each jumping to its newest section.
-    private var railEntries: [(label: String, target: String)] {
-        let currentYear = Calendar.current.component(.year, from: Date())
-        var seenYears = Set<Int>()
-        var out: [(String, String)] = []
-        for section in sections {
-            if section.year == currentYear {
-                out.append((Calendar.current.shortMonthSymbols[section.month - 1].uppercased(), section.id))
-            } else if !seenYears.contains(section.year) {
-                seenYears.insert(section.year)
-                out.append(("'\(String(section.year % 100))", section.id))
-            }
-        }
-        return out
+    /// Rows after the featured card, grouped into month runs.
+    private var sections: [MonthRun<Video>] {
+        monthRuns(Array(filtered.dropFirst())) { $0.bookmarkedAt }
     }
 
     // MARK: - Header + pills
@@ -285,33 +254,13 @@ struct LibraryView: View {
                     .padding(.top, 18)
                     .padding(.bottom, 4)
                     .id(section.id)
-                ForEach(section.videos, id: \.videoID) { video in
+                ForEach(section.items, id: \.videoID) { video in
                     NavigationLink { VideoDetailView(video: video) } label: { LibraryRow(video: video) }
                         .buttonStyle(.plain)
                     Divider().overlay(Color.stashInk.opacity(0.12))
                 }
             }
         }
-    }
-
-    /// Right-edge jump rail. ponytail: static targets, no scroll-position sync —
-    /// add sync only if this feels dead in use.
-    private func timeRail(_ proxy: ScrollViewProxy) -> some View {
-        VStack(spacing: 9) {
-            ForEach(railEntries, id: \.target) { entry in
-                Button {
-                    withAnimation { proxy.scrollTo(entry.target, anchor: .top) }
-                } label: {
-                    Micro(text: entry.label, size: 8.5, tracking: 0.8, color: .stashInk.opacity(0.55))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 5)
-        .background(Capsule().fill(Color.stashBackground.opacity(0.92)))
-        .overlay(Capsule().strokeBorder(Color.stashInk.opacity(0.12), lineWidth: 1))
-        .padding(.trailing, 4)
     }
 
     @ViewBuilder
@@ -361,17 +310,6 @@ struct LibraryView: View {
             offersImport: false   // the header's import button is already one tap away
         )
     }
-}
-
-// MARK: - Month section
-
-/// One month's run of rows (list is newest-first; sections are consecutive runs).
-private struct MonthSection {
-    let id: String
-    let title: String
-    let year: Int
-    let month: Int
-    var videos: [Video]
 }
 
 // MARK: - Row

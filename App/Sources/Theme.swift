@@ -439,6 +439,126 @@ enum StashLegal {
     static let privacy = URL(string: "https://stash.dmitrijs.dev/privacy")!
 }
 
+// MARK: - Time rail
+
+/// One month's run of saves. Lists are newest-first, so consecutive grouping is enough.
+struct MonthRun<Item>: Identifiable {
+    let id: String
+    /// Section heading — "MARCH", or "MARCH '24" once the year is not this one.
+    let title: String
+    let year: Int
+    let month: Int
+    var items: [Item]
+}
+
+/// Groups a newest-first list into month runs.
+func monthRuns<Item>(_ items: [Item], date: (Item) -> Date) -> [MonthRun<Item>] {
+    let calendar = Calendar.current
+    let currentYear = calendar.component(.year, from: Date())
+    var out: [MonthRun<Item>] = []
+    for item in items {
+        let parts = calendar.dateComponents([.year, .month], from: date(item))
+        guard let year = parts.year, let month = parts.month else { continue }
+        let id = "\(year)-\(month)"
+        if out.last?.id != id {
+            var title = calendar.monthSymbols[month - 1].uppercased()
+            if year != currentYear { title += " '\(String(year % 100))" }
+            out.append(MonthRun(id: id, title: title, year: year, month: month, items: []))
+        }
+        out[out.count - 1].items.append(item)
+    }
+    return out
+}
+
+/// One rail stop: a label and the section id it jumps to.
+struct TimeRailEntry: Identifiable {
+    let label: String
+    let target: String
+    var id: String { target }
+}
+
+/// Rail stops for a set of month runs: month abbreviations for the current year, then a
+/// single year marker per older year, each jumping to that year's newest section.
+func timeRailEntries<Item>(for runs: [MonthRun<Item>]) -> [TimeRailEntry] {
+    let calendar = Calendar.current
+    let currentYear = calendar.component(.year, from: Date())
+    var seenYears = Set<Int>()
+    var out: [TimeRailEntry] = []
+    for run in runs {
+        if run.year == currentYear {
+            out.append(TimeRailEntry(label: calendar.shortMonthSymbols[run.month - 1].uppercased(), target: run.id))
+        } else if !seenYears.contains(run.year) {
+            seenYears.insert(run.year)
+            out.append(TimeRailEntry(label: "'\(String(run.year % 100))", target: run.id))
+        }
+    }
+    return out
+}
+
+/// Right-edge jump rail. Tap a label to jump; press and drag up/down to scrub through
+/// months continuously, Contacts-index style. ponytail: no scroll-position sync back into
+/// the rail — add only if the highlight feels dead when scrolling.
+struct TimeRail: View {
+    let entries: [TimeRailEntry]
+    let proxy: ScrollViewProxy
+
+    @State private var railHeight: CGFloat = 0
+    @State private var scrubTarget: String?
+    private let inset: CGFloat = 10
+
+    var body: some View {
+        VStack(spacing: 9) {
+            ForEach(entries) { entry in
+                Button {
+                    withAnimation { proxy.scrollTo(entry.target, anchor: .top) }
+                } label: {
+                    Micro(
+                        text: entry.label,
+                        size: 8.5,
+                        tracking: 0.8,
+                        color: scrubTarget == entry.target ? .stashInk : .stashInk.opacity(0.55)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, inset)
+        .padding(.horizontal, 5)
+        .background(Capsule().fill(Color.stashBackground.opacity(0.92)))
+        .overlay(Capsule().strokeBorder(Color.stashInk.opacity(0.12), lineWidth: 1))
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { railHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { _, new in railHeight = new }
+            }
+        )
+        .contentShape(Capsule())
+        // High priority: the per-label Buttons otherwise claim the touch and the drag only
+        // ever reports its first point. Taps still land — minimumDistance 0 means touch-down
+        // alone jumps — and VoiceOver activates the Buttons directly.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    guard let target = target(at: value.location.y), target != scrubTarget else { return }
+                    scrubTarget = target
+                    proxy.scrollTo(target, anchor: .top)
+                }
+                .onEnded { _ in scrubTarget = nil }
+        )
+        .sensoryFeedback(.selection, trigger: scrubTarget)
+        .padding(.trailing, 4)
+    }
+
+    /// Which rail entry sits under a finger `y` points down the rail.
+    private func target(at y: CGFloat) -> String? {
+        guard !entries.isEmpty, railHeight > inset * 2 else { return nil }
+        let slot = (railHeight - inset * 2) / CGFloat(entries.count)
+        let index = Int((y - inset) / slot)
+        return entries[min(entries.count - 1, max(0, index))].target
+    }
+}
+
 /// A thin outlined capsule chip — an icon plus an uppercase micro label — used for
 /// reassurance and sync-status lines (e.g. the connect flow).
 struct InfoChip: View {

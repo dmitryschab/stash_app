@@ -62,26 +62,39 @@ struct CookView: View {
         return "\(shown.count) of \(recipes.count)"
     }
 
+    /// The wall in month runs, so the time rail has something to jump to.
+    private var runs: [MonthRun<Video>] {
+        monthRuns(shown) { $0.bookmarkedAt }
+    }
+
     var body: some View {
         NavigationStack {
-            StashScrollView(tab: .cook) {
-                VStack(alignment: .leading, spacing: 0) {
-                    StashHeader(title: "Cook", trailing: trailing)
-                        .padding(.top, 8)
-                    if !topics.isEmpty {
-                        chips.padding(.top, 8)
+            ScrollViewReader { proxy in
+                StashScrollView(tab: .cook) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        StashHeader(title: "Cook", trailing: trailing)
+                            .padding(.top, 8)
+                        if !topics.isEmpty {
+                            chips.padding(.top, 8)
+                        }
+                        if recipes.isEmpty {
+                            emptyState.padding(.top, 48)
+                        } else {
+                            wall.padding(.top, 4)
+                        }
                     }
-                    if recipes.isEmpty {
-                        emptyState.padding(.top, 48)
-                    } else {
-                        wall.padding(.top, 16)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, stashTabBarClearance)
+                }
+                .background(Color.stashBackground.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .overlay(alignment: .trailing) {
+                    let entries = timeRailEntries(for: runs)
+                    if entries.count >= 2 {
+                        TimeRail(entries: entries, proxy: proxy)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, stashTabBarClearance)
             }
-            .background(Color.stashBackground.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
@@ -103,13 +116,21 @@ struct CookView: View {
     }
 
     private var wall: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-            ForEach(shown, id: \.videoID) { video in
-                NavigationLink { RecipeDetailView(video: video) } label: {
-                    WallTile(video: video)
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(runs) { run in
+                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+                    .id(run.id)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                    ForEach(run.items, id: \.videoID) { video in
+                        NavigationLink { RecipeDetailView(video: video) } label: {
+                            WallTile(video: video)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(video.rowTitle)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(video.rowTitle)
             }
         }
         .animation(.easeOut(duration: 0.35), value: focus)
