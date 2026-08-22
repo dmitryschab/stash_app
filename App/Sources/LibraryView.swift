@@ -240,7 +240,7 @@ struct LibraryView: View {
             .padding(.top, 16)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .stashCard(fill: segment.color)
+        .stashArtCard(fill: segment.color, art: video.thumbnailURL)
     }
 
     /// Topic chip row: "all" + the segment's top topics.
@@ -336,6 +336,45 @@ struct LibraryView: View {
                 : "Saves land on this shelf once they are analyzed as \(segment.displayName.lowercased()).",
             offersImport: false   // the header's import button is already one tap away
         )
+    }
+}
+
+// MARK: - Featured art
+
+/// The featured card's ground: the save's thumbnail under a deep wash of the jewel colour —
+/// enough to give the card a face, not enough to fight the type on it. No thumbnail, plain
+/// jewel fill, same as before.
+struct FeaturedArt: View {
+    let url: URL?
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            tint
+            if let url {
+                // Overlay on a clear colour: the image never gets a say in the card's size.
+                Color.clear
+                    .overlay {
+                        AsyncImage(url: url) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.clear
+                        }
+                    }
+                    .clipped()
+                tint.opacity(0.78)
+                LinearGradient(colors: [tint.opacity(0.35), .clear], startPoint: .top, endPoint: .bottom)
+            }
+        }
+    }
+}
+
+extension View {
+    /// `stashCard`, with the save's thumbnail dimmed into the fill.
+    func stashArtCard(fill: Color, art: URL?) -> some View {
+        padding(18)
+            .background { FeaturedArt(url: art, tint: fill) }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 

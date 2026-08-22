@@ -359,7 +359,6 @@ private struct WallTile: View {
 // MARK: - Recipe detail (5a)
 
 struct RecipeDetailView: View {
-    @Environment(\.dismiss) private var dismiss
     let video: Video
 
     @State private var isCooking = false
@@ -422,16 +421,7 @@ struct RecipeDetailView: View {
             )
             VStack {
                 HStack {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(cream)
-                            .frame(width: 36, height: 36)
-                            .background(Color(hex: 0x201A12).opacity(0.35), in: Circle())
-                            .overlay(Circle().strokeBorder(cream, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
+                    StashBackButton(tint: cream)
                     Spacer()
                     Micro(text: "Recipe", size: 10, tracking: 1.8, color: cream)
                         .padding(.horizontal, 13)

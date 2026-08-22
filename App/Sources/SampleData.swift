@@ -198,6 +198,28 @@ enum SampleData {
                     "steps": ["Melt the chocolate into the hot water", "Set the bowl over ice", "Whisk until it thickens", "Stop the moment it holds a peak"],
                 ])
             ),
+            // A recommendation list: one clip, five albums. The music wall files it as one unit
+            // and wears the five sleeves as a strip on its typographic cover.
+            make(
+                id: "7234567890000000021",
+                url: "https://www.tiktok.com/@cratedigger/video/7234567890000000021",
+                daysAgo: 1,
+                author: "cratedigger",
+                caption: "five albums that raised me, no skips #albums #musictok",
+                hashtags: ["albums", "musictok"],
+                category: .music,
+                title: "5 albums that raised me",
+                summary: "Five full records the creator grew up on, one reason each.",
+                topics: ["albums", "classics"],
+                transcript: "Rumours, then In Rainbows, then Discovery, then DAMN, and finally SOS.",
+                musicJSON: json([
+                    ["kind": "album", "title": "Rumours", "artist": "Fleetwood Mac"],
+                    ["kind": "album", "title": "In Rainbows", "artist": "Radiohead"],
+                    ["kind": "album", "title": "Discovery", "artist": "Daft Punk"],
+                    ["kind": "album", "title": "DAMN.", "artist": "Kendrick Lamar"],
+                    ["kind": "album", "title": "SOS", "artist": "SZA"],
+                ])
+            ),
             make(
                 id: "7234567890000000002",
                 url: "https://www.tiktok.com/@nightdrive/video/7234567890000000002",
@@ -453,6 +475,7 @@ enum SampleData {
         transcript: String?,
         recipeJSON: Data? = nil,
         trackJSON: Data? = nil,
+        musicJSON: Data? = nil,
         codeJSON: Data? = nil
     ) -> Video {
         let video = Video(
@@ -470,6 +493,7 @@ enum SampleData {
         video.transcript = transcript
         video.recipeJSON = recipeJSON
         video.trackJSON = trackJSON
+        video.musicJSON = musicJSON
         video.codeJSON = codeJSON
 
         let done: [String: StageState] = [
@@ -500,6 +524,11 @@ enum SampleData {
     /// Encodes a JSON object the same way the pipeline would store a category payload.
     private static func json(_ object: [String: Any]) -> Data {
         (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+    }
+
+    /// The array form, for a `[MusicPick]` list.
+    private static func json(_ array: [[String: Any]]) -> Data {
+        (try? JSONSerialization.data(withJSONObject: array)) ?? Data()
     }
 
     /// Same date format the TikTok export uses (and `ExportParser` parses).

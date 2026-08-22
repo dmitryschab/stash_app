@@ -153,7 +153,7 @@ struct CodeView: View {
             .padding(.top, 16)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .stashCard(fill: .categoryCoding)
+        .stashArtCard(fill: .categoryCoding, art: video.thumbnailURL)
     }
 
     private var rows: some View {

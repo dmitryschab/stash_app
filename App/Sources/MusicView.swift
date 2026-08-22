@@ -1,9 +1,11 @@
 // MusicView.swift
 //
 // The Music tab (design: "Cook Tab Options" 6a → 7a): every music save files under its
-// whole album — the album is the unit, saved tracks are just marks on it. Sleeves are
-// typographic placeholders on a scattered mosaic; the album page shows the full
-// tracklist with your TikTok saves marked and linked back to their clips.
+// whole album — the album is the unit, saved tracks are just marks on it. Sleeves are the
+// real covers once iTunes has been asked (typographic until then) on a scattered mosaic; a
+// recommendation list keeps its typographic sleeve and wears its picks' covers as a strip
+// along the top. The album page shows the full tracklist with your TikTok saves marked and
+// linked back to their clips.
 
 import SwiftUI
 import SwiftData
@@ -160,6 +162,7 @@ private func groupAlbums(_ videos: [Video], refs: [String: AlbumRef]) -> [MusicA
 @MainActor @Observable
 final class AlbumStore {
     private(set) var refs: [String: AlbumRef] = [:]       // videoID → album
+    private(set) var pickRefs: [String: AlbumRef] = [:]   // videoID#index → a list pick's album
     private(set) var tracklists: [Int: [String]] = [:]    // collectionID → names in order
     private(set) var sleeves: [Int: URL] = [:]            // collectionID → sleeve on disk
     private var attempted: Set<String> = []               // session-only miss cache; retries next launch
@@ -170,6 +173,8 @@ final class AlbumStore {
         var tracklists: [Int: [String]]
         /// Absent from caches written before covers existed; those refetch on the next pass.
         var sleeves: [Int: URL]?
+        /// Absent from caches written before lists had sleeves.
+        var pickRefs: [String: AlbumRef]?
     }
 
     /// Not private: account deletion has to be able to remove it, and it holds resolved album
@@ -184,6 +189,7 @@ final class AlbumStore {
         if let data = try? Data(contentsOf: Self.cacheURL),
            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
             refs = snapshot.refs
+            pickRefs = snapshot.pickRefs ?? [:]
             tracklists = snapshot.tracklists
             // Signing out wipes the sleeve folder but not this file, so drop anything whose
             // bytes are gone rather than handing the wall a dead file URL.
@@ -198,29 +204,54 @@ final class AlbumStore {
     func resolve(_ videos: [Video]) async {
         var dirty = false
         for video in videos {
-            if refs[video.videoID] == nil, !attempted.contains(video.videoID),
-               let track = video.soleMusicPick {
-                attempted.insert(video.videoID)
-                if let ref = try? await resolver.album(title: track.title, artist: track.artist) {
-                    refs[video.videoID] = ref
-                    dirty = true
+            if let track = video.soleMusicPick {
+                if refs[video.videoID] == nil, !attempted.contains(video.videoID) {
+                    attempted.insert(video.videoID)
+                    if let ref = try? await resolver.album(title: track.title, artist: track.artist) {
+                        refs[video.videoID] = ref
+                        dirty = true
+                    }
                 }
-            }
-            // Separate from the lookup above: a ref cached before covers existed, or one whose
-            // sleeve was wiped with the thumbnail folder, still needs its bytes fetching.
-            if let ref = refs[video.videoID], sleeves[ref.collectionID] == nil,
-               let remote = ref.artworkURL,
-               let local = try? await ThumbnailStore.download(remote, videoID: "album-\(ref.collectionID)") {
-                sleeves[ref.collectionID] = local
-                dirty = true
+                if let ref = refs[video.videoID], await fetchSleeve(for: ref) { dirty = true }
+            } else {
+                // A list: every pick is looked up on its own, album picks through the album
+                // index, so the strip on its sleeve is the picks' real covers.
+                for (index, pick) in video.music.enumerated() {
+                    let key = Self.pickKey(video.videoID, index)
+                    if pickRefs[key] == nil, !attempted.contains(key) {
+                        attempted.insert(key)
+                        if let ref = try? await resolver.album(for: pick) {
+                            pickRefs[key] = ref
+                            dirty = true
+                        }
+                    }
+                    if let ref = pickRefs[key], await fetchSleeve(for: ref) { dirty = true }
+                }
             }
         }
         if dirty { save() }
     }
 
+    /// Separate from the lookup: a ref cached before covers existed, or one whose sleeve was
+    /// wiped with the thumbnail folder, still needs its bytes fetching. True when it did.
+    private func fetchSleeve(for ref: AlbumRef) async -> Bool {
+        guard sleeves[ref.collectionID] == nil, let remote = ref.artworkURL,
+              let local = try? await ThumbnailStore.download(remote, videoID: "album-\(ref.collectionID)")
+        else { return false }
+        sleeves[ref.collectionID] = local
+        return true
+    }
+
+    private static func pickKey(_ videoID: String, _ index: Int) -> String { "\(videoID)#\(index)" }
+
     /// The sleeve for a wall cell, or nil when it is unresolved, art-less, or not fetched yet.
     func sleeve(for album: MusicAlbum) -> URL? {
         album.collectionID.flatMap { sleeves[$0] }
+    }
+
+    /// One sleeve per pick of a list — nil where iTunes had no confident match, or not yet.
+    func sleeves(for list: MusicList) -> [URL?] {
+        list.picks.indices.map { pickRefs[Self.pickKey(list.id, $0)].flatMap { sleeves[$0.collectionID] } }
     }
 
     func loadTracklist(_ collectionID: Int) async {
@@ -232,7 +263,7 @@ final class AlbumStore {
     }
 
     private func save() {
-        let snapshot = Snapshot(refs: refs, tracklists: tracklists, sleeves: sleeves)
+        let snapshot = Snapshot(refs: refs, tracklists: tracklists, sleeves: sleeves, pickRefs: pickRefs)
         try? JSONEncoder().encode(snapshot).write(to: Self.cacheURL)
     }
 }
@@ -250,11 +281,6 @@ struct MusicView: View {
 
     private var musicSaves: [Video] {
         videos.filter { $0.category == .music && !$0.music.isEmpty }
-    }
-
-    /// Only single-release saves need an album lookup; a list is already its own unit.
-    private var singleSaves: [Video] {
-        musicSaves.filter { $0.music.count == 1 }
     }
 
     private var allItems: [MusicShelfItem] {
@@ -292,7 +318,7 @@ struct MusicView: View {
             .background(Color.stashBackground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
         }
-        .task(id: singleSaves.count) { await store.resolve(singleSaves) }
+        .task(id: musicSaves.count) { await store.resolve(musicSaves) }
     }
 
     private var chips: some View {
@@ -319,12 +345,20 @@ struct MusicView: View {
         }
     }
 
-    /// A list cell deliberately gets no cover: it stands for several releases at once, and
-    /// picking one of their sleeves would claim the clip was about that one.
+    /// A list cell deliberately gets no single cover: it stands for several releases at once,
+    /// and picking one of their sleeves would claim the clip was about that one. It gets all of
+    /// them instead, as a strip on its typographic sleeve.
     private func sleeve(for item: MusicShelfItem) -> URL? {
         switch item {
         case .album(let album): store.sleeve(for: album)
         case .list: nil
+        }
+    }
+
+    private func strip(for item: MusicShelfItem) -> [URL?] {
+        switch item {
+        case .album: []
+        case .list(let list): store.sleeves(for: list)
         }
     }
 
@@ -335,10 +369,10 @@ struct MusicView: View {
                 NavigationLink {
                     switch item {
                     case .album(let album): AlbumDetailView(album: album, store: store)
-                    case .list(let list): MusicListDetailView(list: list)
+                    case .list(let list): MusicListDetailView(list: list, store: store)
                     }
                 } label: {
-                    SleeveTile(item: item, artwork: sleeve(for: item))
+                    SleeveTile(item: item, artwork: sleeve(for: item), strip: strip(for: item))
                 }
                 .buttonStyle(.plain)
                 .rotationEffect(.degrees(s.angle))
@@ -366,10 +400,11 @@ struct MusicView: View {
 private struct SleeveTile: View {
     let item: MusicShelfItem
     var artwork: URL? = nil
+    var strip: [URL?] = []
 
     var body: some View {
         VStack(spacing: 7) {
-            SleeveArt(title: item.title, artist: item.artist, artwork: artwork)
+            SleeveArt(title: item.title, artist: item.artist, artwork: artwork, strip: strip)
             HStack {
                 Micro(text: item.coverageLabel, size: 9.5, tracking: 1.1,
                       color: item.isWhole ? .categoryOther : .stashInk.opacity(0.55))
@@ -418,6 +453,9 @@ struct SleeveArt: View {
     /// an unresolved single, a release with no art, the first pass before the lookup lands —
     /// keeps the typographic sleeve, which is a designed cover rather than a missing one.
     var artwork: URL? = nil
+    /// A list's picks, one sleeve each, worn as a strip along the top of the typographic
+    /// cover. Empty for anything that is not a list.
+    var strip: [URL?] = []
 
     private var style: SleeveStyle { SleeveStyle(title: title, artist: artist) }
     private var isGiant: Bool { title.count <= 8 && !title.contains(" ") }
@@ -473,11 +511,59 @@ struct SleeveArt: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(16)
+                    // Keep the title clear of the strip: it shrinks rather than runs under it.
+                    .padding(.top, strip.isEmpty ? 0 : SleeveStrip.band)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if !strip.isEmpty {
+                    SleeveStrip(sleeves: strip, foreground: style.foreground).padding(12)
                 }
             }
             .aspectRatio(1, contentMode: .fit)
             .shadow(color: .black.opacity(0.14), radius: 8, y: 6)
     }
+}
+
+/// A list's picks as a row of small sleeves along the top of its typographic cover: the first
+/// four, then "+n". A pick iTunes could not match keeps a plain dark square, so the row never
+/// has a hole in it.
+struct SleeveStrip: View {
+    let sleeves: [URL?]
+    let foreground: Color
+    static let size: CGFloat = 24
+    /// Height the strip claims at the top of a sleeve, padding included.
+    static let band: CGFloat = 12 + size + 8
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(sleeves.prefix(4).enumerated()), id: \.offset) { _, url in
+                cell(url)
+            }
+            if sleeves.count > 4 {
+                Text("+\(sleeves.count - 4)")
+                    .font(.archivo(8, .heavy))
+                    .foregroundStyle(foreground)
+                    .frame(width: Self.size, height: Self.size)
+                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.22)))
+            }
+        }
+    }
+
+    private func cell(_ url: URL?) -> some View {
+        Group {
+            if let url {
+                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { blank }
+            } else {
+                blank
+            }
+        }
+        .frame(width: Self.size, height: Self.size)
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.black.opacity(0.18), lineWidth: 1))
+    }
+
+    private var blank: some View { Color.black.opacity(0.22) }
 }
 
 /// Stable per-album collage jitter (Swift's `hashValue` reseeds every launch).
@@ -495,7 +581,6 @@ private func scatter(_ id: String) -> (angle: Double, dy: CGFloat) {
 // MARK: - Album detail (7a)
 
 struct AlbumDetailView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     let album: MusicAlbum
     let store: AlbumStore
@@ -533,15 +618,7 @@ struct AlbumDetailView: View {
 
     private var topBar: some View {
         HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color.stashInk)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back")
+            StashBackButton()
             Spacer()
             Micro(text: "Album", size: 10, tracking: 1.8, color: .stashOnAccent)
                 .padding(.horizontal, 13)
@@ -742,15 +819,17 @@ struct AlbumDetailView: View {
 /// catalogue plausibly matched the name. The alternative, shipped until now, was a confident
 /// album page built on a guess.
 struct MusicListDetailView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     let list: MusicList
+    let store: AlbumStore
+
+    private var sleeves: [URL?] { store.sleeves(for: list) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
-                SleeveArt(title: list.title, artist: list.subtitle)
+                SleeveArt(title: list.title, artist: list.subtitle, strip: sleeves)
                     .frame(width: 196, height: 196)
                     .rotationEffect(.degrees(-1.4))
                     .shadow(color: .black.opacity(0.2), radius: 14, y: 10)
@@ -769,15 +848,7 @@ struct MusicListDetailView: View {
 
     private var topBar: some View {
         HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color.stashInk)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back")
+            StashBackButton()
             Spacer()
             Micro(text: "Selection", size: 10, tracking: 1.8, color: .stashOnAccent)
                 .padding(.horizontal, 13)
@@ -810,20 +881,22 @@ struct MusicListDetailView: View {
     private var picksSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Micro(text: "In this video · \(list.picks.count)", size: 10, tracking: 2, color: .categoryRecipe)
+            let sleeves = sleeves
             ForEach(Array(list.picks.enumerated()), id: \.offset) { index, pick in
-                row(index: index, pick: pick)
+                row(index: index, pick: pick, sleeve: sleeves[index])
             }
         }
         .padding(.top, 22)
     }
 
     @ViewBuilder
-    private func row(index: Int, pick: MusicPick) -> some View {
+    private func row(index: Int, pick: MusicPick, sleeve: URL?) -> some View {
         let body = HStack(spacing: 11) {
             Text("\(index + 1)")
                 .font(.archivo(12, .black))
                 .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.45))
                 .frame(width: 18, alignment: .leading)
+            pickArt(sleeve)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pick.title)
                     .font(.archivo(13.5, .bold))
@@ -852,6 +925,19 @@ struct MusicListDetailView: View {
             .accessibilityLabel(pick.link != nil
                                 ? "Open \(pick.title)"
                                 : "Search Spotify for \(pick.title)")
+    }
+
+    /// The strip's sleeve at row size — or a quiet square where iTunes had no match.
+    private func pickArt(_ url: URL?) -> some View {
+        Group {
+            if let url {
+                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.stashInk.opacity(0.12) }
+            } else {
+                Color.stashInk.opacity(0.12)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func subtitle(for pick: MusicPick) -> String {

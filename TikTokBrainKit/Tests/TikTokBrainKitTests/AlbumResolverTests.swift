@@ -56,6 +56,64 @@ final class AlbumResolverTests: XCTestCase {
         XCTAssertEqual(ref?.albumURL?.absoluteString, "https://music.apple.com/us/album/currents/1440838039")
     }
 
+    /// An album pick asks the album index and is matched on the collection name, so the gate
+    /// never compares "Rumours" against whatever song the song index offers first.
+    func testAlbumPickResolvesByCollectionName() async throws {
+        let data = Data(#"""
+        {"resultCount": 1, "results": [{
+            "wrapperType": "collection",
+            "collectionType": "Album",
+            "artistName": "Fleetwood Mac",
+            "collectionId": 594061854,
+            "collectionName": "Rumours",
+            "collectionViewUrl": "https://music.apple.com/us/album/rumours/594061854",
+            "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/ab/x.jpg/100x100bb.jpg",
+            "releaseDate": "1977-02-04T08:00:00Z",
+            "trackCount": 11
+        }]}
+        """#.utf8)
+        let asked = AskedEntity()
+        MusicLinkStubURLProtocol.requestHandler = { request in
+            asked.value = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "entity" }?.value
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, data)
+        }
+
+        let ref = try await AlbumResolver(session: makeSession())
+            .album(for: MusicPick(kind: .album, title: "Rumours", artist: "Fleetwood Mac"))
+
+        XCTAssertEqual(asked.value, "album")
+        XCTAssertEqual(ref?.collectionID, 594061854)
+        XCTAssertEqual(ref?.albumTitle, "Rumours")
+        XCTAssertEqual(ref?.trackCount, 11)
+        XCTAssertEqual(ref?.artworkURL?.absoluteString,
+                       "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/ab/x.jpg/600x600bb.jpg")
+    }
+
+    /// A track pick takes the song path, so its album and track number still come back.
+    func testTrackPickResolvesThroughTheSongIndex() async throws {
+        let asked = AskedEntity()
+        let data = Data(#"""
+        {"resultCount": 1, "results": [{
+            "wrapperType": "track", "trackName": "Dreams", "artistName": "Fleetwood Mac",
+            "collectionId": 594061854, "collectionName": "Rumours", "trackCount": 11, "trackNumber": 2
+        }]}
+        """#.utf8)
+        MusicLinkStubURLProtocol.requestHandler = { request in
+            asked.value = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "entity" }?.value
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+
+        let ref = try await AlbumResolver(session: makeSession())
+            .album(for: MusicPick(kind: .track, title: "Dreams", artist: "Fleetwood Mac"))
+
+        XCTAssertEqual(asked.value, "song")
+        XCTAssertEqual(ref?.trackNumber, 2)
+        XCTAssertEqual(ref?.albumTitle, "Rumours")
+    }
+
     /// iTunes only offers the 100 px sleeve; the CDN serves the same path at any size.
     func testSearchUpscalesTheSleeve() async throws {
         stub(#"""
@@ -109,4 +167,9 @@ final class AlbumResolverTests: XCTestCase {
         XCTAssertNil(ref)
         XCTAssertEqual(MusicLinkStubURLProtocol.requestCount, 0)
     }
+}
+
+/// Which iTunes entity a lookup asked for, captured from inside the Sendable stub handler.
+private final class AskedEntity: @unchecked Sendable {
+    var value: String?
 }

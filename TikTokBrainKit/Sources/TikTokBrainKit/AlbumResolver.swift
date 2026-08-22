@@ -65,6 +65,45 @@ public struct AlbumResolver {
         )
     }
 
+    /// The album one pick of a recommendation list stands for. A track pick goes through
+    /// `album(title:artist:)`; an album pick asks the album index directly and is matched on
+    /// the collection name — "Rumours" should not have to match a song called "Rumours".
+    public func album(for pick: MusicPick) async throws -> AlbumRef? {
+        guard pick.kind == .album else { return try await album(title: pick.title, artist: pick.artist) }
+        let trimmed = pick.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://itunes.apple.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "term", value: "\(trimmed) \(pick.artist)".trimmingCharacters(in: .whitespacesAndNewlines)),
+            URLQueryItem(name: "media", value: "music"),
+            URLQueryItem(name: "entity", value: "album"),
+            URLQueryItem(name: "limit", value: "5"),
+        ]
+        guard let url = components?.url else { return nil }
+
+        let (data, _) = try await session.data(from: url)
+        let decoded = try JSONDecoder().decode(Response.self, from: data)
+        guard let hit = decoded.results.first(where: {
+                  MatchConfidence.accepts(
+                      askedTitle: trimmed, askedArtist: pick.artist,
+                      returnedTitle: $0.collectionName ?? "", returnedArtist: $0.artistName ?? "")
+              }),
+              let collectionID = hit.collectionId,
+              let albumTitle = hit.collectionName else { return nil }
+        return AlbumRef(
+            collectionID: collectionID,
+            albumTitle: albumTitle,
+            artist: hit.artistName ?? pick.artist,
+            year: hit.releaseDate.flatMap { Int($0.prefix(4)) },
+            trackCount: hit.trackCount ?? 0,
+            trackNumber: nil,
+            trackName: "",
+            albumURL: hit.collectionViewUrl.flatMap(URL.init(string:)),
+            artworkURL: Self.artwork(hit.artworkUrl100)
+        )
+    }
+
     /// iTunes only ever returns the 100 px sleeve, but the CDN serves any size at the same
     /// path — swapping the segment is the documented way to ask for a usable one.
     static func artwork(_ urlString: String?, size: Int = 600) -> URL? {

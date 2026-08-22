@@ -582,3 +582,88 @@ struct InfoChip: View {
         .background(Capsule().strokeBorder(tint, lineWidth: 1.5))
     }
 }
+
+// MARK: - Pushed-screen navigation
+
+/// The back control on every pushed screen — they all hide the navigation bar, so each
+/// draws its own. A bare chevron, no ring, no fill. The 36pt footprint is what the ringed
+/// circle it replaced occupied, so header rows keep their height and the glyph its spot;
+/// the hit area is widened to the 44pt minimum without changing layout. `tint` is for the
+/// one site that sits on a photo (the Cook hero) rather than the cream background.
+struct StashBackButton: View {
+    @Environment(\.dismiss) private var dismiss
+    var tint: Color = .stashInk
+
+    var body: some View {
+        Button { dismiss() } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint.opacity(0.75))
+                // The cream variant sits on a photo; a soft shadow keeps it legible on a bright one.
+                .shadow(color: .black.opacity(tint == .stashInk ? 0 : 0.45), radius: 3, y: 1)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle().inset(by: -4))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back")
+    }
+}
+
+/// Hiding the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) also switches off
+/// the swipe back: UIKit's own delegate on the pop gestures refuses to begin while the bar
+/// is hidden. Re-own those delegates class-wide, so every NavigationStack in the app gets
+/// the standard left-edge swipe with no per-screen wiring.
+///
+/// iOS 26 drives the pop through `interactiveContentPopGestureRecognizer` — a pan that may
+/// start anywhere in the content — and the classic `interactivePopGestureRecognizer` never
+/// begins on its own there. Both go to `SwipeBackDelegate`, which only lets a pan that
+/// started in the left-edge strip through: the Mind map canvas drag, the horizontal shelves
+/// and the right-edge TimeRail scrub stay untouched, and nothing starts at a stack root
+/// (sheets, Cook Mode) or mid-transition, which is where a stray pop corrupts the stack.
+extension UINavigationController {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = SwipeBackDelegate.shared
+        if #available(iOS 26, *) {
+            interactiveContentPopGestureRecognizer?.delegate = SwipeBackDelegate.shared
+        }
+    }
+}
+
+/// A separate object rather than the controller itself, so nothing SwiftUI's private
+/// UINavigationController subclass implements can shadow it.
+private final class SwipeBackDelegate: NSObject, UIGestureRecognizerDelegate {
+    static let shared = SwipeBackDelegate()
+
+    /// The strip a pop may start in — the system's screen-edge region.
+    private let edge: CGFloat = 20
+    private var startedAtEdge = false
+
+    func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let view = recognizer.view else { return false }
+        startedAtEdge = touch.location(in: view).x <= edge
+        return true
+    }
+
+    func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard startedAtEdge,
+              let navigation = navigationController(of: recognizer),
+              navigation.viewControllers.count > 1,
+              navigation.transitionCoordinator == nil
+        else { return false }
+        // Rightward and mostly horizontal. Velocity, not translation: the pop recognizers
+        // ask before they begin, while translation still reads zero.
+        guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: pan.view)
+        return velocity.x >= abs(velocity.y)
+    }
+
+    private func navigationController(of recognizer: UIGestureRecognizer) -> UINavigationController? {
+        var responder: UIResponder? = recognizer.view
+        while let current = responder {
+            if let navigation = current as? UINavigationController { return navigation }
+            responder = current.next
+        }
+        return nil
+    }
+}

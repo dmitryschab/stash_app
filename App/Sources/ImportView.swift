@@ -74,7 +74,6 @@ func makeBoxConfig(baseURL: String, chatModel: String, whisperModel: String,
 
 struct ImportView: View {
     @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
     @Query private var videos: [Video]
     private var controller = PipelineCenter.shared
     private var session = StashSession.shared
@@ -140,15 +139,7 @@ struct ImportView: View {
     private var topBar: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button { dismiss() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color.stashInk)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
+                StashBackButton()
                 Spacer()
                 Button { showSettings = true } label: {
                     Image(systemName: "gearshape")

@@ -11,7 +11,6 @@ import TikTokBrainKit
 
 struct VideoDetailView: View {
     @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
     let video: Video
 
     @State private var isRerunning = false
@@ -46,15 +45,7 @@ struct VideoDetailView: View {
 
     private var topBar: some View {
         HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.stashInk)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back")
+            StashBackButton()
             Spacer()
             if let category = video.category {
                 CategoryBadge(category: category)
