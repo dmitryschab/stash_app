@@ -151,6 +151,26 @@ class ImportStatus(ContractModel):
     updated_at: datetime = Field(alias="updatedAt")
 
 
+class RecipeData(ContractModel):
+    name: str = ""
+    ingredients: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+
+
+class MusicPick(ContractModel):
+    """One release a video recommends. `artist` is empty rather than guessed — a guessed
+    artist is how the wrong release gets linked on the client."""
+
+    kind: str = "track"
+    title: str
+    artist: str = ""
+
+
+# No real recommendation video lists more than this, and an unbounded array is an unbounded
+# number of iTunes lookups on the client. Mirrors MusicPick.maxPerVideo in the Kit.
+MAX_MUSIC_PICKS = 12
+
+
 class VideoResult(ContractModel):
     video_id: str = Field(alias="videoID")
     # Bumped 1 -> 2 when the stale-yt-dlp bug was fixed. The client upserter only applies a
@@ -158,7 +178,8 @@ class VideoResult(ContractModel):
     # that imported against the broken extractor holds revision-1 rows reading "Unavailable".
     # Leaving this at 1 would make re-importing a no-op for exactly those users. Bump this
     # again after any change that makes previously-stored results wrong.
-    analysis_revision: int = Field(alias="analysisRevision", default=2)
+    # 3: results now carry recipe and music, so rows analysed before that must be superseded.
+    analysis_revision: int = Field(alias="analysisRevision", default=3)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)
@@ -168,8 +189,18 @@ class VideoResult(ContractModel):
     title: str | None = None
     summary: str | None = None
     topics: list[str] = Field(default_factory=list)
+    # The Cook and Music screens filter on these, not on `category` — a save with category
+    # "recipe" and no recipe object never reaches the wall. Before they were carried here the
+    # cloud pipeline could not populate either screen at all.
+    recipe: RecipeData | None = None
+    music: list[MusicPick] = Field(default_factory=list)
     unavailable: bool = False
     error_code: str | None = Field(default=None, alias="errorCode")
+
+    @field_validator("music")
+    @classmethod
+    def bounded_picks(cls, value: list[MusicPick]) -> list[MusicPick]:
+        return [pick for pick in value if pick.title.strip()][:MAX_MUSIC_PICKS]
 
 
 class ResultPage(ContractModel):

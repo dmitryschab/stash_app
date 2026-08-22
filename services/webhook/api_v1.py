@@ -230,6 +230,15 @@ coding=software/gadgets/AI); use other only when none fit. Always answer in Engl
 empty strings or arrays when information is missing. Never output placeholder prose. If
 caption and transcript are empty, use title \"Saved video\" and summarize that no caption
 or audio was available.
+
+Two categories carry extra structure, and the Cook and Music screens are empty without it:
+- category recipe: add a "recipe" object {name, ingredients[], steps[]}. Include it only when
+  the source actually lists them; omit the key entirely rather than inventing a recipe.
+- category music: add a "music" array of at most 12 {kind, title, artist} objects, one per
+  release the video recommends, in the order shown. kind is "album" or "track". Leave artist
+  as an empty string when the video does not name one — never guess it, because a guessed
+  artist links the wrong release.
+Omit both keys for every other category.
 """.strip()
 
 
@@ -258,6 +267,10 @@ def analyze_metadata(metadata: dict) -> dict:
         json={
             "model": BEDROCK_MODEL,
             "temperature": 0.2,
+            # Was unset, which left the ceiling to the provider default. A recipe object pushes
+            # the response to roughly 600 tokens, so an unstated limit is a truncated JSON body
+            # — and a truncated body fails the whole analysis, not just the recipe.
+            "max_tokens": CHAT_MAX_OUTPUT_TOKENS,
             "messages": [
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
                 {"role": "user", "content": build_analysis_prompt(metadata)},

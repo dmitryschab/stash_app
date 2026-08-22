@@ -84,6 +84,10 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
     public var title: String?
     public var summary: String?
     public var topics: [String]
+    /// The Cook and Music screens filter on these rather than on `category`, so a cloud result
+    /// without them leaves both walls empty however many saves the category holds.
+    public var recipe: RecipeData?
+    public var music: [MusicPick]
     public var unavailable: Bool
     public var errorCode: String?
 
@@ -99,6 +103,8 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         title: String? = nil,
         summary: String? = nil,
         topics: [String] = [],
+        recipe: RecipeData? = nil,
+        music: [MusicPick] = [],
         unavailable: Bool = false,
         errorCode: String? = nil
     ) {
@@ -113,13 +119,15 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         self.title = title
         self.summary = summary
         self.topics = topics
+        self.recipe = recipe
+        self.music = music
         self.unavailable = unavailable
         self.errorCode = errorCode
     }
 
     private enum CodingKeys: String, CodingKey {
         case videoID, analysisRevision, author, caption, hashtags, thumbnailURL, duration
-        case category, title, summary, topics, unavailable, errorCode
+        case category, title, summary, topics, recipe, music, unavailable, errorCode
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +143,11 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         title = try values.decodeIfPresent(String.self, forKey: .title)
         summary = try values.decodeIfPresent(String.self, forKey: .summary)
         topics = try values.decodeIfPresent([String].self, forKey: .topics) ?? []
+        recipe = try values.decodeIfPresent(RecipeData.self, forKey: .recipe)
+        // Same bound the analysis contract applies: a malformed or oversized array is trimmed
+        // rather than failing the whole result decode.
+        music = Array((try values.decodeIfPresent([MusicPick].self, forKey: .music) ?? [])
+            .filter { !$0.title.isEmpty }.prefix(MusicPick.maxPerVideo))
         unavailable = try values.decodeIfPresent(Bool.self, forKey: .unavailable) ?? false
         errorCode = try values.decodeIfPresent(String.self, forKey: .errorCode)
     }
@@ -409,6 +422,11 @@ public enum CloudImportResultUpserter {
                 if let title = result.title { video.title = title }
                 if let summary = result.summary { video.summary = summary }
                 video.topics = result.topics
+                // Only overwrite when the result carries something: a save whose structured
+                // data came from a richer on-device deep pass must not be flattened by a
+                // caption-only fast pass that found nothing.
+                if let recipe = result.recipe { video.recipeJSON = try? JSONEncoder().encode(recipe) }
+                if !result.music.isEmpty { video.musicJSON = try? JSONEncoder().encode(result.music) }
             }
             video.unavailable = result.unavailable
             video.cloudAnalysisRevision = result.analysisRevision

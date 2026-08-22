@@ -339,3 +339,40 @@ private func requestBody(from request: URLRequest) throws -> Data {
     }
     return body
 }
+
+// MARK: - Structured analysis carried by cloud results
+
+extension CloudImportTests {
+    /// Cook and Music filter on recipe/music, not on category, so a result that drops them
+    /// leaves both walls empty however many saves the category holds.
+    func testResultDecodesRecipeAndMusic() throws {
+        let json = """
+        {"videoID":"1","category":"recipe","analysisRevision":3,
+         "recipe":{"name":"Focaccia","ingredients":["flour","water"],"steps":["mix","bake"]},
+         "music":[{"kind":"album","title":"Blue","artist":"Joni Mitchell"},
+                  {"kind":"track","title":"River","artist":""}]}
+        """.data(using: .utf8)!
+        let result = try JSONDecoder().decode(CloudImportResult.self, from: json)
+        XCTAssertEqual(result.recipe?.name, "Focaccia")
+        XCTAssertEqual(result.recipe?.ingredients, ["flour", "water"])
+        XCTAssertEqual(result.music.map(\.title), ["Blue", "River"])
+        XCTAssertEqual(result.music.first?.kind, .album)
+    }
+
+    func testResultWithoutStructureDecodesEmpty() throws {
+        let json = #"{"videoID":"2","category":"comedy"}"#.data(using: .utf8)!
+        let result = try JSONDecoder().decode(CloudImportResult.self, from: json)
+        XCTAssertNil(result.recipe)
+        XCTAssertTrue(result.music.isEmpty)
+    }
+
+    /// A blank title is not a pick, and the array is bounded the same way the contract bounds it.
+    func testMusicPicksAreFilteredAndBounded() throws {
+        let picks = (0..<20).map { #"{"kind":"track","title":"t\#($0)"}"# }.joined(separator: ",")
+        let json = #"{"videoID":"3","music":[{"kind":"track","title":""},\#(picks)]}"#
+            .data(using: .utf8)!
+        let result = try JSONDecoder().decode(CloudImportResult.self, from: json)
+        XCTAssertEqual(result.music.count, MusicPick.maxPerVideo)
+        XCTAssertFalse(result.music.contains { $0.title.isEmpty })
+    }
+}
