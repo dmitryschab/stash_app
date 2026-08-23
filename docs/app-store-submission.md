@@ -291,6 +291,139 @@ Contact: support@stash.dmitrijs.dev
 
 ---
 
+## 6a. Reply to "Guideline 2.1 — Information Needed" (rejection of 2026-08-22, submission 3725b2c3)
+
+Apple asked for seven things. No code change and no new build: it is a **reply on the App Review
+page** with a recording attached. Items 3–5 were already in the notes; they are restated here because
+the reply has to answer all seven in one message, in Apple's numbering.
+
+### Recording — the only item that needs hardware
+
+Record on the **iPhone 14 Pro (iOS 27.0)** with Control Center → Screen Recording, portrait, one
+continuous take, no narration needed. Keep it under ~3 minutes and under 500 MB (ASC attachment
+limit). Mint a **separate single-use demo code** for the take so the live reviewer code never appears
+on screen, then revoke it:
+
+```
+sudo bash -c 'set -a; . /etc/stash-webhook/env; set +a; \
+  /opt/stash-webhook/venv/bin/python /opt/stash-webhook/manage_invites.py mint \
+    --uses 1 --expires-days 7 --label "review recording" --demo'
+```
+
+Shot list, in order (each line is one thing on screen):
+
+1. Home screen → tap the Stash icon (recording must start at launch).
+2. Sign-in screen: scroll so the Groq / AWS Bedrock sentence and the Terms / Privacy links are visible.
+3. Tap **Have a code?** → enter the recording code → **Sign in with Apple** → Face ID sheet → library appears seeded.
+4. **Library** tab: scroll the grid, open one video, tap the cover so TikTok's embed player loads (it will 404 on demo ids — that is fine and is stated in the reply), scroll the recipe/summary/transcript card.
+5. **Cook**, **Music**, **Code**, **Today** tabs: two seconds each.
+6. Search pill: type a word that hits a transcript, open a result.
+7. Settings (gear, top right of Library): show the video budget counter, tap **Export my data** → share sheet → cancel, tap **Legal**.
+8. Press Home, open TikTok, Share any video → **Stash** → return to Stash and show the new row (share extension).
+9. Library → **Import** button (arrow-down icon, top right, next to the gear) → **Submit TikTok export** → pick the sample JSON from Files → show the progress card.
+10. Settings → **Delete account** → confirm → back on the sign-in screen. Stop recording.
+
+Then `manage_invites.py revoke <RECORDING_CODE>`. Attach the file in the App Review reply (the
+message composer takes attachments); do not upload it anywhere public.
+
+### PASTE — App Review reply
+
+```
+Thank you for the review. Answers to items 1–7 follow; the screen recording is attached.
+
+1. SCREEN RECORDING
+Attached. Captured on an iPhone 14 Pro running iOS 27.0 with the submitted build (1.0, build 24).
+It starts on the home screen, launches the app and shows: sign-out, the sign-in screen (Sign in
+with Apple is the only method, with the Groq / AWS Bedrock notice and the Terms and Privacy links),
+Sign in with Apple completing with Face ID, the library, a video detail view, the Cook / Music /
+Code / Today views, search, Settings with the usage counter and "Export my data", the share
+extension being used from the TikTok app, importing a TikTok data-export file, and the "Delete
+account" confirmation dialog. The recording was made on our own account, so the dialog is shown
+and dismissed rather than confirmed; on the demo account the reviewer can complete the deletion
+— it removes the account and all server data and returns the app to the sign-in screen.
+The recording does not enter the reviewer code: that step only exists for accounts created fresh.
+There is no purchase or subscription flow — the app is paid once, up front, through the App Store,
+and contains no in-app purchases and no StoreKit code. There is no content reporting or blocking
+mechanism because there is no user-to-user content: each person sees only the videos they
+themselves saved on TikTok, in a private library nobody else can view. The app requests no
+sensitive permissions: no camera, microphone, photos, location, contacts or tracking, so no
+permission prompts and no App Tracking Transparency prompt appear.
+
+2. DEVICES AND OS TESTED
+- iPhone 14 Pro, iOS 27.0 (physical device; the recording)
+- iPhone 17 Pro, iPhone 17 Pro Max, iPhone 17, iPhone 16 Pro simulators, iOS 26.3.1 – 26.5
+Minimum deployment target is iOS 17.0; iPhone only.
+
+3. WHAT THE APP DOES AND FOR WHOM
+Stash is a personal library for the videos a person has saved on TikTok. People bookmark recipes,
+songs, coding tutorials and explanations and then cannot find them again in a grid of thumbnails.
+Stash turns each saved video into something readable and searchable: cooking videos become recipe
+cards (ingredients and steps), music becomes a track list, tutorials become short summaries with
+their links, and everything else is grouped by topic. Search covers captions, the transcript and
+the text shown on screen, not just titles. Target audience: adult TikTok users (16+, per our
+privacy policy) who save videos to come back to. Value: the saved pile becomes a usable reference
+instead of an endless feed. It is a single-user productivity tool; there is no social layer, no
+feed, no sharing between users, no ads.
+
+4. SETUP AND ACCESS
+Login: tap "Sign in with Apple" with any Apple ID. Stash requests no name and no email; only the
+app-specific user identifier is received. There is no username/password and no other account type.
+Demo content: before signing in, tap "Have a code?" on the sign-in screen and enter the reviewer
+code in the App Review Information notes. That seeds the account with about 20 already-processed
+videos so every view has content. The demo entries are sample data we wrote: creator handles are
+invented and the video links do not resolve on TikTok, so the embedded player shows TikTok's
+"unavailable" page for them. Signing in without the code also works and gives an ordinary empty
+library.
+Sample file for the import flow (three public videos from TikTok's own account, in TikTok's
+data-export format):
+https://raw.githubusercontent.com/dmitryschab/stash_app/main/docs/api-application/sample-tiktok-export.json
+Save it to Files, then Library tab → Import button (arrow-down icon, top right) → "Submit TikTok
+export" → choose the file.
+Share extension: in the TikTok app, Share → Stash on any video; the link appears in Stash and is
+processed on the next launch.
+Account deletion: Library tab → gear (top right) → "Delete account". This deletes all server-side
+data and revokes the Sign in with Apple grant.
+
+5. EXTERNAL SERVICES
+- Sign in with Apple — the only authentication method.
+- Our own backend (Python/FastAPI) on a single Amazon EC2 instance in AWS eu-north-1 (Stockholm),
+  with Amazon SQS for the import queue; TLS via Caddy. Stores the saved-video list and its
+  derived text, keyed to the Apple user identifier.
+- AWS Bedrock (eu-central-1, Frankfurt) — language model that produces categories, titles,
+  summaries, recipe and track cards from captions and transcripts.
+- Groq (api.groq.com) — Whisper speech-to-text for the audio track of a saved video. Audio is
+  sent, transcribed and deleted; only the transcript is kept.
+- TikTok's official embed player (www.tiktok.com/embed/v2/<id>) inside a WKWebView restricted to
+  one video ID — used for playback only. No TikTok API or TikTok login is used in this version.
+- Apple Vision (on-device) — reads on-screen text from sampled frames; nothing leaves the device
+  for that step.
+- No analytics, crash-reporting, advertising or payment SDKs. Payment is the App Store price.
+Both cloud providers are named on the sign-in screen before anything leaves the device and in the
+privacy policy at https://stash.dmitrijs.dev/privacy.
+
+6. REGIONAL DIFFERENCES
+None. The app, its features and its content are identical in every region. Processing always
+happens in the EU regions listed above regardless of where the user is. The only regional element
+is the App Store price tier, which Apple sets per storefront.
+
+7. REGULATED INDUSTRY / PROTECTED MATERIAL
+Stash does not operate in a regulated industry and does not license or redistribute third-party
+material. The only third-party content is the videos a user has personally saved on TikTok, shown
+to that user alone through TikTok's own embedded player under TikTok's embed terms. Stash does
+not download, store or offer offline copies of videos to users (Guideline 5.2.3); the server
+fetches a video transiently to transcribe its audio and discards the file, and the on-screen text is
+read on the device from a transient stream that is likewise discarded. The app is an independent
+product and says so in its listing; it is not affiliated with TikTok or ByteDance.
+
+Contact: support@stash.dmitrijs.dev
+```
+
+The sample-export URL above only resolves once `docs/api-application/sample-tiktok-export.json` is
+pushed to `main`. The recording itself is `docs/api-application/stash-app-review-demo-2026-08-23.mp4`
+(2:21, 27 MB); it was produced by the XCUITest driver in the session scratchpad, not by hand.
+
+---
+
 ## 7. TestFlight
 
 Not a release phase any more — 1.0 goes straight to the App Store. TestFlight is still where the

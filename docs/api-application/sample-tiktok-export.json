@@ -1,0 +1,20 @@
+{
+  "Activity": {
+    "Favorite Videos": {
+      "FavoriteVideoList": [
+        {
+          "Date": "2026-08-01 12:00:00",
+          "Link": "https://www.tiktok.com/@tiktok/video/7676134473112489247"
+        },
+        {
+          "Date": "2026-08-02 12:00:00",
+          "Link": "https://www.tiktok.com/@tiktok/video/7675779662903069983"
+        },
+        {
+          "Date": "2026-08-03 12:00:00",
+          "Link": "https://www.tiktok.com/@tiktok/video/7675385273848450334"
+        }
+      ]
+    }
+  }
+}
