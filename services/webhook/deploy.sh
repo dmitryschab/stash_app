@@ -11,6 +11,10 @@ id stash >/dev/null 2>&1 || sudo useradd --system --home-dir /opt/stash-webhook 
 sudo mkdir -p /opt/stash-webhook
 sudo cp -- *.py /opt/stash-webhook/
 sudo cp -- requirements.txt stash-webhook.service stash-import-worker.service /opt/stash-webhook/
+# Not a .py, so the glob above misses it: stash_subscription.py reads this cert from its own
+# directory to verify StoreKit's signed blobs. Without it every receipt fails to verify and
+# the paywall locks out everyone who has paid.
+sudo cp -- AppleRootCA-G3.cer /opt/stash-webhook/
 
 [ -d /opt/stash-webhook/venv ] || sudo python3 -m venv /opt/stash-webhook/venv
 sudo /opt/stash-webhook/venv/bin/pip install --quiet --upgrade pip

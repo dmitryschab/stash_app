@@ -45,7 +45,16 @@ final class Subscription {
     /// The price as the App Store would print it, in the viewer's own storefront currency.
     /// Never hardcode "€2.99" into the UI — Apple rejects a paywall whose price disagrees with
     /// the one they are about to charge, and every storefront disagrees.
-    var displayPrice: String { product?.displayPrice ?? "" }
+    var displayPrice: String {
+        #if DEBUG
+        // `-showPaywall` runs with no App Store account and no StoreKit configuration (simctl
+        // cannot load one), so `product` never arrives and the screen would advertise a
+        // failure instead of a price. This is the price the product carries in App Store
+        // Connect; it exists so the paywall can be screenshotted for App Review.
+        if CommandLine.arguments.contains("-showPaywall"), product == nil { return "€2.99" }
+        #endif
+        return product?.displayPrice ?? ""
+    }
 
     // MARK: Lifecycle
 
@@ -69,6 +78,12 @@ final class Subscription {
 
     /// Fetch the product so the paywall can print a real price.
     func load() async {
+        #if DEBUG
+        // The screenshot path has no App Store account, and asking StoreKit for a product
+        // raises a sign-in sheet over the very screen being captured. `displayPrice` already
+        // supplies the price on this path.
+        if CommandLine.arguments.contains("-showPaywall") { return }
+        #endif
         do {
             product = try await Product.products(for: [Self.productID]).first
             loadFailed = product == nil

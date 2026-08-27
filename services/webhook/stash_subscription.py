@@ -36,6 +36,18 @@ PRODUCT_ID = "dev.dmitryschab.Stash.pro.monthly"
 # the paywall. Apple requires that; it is also the only decent way to treat them.
 LAST_PAID_BUILD = 24
 
+# The moment this gate went live on the box (2026-08-28). Every account that already existed
+# was created while Stash cost €5 up front, so every one of them has paid and must keep working
+# the instant this deploys — the alternative is locking real buyers out of an app they own,
+# with no build in their hands that could ever prove it.
+#
+# The cutoff is the deploy, not the price flip, so it can never let a genuinely free sign-up
+# through. A 1.0 buyer who signs up *after* this and never updates does hit the paywall once
+# the price goes free; updating is what fixes them, because build 25 sends the AppTransaction
+# that sets `lifetime` permanently. That is a free update and a one-tap fix, and it is the
+# only version of this rule with no hole in it.
+PAID_ERA_ENDS = 1787868604
+
 _ROOT_CA = Path(__file__).with_name("AppleRootCA-G3.cer")
 
 
@@ -123,6 +135,8 @@ def is_entitled(user: dict[str, Any] | None) -> bool:
     user = user or {}
     if user.get("demo") or user.get("lifetime"):
         return True
+    if 0 < int(user.get("createdAt", 0) or 0) < PAID_ERA_ENDS:
+        return True
     return int(user.get("subscriptionExpiresAt", 0) or 0) > int(time.time())
 
 
@@ -136,6 +150,10 @@ def selftest() -> bool:
     assert not is_entitled({"subscriptionExpiresAt": 0})
     assert not is_entitled({})
     assert not is_entitled(None)
+    # The paid era: an account that predates the gate bought the app at €5.
+    assert is_entitled({"createdAt": PAID_ERA_ENDS - 1})
+    assert not is_entitled({"createdAt": PAID_ERA_ENDS + 1})
+    assert not is_entitled({"createdAt": 0})
     assert _epoch_seconds(1_700_000_000_000) == 1_700_000_000
     assert _epoch_seconds(None) == 0
     assert _ROOT_CA.exists(), "AppleRootCA-G3.cer must ship beside this module"

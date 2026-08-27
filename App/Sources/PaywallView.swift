@@ -97,7 +97,7 @@ struct PaywallView: View {
     /// The period and the price, from StoreKit rather than from us.
     private var priceLine: some View {
         Group {
-            if store.loadFailed {
+            if store.loadFailed && store.displayPrice.isEmpty {
                 Text("The App Store is not answering right now. Check your connection and try again.")
                     .font(.archivo(13))
                     .foregroundStyle(Color.stashInk.opacity(0.6))
@@ -135,8 +135,18 @@ struct PaywallView: View {
             .frame(height: 52)
         }
         .buttonStyle(.plain)
-        .disabled(store.product == nil || store.isWorking)
-        .opacity(store.product == nil || store.isWorking ? 0.5 : 1)
+        .disabled(!canBuy || store.isWorking)
+        .opacity(!canBuy || store.isWorking ? 0.5 : 1)
+    }
+
+    /// True whenever there is something to buy. `-showPaywall` counts: that path exists to be
+    /// screenshotted, and a greyed-out button is not what the screen looks like in a real
+    /// store. DEBUG-only, so a Release build can only ever enable this with a real product.
+    private var canBuy: Bool {
+        #if DEBUG
+        if CommandLine.arguments.contains("-showPaywall") { return true }
+        #endif
+        return store.product != nil
     }
 
     /// Guideline 3.1.1: reachable without a fresh purchase, and it has to actually restore.
