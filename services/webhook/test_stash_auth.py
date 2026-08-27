@@ -65,10 +65,25 @@ def sign_in(client, apple, sub=USER_A, code=None):
     return client.post("/v1/auth/apple", json=body)
 
 
-def session(client, apple, table, sub=USER_A):
+def session(client, apple, table, sub=USER_A, entitled=True):
     response = sign_in(client, apple, sub, invite(table, f"STASH-{sub[-1].upper()*4}-CODE"))
     assert response.status_code == 200, response.text
+    if entitled:
+        # Since 1.1 every metered route 402s without a subscription, which would stop these
+        # tests at the paywall instead of at the thing they are about (isolation, quota,
+        # idempotency). Stamp the row the way a grandfathered 1.0 buyer's would be. The
+        # paywall itself is tested separately, below.
+        grant(table, sub)
     return response.json()
+
+
+def grant(table, sub=USER_A, **fields):
+    """Write an entitlement straight onto the user row, bypassing receipt verification."""
+    fields = fields or {"lifetime": True}
+    names = ", ".join(f"{key} = :{key}" for key in fields)
+    table.update_item(Key=stash_auth._user_key(stash_auth.user_id_for(sub)),
+                      UpdateExpression=f"SET {names}",
+                      ExpressionAttributeValues={f":{k}": v for k, v in fields.items()})
 
 
 def auth(token):
@@ -529,3 +544,90 @@ def test_export_only_covers_the_calling_user(table, apple):
         client.post("/v1/imports", headers=auth(b["token"]), json=payload())
         exported = client.get("/v1/me/export", headers=auth(a["token"])).json()
     assert all(item["PK"] == f"INSTALL#{a['userID']}" for item in exported["items"])
+
+
+# ---------------------------------------------------------------- the paywall
+#
+# 1.1 is free to download, so these are the tests that stand where the €5 price used to.
+# Every one of them asserts about money leaving the building.
+
+
+def test_a_new_account_cannot_spend_anything(table, apple):
+    """The whole point: signing in is free, spending is not."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        assert body["entitled"] is False
+        refused = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+    assert refused.status_code == 402
+    # Distinct from an exhausted quota: the client shows a paywall for one and a counter
+    # for the other, and it tells them apart by this string.
+    assert refused.json()["detail"] == "subscription required"
+
+
+def test_a_subscription_opens_the_metered_routes(table, apple):
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        grant(table, USER_A, subscriptionExpiresAt=int(time.time()) + 3600)
+        accepted = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+        assert client.get("/v1/me", headers=auth(body["token"])).json()["entitled"] is True
+    assert accepted.status_code == 202
+
+
+def test_a_lapsed_subscription_closes_them_again(table, apple):
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        grant(table, USER_A, subscriptionExpiresAt=int(time.time()) - 1)
+        refused = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+        assert client.get("/v1/me", headers=auth(body["token"])).json()["entitled"] is False
+    assert refused.status_code == 402
+
+
+def test_a_lapsed_subscriber_can_still_collect_work_already_paid_for(table, apple):
+    """Submitting costs money; reading the results of a finished import does not. Taking
+    the library hostage the moment a card expires would be both rude and a refund magnet."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A)
+        import_id = client.post("/v1/imports", headers=auth(body["token"]),
+                                json=payload()).json()["importID"]
+        grant(table, USER_A, lifetime=False, subscriptionExpiresAt=0)
+        status = client.get(f"/v1/imports/{import_id}", headers=auth(body["token"]))
+        results = client.get(f"/v1/imports/{import_id}/results", headers=auth(body["token"]))
+        blocked = client.post("/v1/imports", headers=auth(body["token"]),
+                              json=payload(client_import_id="22222222-2222-4222-8222-222222222222"))
+    assert status.status_code == 200
+    assert results.status_code == 200
+    assert blocked.status_code == 402
+
+
+def test_a_demo_account_never_meets_the_paywall(table, apple):
+    """App Review redeems a --demo code. A reviewer who lands on a checkout they cannot
+    complete is a 2.1 rejection, so demo accounts are entitled by definition."""
+    with TestClient(app) as client:
+        body = sign_in(client, apple, USER_A, invite(table, "STASH-DEMO-CODE", demo=True)).json()
+        assert body["demo"] is True and body["entitled"] is True
+        accepted = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+    assert accepted.status_code == 202
+
+
+def test_a_paid_1_0_owner_keeps_the_app_they_bought(table, apple):
+    """`lifetime` is what grandfathering writes. It outranks any subscription state."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        grant(table, USER_A, lifetime=True, subscriptionExpiresAt=0)
+        accepted = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+    assert accepted.status_code == 202
+
+
+def test_an_unverifiable_receipt_is_refused_and_grants_nothing(table, apple):
+    """The blob is not a claim, it is evidence. Garbage in gets a 400, not an entitlement."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        posted = client.post("/v1/me/subscription", headers=auth(body["token"]),
+                             json={"signedTransaction": "not.a.jws"})
+        assert client.get("/v1/me", headers=auth(body["token"])).json()["entitled"] is False
+    assert posted.status_code == 400
+
+
+def test_the_entitlement_predicate_holds():
+    import stash_subscription
+    assert stash_subscription.selftest()

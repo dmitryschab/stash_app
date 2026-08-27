@@ -1,9 +1,14 @@
 """Authenticated asynchronous cloud-import API routes.
 
-Every route here resolves the caller through `stash_auth.user_store`, which is the only
-constructor for a `DynamoImportStore`. There is no shared token and no unscoped store, so
-an import id from another account is simply absent from the caller's partition — the old
-`GET /v1/imports/{id}` IDOR cannot be reconstructed by any code path in this file.
+Every route here resolves the caller through `stash_auth.user_store` or its paying sibling
+`entitled_store`, which are the only constructors for a `DynamoImportStore`. There is no
+shared token and no unscoped store, so an import id from another account is simply absent
+from the caller's partition — the old `GET /v1/imports/{id}` IDOR cannot be reconstructed by
+any code path in this file.
+
+Submitting an import spends money, so it takes `entitled_store` and 402s without a
+subscription. Reading a status or a result page does not, and takes `user_store`: work
+already paid for stays collectable after a subscription lapses.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from cloud_import_models import CreateImportRequest, CreateImportResponse, ImportStatus, ResultPage
 from cloud_import_queue import SQSImportQueue
 from cloud_import_store import DynamoImportStore
-from stash_auth import quota_exhausted, user_store
+from stash_auth import entitled_store, quota_exhausted, user_store
 
 
 router = APIRouter(prefix="/v1")
@@ -26,7 +31,7 @@ def get_queue() -> SQSImportQueue:
 @router.post("/imports", response_model=CreateImportResponse, response_model_by_alias=True, status_code=202)
 def create_import(
     body: CreateImportRequest,
-    store: DynamoImportStore = Depends(user_store),
+    store: DynamoImportStore = Depends(entitled_store),
     queue: SQSImportQueue = Depends(get_queue),
 ):
     # Charge one unit per accepted video, but only on a genuine first submission — the

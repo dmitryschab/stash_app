@@ -1,0 +1,56 @@
+{
+  "identifier" : "A1B2C3D4",
+  "nonRenewingSubscriptions" : [
+  ],
+  "products" : [
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6789977520",
+    "_developerTeamID" : "S76KJ8Y6C3",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 776000000,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21690001",
+      "localizations" : [
+      ],
+      "name" : "Stash Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+          ],
+          "codeOffers" : [
+          ],
+          "displayPrice" : "2.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6752100001",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Recipes, track lists and searchable transcripts for everything you save on TikTok.",
+              "displayName" : "Stash Pro",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "dev.dmitryschab.Stash.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Stash Pro Monthly",
+          "subscriptionGroupID" : "21690001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

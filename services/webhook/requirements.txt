@@ -4,6 +4,9 @@ requests
 pydantic
 pyjwt        # Apple identity-token verification and Stash session tokens
 cryptography # the RS256/ES256 backend PyJWT needs for Apple's keys
+app-store-server-library  # Apple's own verifier for StoreKit JWS blobs — the paywall's teeth.
+                          # Hand-rolling x5c chain validation against Apple's root is the one
+                          # place in this service where being clever is how you lose the money.
 aws-bedrock-token-generator
 yt-dlp
 curl_cffi  # gives yt-dlp a browser impersonation target; without it TikTok fetches fail intermittently

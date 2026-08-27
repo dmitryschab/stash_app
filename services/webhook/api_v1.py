@@ -33,7 +33,7 @@ from pydantic import BaseModel
 
 import stash_secrets
 from cloud_import_store import DynamoImportStore
-from stash_auth import peek_quota, user_store
+from stash_auth import entitled_store, peek_quota
 
 router = APIRouter(prefix="/v1")
 
@@ -146,7 +146,7 @@ def filter_transcript(lines: list[str]) -> str:
 
 
 @router.post("/videos/transcript")
-def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends(user_store)):
+def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends(entitled_store)):
     groq_key = _groq_key()
     if not groq_key:
         raise HTTPException(status_code=503, detail="transcription not configured")
@@ -292,7 +292,7 @@ def analyze_metadata(metadata: dict) -> dict:
 
 
 @router.post("/chat/completions")
-def chat_completions(body: dict, store: DynamoImportStore = Depends(user_store)):
+def chat_completions(body: dict, store: DynamoImportStore = Depends(entitled_store)):
     if len(json.dumps(body)) > CHAT_MAX_BYTES:
         raise HTTPException(status_code=413, detail="request too large")
     peek_quota(store)  # 402 before spending Bedrock money
@@ -329,7 +329,7 @@ def chat_completions(body: dict, store: DynamoImportStore = Depends(user_store))
 # ---------------------------------------------------------------- transient media
 
 @router.get("/tiktok/download/{video_id}")
-def tiktok_download(video_id: str, store: DynamoImportStore = Depends(user_store)):
+def tiktok_download(video_id: str, store: DynamoImportStore = Depends(entitled_store)):
     """mp4 bytes for the app's visual-text OCR backfill, which samples frames and deletes
     the file immediately. No persistent offline copy is served or kept anywhere."""
     if not re.fullmatch(r"\d{5,25}", video_id):

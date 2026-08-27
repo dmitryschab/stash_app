@@ -60,6 +60,14 @@ final class StashSession {
     /// sample library off it. Kept in the Keychain blob alongside the tokens so it is known
     /// the instant `state` flips, rather than one /v1/me round trip later.
     private(set) var isDemoAccount = false
+    /// Whether the server will let this account spend money — a live subscription, a
+    /// grandfathered 1.0 purchase, or a demo account. Cached in the Keychain alongside the
+    /// tokens so a returning subscriber does not get a frame of paywall on every cold launch;
+    /// `Subscription` re-posts the real StoreKit state moments later and corrects it.
+    ///
+    /// Advisory on this side. The server re-checks on every metered route, so nothing is
+    /// unlocked by lying to this property — the app just gets 402s instead of a paywall.
+    private(set) var isEntitled = false
     var lastAuthError: String?
 
     var isSignedIn: Bool { if case .signedIn = state { return true }; return false }
@@ -94,6 +102,9 @@ final class StashSession {
         #if DEBUG
         // The seeded simulator smoke run has no server and no Apple ID — let it through.
         if Self.isSmokeRun {
+            // No server, no App Store, no receipts — screenshot and XCUITest runs need the
+            // shell, not a checkout they cannot complete.
+            isEntitled = true
             state = .signedIn(userID: "simulator")
             return
         }
@@ -113,6 +124,7 @@ final class StashSession {
         }
         self.stored = stored
         isDemoAccount = stored.demo == true
+        isEntitled = stored.entitled == true
         state = .signedIn(userID: stored.userID)
         await refreshQuota()
     }
@@ -149,6 +161,9 @@ final class StashSession {
         stored = nil
         quota = nil
         isDemoAccount = false
+        // Not carried across accounts: the next Apple ID to sign in on this device has its
+        // own subscription, or none, and inheriting this one would hand it the app for free.
+        isEntitled = false
         state = .signedOut
     }
 
@@ -205,13 +220,15 @@ final class StashSession {
     private func apply(_ response: AuthResponse, appleUserID: String, userID: String) {
         // Both /auth routes report `demo`; `??` only covers a server older than build 14.
         isDemoAccount = response.demo ?? isDemoAccount
+        isEntitled = response.entitled ?? isEntitled
         let session = StoredSession(
             appleUserID: appleUserID,
             userID: userID,
             token: response.token,
             expiresAt: Date(timeIntervalSince1970: TimeInterval(response.expiresAt)),
             refreshToken: response.refreshToken,
-            demo: isDemoAccount)
+            demo: isDemoAccount,
+            entitled: isEntitled)
         StashKeychain.save(session)
         stored = session
         state = .signedIn(userID: userID)
@@ -228,10 +245,55 @@ final class StashSession {
             // /v1/me is the only place a reinstall can learn this: the Keychain went with
             // the old install, so the restored session may not carry the flag yet.
             if let demo = me.demo { isDemoAccount = demo }
+            if let entitled = me.entitled { setEntitled(entitled) }
         } catch {
             // A stale counter is not worth a visible error; the next quota-carrying call fixes it.
             NSLog("StashSession: quota refresh failed: %@", String(describing: error))
         }
+    }
+
+    // MARK: Entitlement
+
+    /// Hand the box whatever StoreKit signed and take its answer as the truth.
+    ///
+    /// Called on launch, after a purchase and after a restore. Both blobs are optional and
+    /// sending neither is a legitimate outcome — it means this Apple ID has nothing, which
+    /// is precisely what the server should record. Verification happens there, against
+    /// Apple's root CA; nothing this method sends is trusted on the strength of having been
+    /// sent by us.
+    @discardableResult
+    func syncEntitlement(signedTransaction: String?, signedAppTransaction: String?) async -> Bool {
+        guard isSignedIn else { return isEntitled }
+        do {
+            let response: SubscriptionResponse = try await authorized(
+                path: "me/subscription", method: "POST",
+                body: SubscriptionRequest(signedTransaction: signedTransaction,
+                                          signedAppTransaction: signedAppTransaction))
+            setEntitled(response.entitled)
+        } catch {
+            // Offline on launch must not lock a paying subscriber out of their own library:
+            // keep the cached answer and let the next launch, or the next 402, settle it.
+            NSLog("StashSession: entitlement sync failed: %@", String(describing: error))
+        }
+        return isEntitled
+    }
+
+    /// The server said 402 on a metered route. Drop the cached yes so the paywall appears
+    /// without waiting for a relaunch.
+    func entitlementRefused() {
+        setEntitled(false)
+    }
+
+    private func setEntitled(_ value: Bool) {
+        isEntitled = value
+        // Re-save so the next cold launch opens on the library rather than the paywall.
+        guard let stored, stored.entitled != value else { return }
+        let updated = StoredSession(
+            appleUserID: stored.appleUserID, userID: stored.userID, token: stored.token,
+            expiresAt: stored.expiresAt, refreshToken: stored.refreshToken,
+            demo: stored.demo, entitled: value)
+        StashKeychain.save(updated)
+        self.stored = updated
     }
 
     /// Deletes every server-side item for this user, then wipes the local session. The caller
@@ -288,12 +350,17 @@ final class StashSession {
 
     /// Authenticated call through the shared funnel, so /v1/me inherits the same one-shot
     /// 401 refresh as every other route.
-    private func authorizedData(path: String, method: String) async throws -> Data {
+    private func authorizedData(path: String, method: String,
+                                body: (some Encodable)? = Optional<Never>.none) async throws -> Data {
         guard let base = Self.baseURL else { throw StashSessionError.transport("bad base URL") }
         guard isSignedIn else { throw StashSessionError.notSignedIn }
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 60
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(body)
+        }
 
         let data: Data
         let http: HTTPURLResponse
@@ -311,8 +378,11 @@ final class StashSession {
         return data
     }
 
-    private func authorized<T: Decodable>(path: String, method: String) async throws -> T {
-        let data = try await authorizedData(path: path, method: method)
+    private func authorized<T: Decodable>(
+        path: String, method: String,
+        body: (some Encodable)? = Optional<Never>.none
+    ) async throws -> T {
+        let data = try await authorizedData(path: path, method: method, body: body)
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
@@ -340,12 +410,23 @@ final class StashSession {
         let userID: String?
         let quota: Quota?
         let demo: Bool?
+        let entitled: Bool?
     }
 
     private struct MeResponse: Decodable {
         let userID: String
         let quota: Quota?
         let demo: Bool?
+        let entitled: Bool?
+    }
+
+    private struct SubscriptionRequest: Encodable {
+        let signedTransaction: String?
+        let signedAppTransaction: String?
+    }
+
+    private struct SubscriptionResponse: Decodable {
+        let entitled: Bool
     }
 
     #if DEBUG
@@ -357,6 +438,7 @@ final class StashSession {
 
     /// Lets SwiftUI previews render the tab shell instead of the gate.
     static func signInForPreview() {
+        shared.isEntitled = true
         shared.state = .signedIn(userID: "preview")
     }
     #endif
@@ -415,4 +497,8 @@ private struct StoredSession: Codable {
     /// Optional so a blob written by build ≤13 still decodes — a non-optional `Bool` would
     /// fail the whole item and sign every upgrading user out.
     let demo: Bool?
+    /// Same reasoning, one release later: blobs written by build ≤24 predate the paywall.
+    /// `nil` reads as "not entitled", which fails closed — the worst case is one paywall
+    /// frame before `Subscription` posts the real receipt.
+    let entitled: Bool?
 }

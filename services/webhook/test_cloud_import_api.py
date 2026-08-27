@@ -97,6 +97,10 @@ def dependencies():
     queue = FakeQueue()
     app.dependency_overrides[stash_auth.current_user] = lambda: USER_ID
     app.dependency_overrides[stash_auth.user_store] = lambda: store
+    # The metered routes take `entitled_store`, not `user_store` — same object,
+    # plus the subscription check. Overriding only one leaves the real one calling
+    # Dynamo. The paywall has its own tests in test_stash_auth.py.
+    app.dependency_overrides[stash_auth.entitled_store] = lambda: store
     app.dependency_overrides[cloud_import_api.get_queue] = lambda: queue
     yield store, queue
     app.dependency_overrides.clear()

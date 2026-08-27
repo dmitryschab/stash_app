@@ -47,6 +47,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import Field
 
 import stash_secrets
+import stash_subscription
 from cloud_import_models import ContractModel
 from cloud_import_store import DynamoImportStore, _is_conditional_failure, shared_table
 
@@ -276,6 +277,32 @@ def user_store(user_id: str = Depends(current_user)) -> DynamoImportStore:
     return DynamoImportStore(table=shared_table(), user_id=user_id)
 
 
+def entitled_store(user_id: str = Depends(current_user)) -> DynamoImportStore:
+    """A store for a caller who is allowed to spend money, or 402.
+
+    Every route that reaches Bedrock, Groq or yt-dlp takes this one instead of `user_store`.
+    It is a separate dependency rather than a check inside `peek_quota` on purpose: the store
+    a metered route holds *is* the entitled store, so there is no version of that route that
+    compiles without the check having run. Since 1.1 the app is free to download, and this is
+    the whole of what stops a stranger signing in and spending our money.
+    """
+    user = _get_user(shared_table(), user_id)
+    if not stash_subscription.is_entitled(user):
+        raise SubscriptionRequired()
+    return DynamoImportStore(table=shared_table(), user_id=user_id)
+
+
+class SubscriptionRequired(HTTPException):
+    """402, and deliberately the same status as an exhausted quota — both mean "this costs
+    money and you have none". The client tells them apart by `detail`: "quota exhausted"
+    shows the counter and the reset date, this one shows the paywall. A plain HTTPException
+    subclass, so app.py needs no handler for it.
+    """
+
+    def __init__(self):
+        super().__init__(status_code=402, detail="subscription required")
+
+
 class QuotaExhausted(Exception):
     """402. A plain HTTPException cannot express this: FastAPI always renders the body as
     {"detail": ...}, and the contract wants "detail" and "quota" as siblings at the top
@@ -401,7 +428,8 @@ class RefreshRequest(ContractModel):
     refresh_token: str = Field(alias="refreshToken", min_length=1, max_length=256)
 
 
-def _session_response(table, user_id: str, *, include_user_id: bool, demo: bool) -> dict[str, Any]:
+def _session_response(table, user_id: str, *, include_user_id: bool, demo: bool,
+                      entitled: bool) -> dict[str, Any]:
     token, expires_at = mint_stash_jwt(user_id)
     quota = DynamoImportStore(table=table, user_id=user_id).get_quota()
     body = {
@@ -412,6 +440,10 @@ def _session_response(table, user_id: str, *, include_user_id: bool, demo: bool)
         # Rides on refresh as well as sign-in: the client keeps this in its session, and a
         # session that rotated its way out of the flag would stop being a demo account.
         "demo": demo,
+        # Saves the app a round trip before it knows whether to draw the paywall. Advisory
+        # only — the server re-checks on every metered route, so a client that lies about
+        # this gets a 402 the moment it tries to spend anything.
+        "entitled": entitled,
     }
     if include_user_id:
         body["userID"] = user_id
@@ -459,7 +491,10 @@ def auth_apple(body: AppleAuthRequest):
                 UpdateExpression="SET appleRefreshToken = :token",
                 ExpressionAttributeValues={":token": apple_refresh},
             )
-    return _session_response(table, user_id, include_user_id=True, demo=demo)
+    # Re-read rather than trusting `demo`: a returning subscriber's entitlement is on the row,
+    # and a brand-new account has none until it posts a transaction to /v1/me/subscription.
+    return _session_response(table, user_id, include_user_id=True, demo=demo,
+                             entitled=stash_subscription.is_entitled(_get_user(table, user_id)))
 
 
 @router.post("/auth/refresh")
@@ -477,7 +512,8 @@ def auth_refresh(body: RefreshRequest):
     # Revoke before issuing: a crash in between logs the user out, which fails closed.
     if not revoke_refresh_token(table, user_id, digest):
         raise _unauthorized()
-    return _session_response(table, user_id, include_user_id=False, demo=bool(user.get("demo")))
+    return _session_response(table, user_id, include_user_id=False, demo=bool(user.get("demo")),
+                             entitled=stash_subscription.is_entitled(user))
 
 
 @router.get("/me")
@@ -492,7 +528,56 @@ def get_me(user_id: str = Depends(current_user)):
         # Repeated here so a reinstall that restores a session from the Keychain still
         # learns it is a demo account without waiting for the next token rotation.
         "demo": bool(user.get("demo")),
+        "entitled": stash_subscription.is_entitled(user),
+        "subscriptionExpiresAt": int(user.get("subscriptionExpiresAt", 0) or 0),
     }
+
+
+class SubscriptionRequest(ContractModel):
+    """Whatever StoreKit 2 had to offer. Both are optional and both are JWS blobs Apple
+    signed: a subscriber has the transaction, someone who bought 1.0 outright has only the
+    AppTransaction, and an app posting on a cold launch may have neither — which is itself
+    the answer, and drops the account back to unentitled."""
+
+    signed_transaction: str | None = Field(alias="signedTransaction", default=None,
+                                           max_length=16384)
+    signed_app_transaction: str | None = Field(alias="signedAppTransaction", default=None,
+                                               max_length=16384)
+
+
+@router.post("/me/subscription")
+def put_subscription(body: SubscriptionRequest, user_id: str = Depends(current_user)):
+    """Record what Apple says this account is entitled to.
+
+    The app posts here on launch, after a purchase and after a restore. Everything it sends
+    is verified against Apple's root CA before it is written, so the worst a hostile client
+    can do is send nothing — and nothing means no entitlement.
+    """
+    table = shared_table()
+    try:
+        fields = stash_subscription.entitlement(
+            signed_transaction=body.signed_transaction,
+            signed_app_transaction=body.signed_app_transaction,
+        )
+    except Exception as error:
+        # A blob that fails verification is not a server fault and must not read as one.
+        log.warning("subscription verification failed for %s: %s", user_id, error)
+        raise HTTPException(status_code=400, detail="could not verify that receipt")
+
+    # `lifetime` is sticky: an owner of the paid 1.0 who later reinstalls onto a device whose
+    # AppTransaction we cannot read must not lose what they bought.
+    expression = "SET subscriptionExpiresAt = :expires"
+    values: dict[str, Any] = {":expires": fields["subscriptionExpiresAt"]}
+    if fields["lifetime"]:
+        expression += ", lifetime = :lifetime"
+        values[":lifetime"] = True
+    table.update_item(Key=_user_key(user_id), UpdateExpression=expression,
+                      ExpressionAttributeValues=values)
+
+    user = _get_user(table, user_id)
+    return {"entitled": stash_subscription.is_entitled(user),
+            "subscriptionExpiresAt": fields["subscriptionExpiresAt"],
+            "lifetime": bool((user or {}).get("lifetime"))}
 
 
 @router.delete("/me", status_code=204)

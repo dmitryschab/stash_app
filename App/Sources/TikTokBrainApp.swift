@@ -112,19 +112,55 @@ struct RootView: View {
     // Observes import progress so the sync pill shows on every tab, not just Import.
     private var center = PipelineCenter.shared
     private var session = StashSession.shared
+    private var subscription = Subscription.shared
     @Environment(\.modelContext) private var context
 
     var body: some View {
         Group {
-            switch session.state {
-            case .unknown: splash
-            case .signedOut: SignInView()
-            case .signedIn: tabShell
+            if Self.forcesPaywall {
+                PaywallView()
+            } else {
+                switch session.state {
+                case .unknown: splash
+                case .signedOut: SignInView()
+                case .signedIn: paidShell
+                }
             }
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .task { await session.restore() }
     }
+
+    /// The second gate. Signed in is not the same as paid for since 1.1: the app is free to
+    /// download and a €2.99/month subscription is what opens it.
+    ///
+    /// The splash in the middle branch matters more than it looks. `isEntitled` restores from
+    /// the Keychain, so a subscriber usually lands straight on `tabShell` — but a reinstall
+    /// has no cached answer, and showing a checkout to somebody who already pays, for the
+    /// second it takes StoreKit to reply, is the worst frame this app could draw.
+    private var paidShell: some View {
+        Group {
+            if session.isEntitled {
+                tabShell
+            } else if subscription.hasSynced {
+                PaywallView()
+            } else {
+                splash
+            }
+        }
+        .task { subscription.start() }
+    }
+
+    /// `-showPaywall` renders the checkout with no account and no receipt — the only way to
+    /// screenshot it or eyeball it in the simulator, where there is neither. It sits above the
+    /// sign-in switch, not inside `paidShell`, because reaching `paidShell` needs the very
+    /// account this flag exists to do without. DEBUG-only: a Release build has no path to the
+    /// paywall except by genuinely not having paid.
+    #if DEBUG
+    private static var forcesPaywall: Bool { CommandLine.arguments.contains("-showPaywall") }
+    #else
+    private static let forcesPaywall = false
+    #endif
 
     /// Shown for the moment it takes to read the Keychain — flashing the sign-in gate at an
     /// already-signed-in user on every cold launch would be worse than a blank beat.

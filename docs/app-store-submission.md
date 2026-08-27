@@ -588,3 +588,71 @@ Screenshots must show the app as submitted, so capture from a **Release** build 
   cannot be done first. Known and accepted; see the launch-decisions memory.
 - Nothing on the public site or in the listing may call Stash a beta or call it free. Re-read the
   promotional text and the description against that rule every time either is edited.
+
+---
+
+## 12. Version 1.1 — the payment model becomes a subscription
+
+Decided 2026-08-28, after 1.0 shipped. Stash stops being a €5 one-off and becomes **free to
+download with Stash Pro, an auto-renewing subscription at €2.99/month**. No free trial, and the
+subscription gates the whole app: the paywall renders straight after Sign in with Apple.
+
+Version **1.1, build 25** (`App/project.yml`, both targets).
+
+### Why this changes more than a price tier
+
+Until 1.0 the App Store price *was* the access control — nobody could reach an authenticated
+route without paying first. A free download deletes that, so 1.1 has a real entitlement system:
+
+| Piece | Where | What it does |
+|---|---|---|
+| `Subscription.swift` | app | StoreKit 2: loads the product, buys, restores, listens to `Transaction.updates`, forwards signed JWS blobs to the box. Decides nothing. |
+| `PaywallView.swift` | app | The 3.1.2 checklist — period, StoreKit's own price, renewal terms, Terms + Privacy links, Restore. Plus sign-out and delete-account, without which a non-subscriber has no route to 5.1.1(v). |
+| `stash_subscription.py` | box | Verifies both blobs against Apple Root CA G3 (`app-store-server-library`). Local — no App Store Server API key, no call to Apple. |
+| `entitled_store` | `stash_auth.py` | The money boundary. Every route that reaches Bedrock, Groq or yt-dlp takes it instead of `user_store` and 402s `"subscription required"` without an entitlement. |
+
+Entitlement = a live subscription **or** `lifetime` **or** a demo account. Reading a finished
+import's status and results stays on `user_store`: work already paid for survives a lapse.
+
+### Grandfathering
+
+Anyone who bought the paid 1.0 keeps it forever. `AppTransaction.originalApplicationVersion`
+holds the build number of their first download; `≤ 24` (`LAST_PAID_BUILD`) writes a sticky
+`lifetime` flag on the user row. Production-only — sandbox and TestFlight report `"1.0"`, which
+would otherwise hand every App Review tester a free pass and leave the paywall never exercised
+by the one person who must see it work.
+
+### Reviewer access
+
+Unchanged and now load-bearing: the `--demo` code entitles the account server-side, so a reviewer
+who redeems it never meets a checkout. Say so in the App Review notes — a paywall a reviewer
+cannot pass is a 2.1 rejection.
+
+### Still open
+
+| # | Item | Where |
+|---|---|---|
+| 1 | **Subscription price €2.99** — the API refused `POST /v1/subscriptionPrices` (`ENTITY_ERROR.RELATIONSHIP.INVALID`) for every price-point/territory combination tried. One dropdown in the UI. | ASC → Subscriptions → Stash Pro → Subscription Prices |
+| 2 | **Review screenshot** for the subscription (required; it is why the product reads `MISSING_METADATA`) | same page |
+| 3 | **Do NOT flip the app price to Free yet.** Free + a build with no paywall = the app is simply free. Ship 1.1, wait for it to go live, *then* set the price to Free. | ASC → Pricing and Availability |
+| 4 | Legal pages redeploy — `terms.html` §"Paying for Stash" was rewritten and dated 28 August 2026 | `services/webhook/site/` |
+| 5 | Backend redeploy — `requirements.txt` gained `app-store-server-library`, and `AppleRootCA-G3.cer` must ship beside `stash_subscription.py` | `deploy.sh` |
+
+Created for 1.1: subscription group `22340161` ("Stash Pro"), subscription `6806036250`,
+product id `dev.dmitryschab.Stash.pro.monthly`, one month, not family-shareable.
+
+### Testing it
+
+`App/Stash.storekit` is wired into the scheme, so the paywall buys and restores in the simulator
+with no App Store Connect round trip. `-showPaywall` renders the checkout with no account at all,
+which is how it gets screenshotted. Both are Debug-only by construction.
+
+### Order of operations
+
+1. Deploy the backend (new dependency + root cert), then the site.
+2. Set the €2.99 price and upload the subscription review screenshot.
+3. Archive and upload build 25.
+4. Submit 1.1 **with** the subscription — a new subscription is reviewed alongside a version, not on its own.
+5. When 1.1 is live: set the app price to **Free**. Not before.
+6. Re-check the listing copy against the beta/free rule (§11) — the word "free" is now true of the
+   download and must still never appear where a TikTok reviewer reads it.

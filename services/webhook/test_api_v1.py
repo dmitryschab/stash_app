@@ -24,6 +24,10 @@ def store(monkeypatch):
     subject = DynamoImportStore(table=ConditionalTable(), user_id="user-a")
     app.dependency_overrides[stash_auth.current_user] = lambda: "user-a"
     app.dependency_overrides[stash_auth.user_store] = lambda: subject
+    # The metered routes take `entitled_store`, not `user_store` — same object,
+    # plus the subscription check. Overriding only one leaves the real one calling
+    # Dynamo. The paywall has its own tests in test_stash_auth.py.
+    app.dependency_overrides[stash_auth.entitled_store] = lambda: subject
     yield subject
     app.dependency_overrides.clear()
 
