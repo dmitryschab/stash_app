@@ -16,6 +16,7 @@ import cloud_import_api
 import manage_invites
 import stash_auth
 import stash_secrets
+import stash_subscription
 from app import app
 from conftest import ConditionalTable
 
@@ -45,6 +46,11 @@ def table(monkeypatch, apple):
         "fetched_at": time.monotonic(),
         "attempted_at": time.monotonic(),
     })
+    # The paid-era grandfather is a calendar transition: every account a test creates is made
+    # "now", which is inside the window, so leaving it on would silently entitle every account
+    # in this file and quietly disarm the paywall tests. Off by default; the rule has its own
+    # tests below that set the cutoff explicitly.
+    monkeypatch.setattr(stash_subscription, "PAID_ERA_ENDS", 0)
     app.dependency_overrides[cloud_import_api.get_queue] = FakeQueue
     yield fake
     app.dependency_overrides.clear()
@@ -631,3 +637,25 @@ def test_an_unverifiable_receipt_is_refused_and_grants_nothing(table, apple):
 def test_the_entitlement_predicate_holds():
     import stash_subscription
     assert stash_subscription.selftest()
+
+
+def test_an_account_from_the_paid_era_is_entitled_without_a_receipt(table, apple, monkeypatch):
+    """Build 24 has no StoreKit in it, so a €5 buyer cannot prove anything. The cutoff is what
+    stops the paywall locking them — and everyone who grabs build 24 while it is briefly free —
+    out of an app that would 402 on every tap."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        monkeypatch.setattr(stash_subscription, "PAID_ERA_ENDS", int(time.time()) + 3600)
+        accepted = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+        assert client.get("/v1/me", headers=auth(body["token"])).json()["entitled"] is True
+    assert accepted.status_code == 202
+
+
+def test_the_paid_era_closes(table, apple, monkeypatch):
+    """After the window, a fresh account is just a fresh account."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        monkeypatch.setattr(stash_subscription, "PAID_ERA_ENDS", 1)
+        refused = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+    assert refused.status_code == 402
+    assert refused.json()["detail"] == "subscription required"

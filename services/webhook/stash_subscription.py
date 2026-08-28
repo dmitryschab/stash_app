@@ -36,17 +36,17 @@ PRODUCT_ID = "dev.dmitryschab.Stash.pro.monthly"
 # the paywall. Apple requires that; it is also the only decent way to treat them.
 LAST_PAID_BUILD = 24
 
-# The moment this gate went live on the box (2026-08-28). Every account that already existed
-# was created while Stash cost €5 up front, so every one of them has paid and must keep working
-# the instant this deploys — the alternative is locking real buyers out of an app they own,
-# with no build in their hands that could ever prove it.
+# Accounts created before this are entitled outright. Two groups are inside it, and both have
+# to be: everyone who bought Stash at €5 while 1.0 was the paid app, and everyone who downloads
+# the still-live build 24 during the window between the price going Free and 1.1 replacing it
+# on the store. Build 24 has no StoreKit in it at all, so neither group can prove anything —
+# a shorter cutoff would leave real people holding an app that 402s on every tap.
 #
-# The cutoff is the deploy, not the price flip, so it can never let a genuinely free sign-up
-# through. A 1.0 buyer who signs up *after* this and never updates does hit the paywall once
-# the price goes free; updating is what fixes them, because build 25 sends the AppTransaction
-# that sets `lifetime` permanently. That is a free update and a one-tap fix, and it is the
-# only version of this rule with no hole in it.
-PAID_ERA_ENDS = 1787868604
+# 2026-09-18, three weeks out: long enough to cover review and release, short enough that it
+# is not a standing giveaway. It has to be a date and not "when the price flips", because the
+# box cannot see the price. Once 1.1 is live this stops mattering — build 25 sends the
+# AppTransaction that sets `lifetime` permanently for anyone who genuinely bought 1.0.
+PAID_ERA_ENDS = 1789683004
 
 _ROOT_CA = Path(__file__).with_name("AppleRootCA-G3.cer")
 
