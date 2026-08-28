@@ -7,15 +7,18 @@
 //
 //   TranscriberClient → POST {base}/audio/transcriptions  (Whisper, multipart upload)
 //   AnalyzerClient    → POST {base}/chat/completions        (structured JSON output → Analysis)
+//
+// `BoxEmbeddingClient` (its own file) is the third and shares the two helpers below, which is
+// why they are internal rather than private to this file.
 
 import Foundation
 
 // MARK: - Shared box networking
 
 /// Cold-model loads on the box can be slow; allow a generous per-request timeout.
-private let boxRequestTimeout: TimeInterval = 30
+let boxRequestTimeout: TimeInterval = 30
 
-private enum BoxHTTP {
+enum BoxHTTP {
     /// URLSession transport errors that indicate the box/tailnet is not reachable.
     static func mapTransportError(_ error: Error) -> Error {
         guard let urlError = error as? URLError else { return error }
@@ -164,48 +167,13 @@ public struct AnalyzerClient: Analyzing {
         return request
     }
 
-    /// Instructs the model to emit exactly the `Analysis` JSON shape.
-    static let systemPrompt = """
-    You classify a short video into a single strict JSON object. Respond with ONLY the JSON \
-    object, no prose and no Markdown code fences. Use this exact shape:
-    {
-      "category": "recipe" | "fitness" | "style" | "travel" | "home" | "learning" | "comedy" | "music" | "coding" | "other",
-      "title": string,
-      "summary": string,
-      "topics": [string],            // short lowercase topic keywords
-      "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
-      "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
-      "code": { "summary": string, "links": [string], "techTags": [string] } | null
-    }
-    Only recipe, music and coding carry a payload; fill the one matching the chosen category \
-    and leave the others empty. For every other category (fitness, style, travel, home, \
-    learning, comedy, other) set recipe and code to null and "music" to []. Never include a \
-    "link" field; the app resolves streaming links separately. If information is missing, use \
-    empty strings or empty arrays rather than inventing details.
-    Rules (validated on an 855-video run — see pipeline-lab/PROMPT.md):
-    - Captions and transcripts may be in any language; ALWAYS answer in English. \
-    Title max 60 characters.
-    - Classify from caption hashtags even when the transcript is empty: #linux #arch \
-    #selfhosted #homelab #docker #python #react #vim or gadgets/AI/software -> "coding"; \
-    cooking/baking/food -> "recipe"; a song/lyrics/album -> "music"; workouts/gym/running/ \
-    nutrition -> "fitness"; outfits/fashion/beauty/makeup -> "style"; destinations/trips/ \
-    hotels/flights -> "travel"; home decor/cleaning/DIY/renovation/gardening -> "home"; \
-    facts/how-to/study/science/history -> "learning"; skits/jokes/memes/pranks -> "comedy". \
-    Use "other" only when none fit.
-    - Music: list EVERY distinct release the video recommends, in the order it shows them, one \
-    entry each — a video running through five albums has five entries, not one. Do NOT collapse \
-    a list into its theme or genre: "jungle selection", "russian shoegaze" and the like are \
-    descriptions, never titles. Read the names off the on-screen text; it is usually the only \
-    place they appear. Set "kind" to "album" for a record/EP/mixtape/compilation and "track" \
-    for a single song. Copy each title as written. Set "artist" to the act named next to that \
-    title, or "" — NEVER invent an artist you are not confident about, and never reuse one \
-    entry's artist for another. A video about one song is simply one entry.
-    - Recipe: write every quantity in metric — grams, millilitres, °C, centimetres. Convert \
-    cups, ounces, pounds and °F rather than copying them; teaspoons and tablespoons may stay.
-    - NEVER output placeholder text like "No Content Provided"/"Untitled Video". If caption \
-    and transcript are both empty: title "Saved video", summary "No caption or audio was \
-    available for this save."
-    """
+    /// A placeholder, not the prompt. The box replaces this system message with its own
+    /// `ANALYSIS_SYSTEM_PROMPT` (services/webhook/api_v1.py), so the deep pass runs exactly the
+    /// instructions the fast pass ran instead of whichever copy this app version was built with
+    /// — two copies of one prompt drift, and the drift only ever shows up as a re-analysis that
+    /// disagrees with itself. It is still sent because the substitution keys off a leading
+    /// system message.
+    static let systemPrompt = "analyze"
 
     static func userPrompt(meta: VideoMeta, transcript: String?, ocrText: String?) -> String {
         var parts: [String] = []

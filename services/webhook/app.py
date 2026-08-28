@@ -4,8 +4,9 @@ Receives TikTok's "archive ready" webhooks, verifies the signature, and durably
 records each event. The archive download + favourite extraction is a separate
 worker built once the app is approved and we can see a real payload.
 
-Everything under /v1 lives in three routers: stash_auth (sign-in and account),
-api_v1 (transcript, analyzer proxy, transient media) and cloud_import_api (imports).
+Everything under /v1 lives in four routers: stash_auth (sign-in and account),
+api_v1 (transcript, analyzer proxy, transient media), cloud_import_api (imports)
+and embeddings_api (search vectors).
 Only /health and /v1/auth/* are reachable without a per-user Stash JWT.
 """
 import hashlib
@@ -48,6 +49,9 @@ from api_v1 import router as v1_router  # noqa: E402
 app.include_router(v1_router)
 from cloud_import_api import router as cloud_import_router  # noqa: E402
 app.include_router(cloud_import_router)
+# Search's meaning half — one route, its own module, no quota. See embeddings_api.py.
+from embeddings_api import router as embeddings_router  # noqa: E402
+app.include_router(embeddings_router)
 
 
 @app.exception_handler(stash_auth.QuotaExhausted)

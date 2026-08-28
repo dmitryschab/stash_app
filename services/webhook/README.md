@@ -19,9 +19,15 @@ answers 401 without one; there is no shared bearer token.
 - `POST /v1/imports` — accepts up to 1200 normalized bookmarks (a whole library) and returns immediately with an import ID; the box processes them in the background
 - `GET  /v1/imports/{id}` — cloud-import progress
 - `GET  /v1/imports/{id}/results` — paginated compact results
-- `POST /v1/videos/transcript` — direct transcript endpoint (quota-metered)
-- `POST /v1/chat/completions` — analysis proxy
-- `GET  /v1/tiktok/download/{id}` — transient mp4 bytes for the visual-text backfill (quota-metered)
+- `POST /v1/videos/transcript` — direct transcript endpoint (deep-pass daily cap)
+- `POST /v1/chat/completions` — analysis proxy (quota-metered)
+- `GET  /v1/tiktok/download/{id}` — transient mp4 bytes for the visual-text backfill (deep-pass daily cap)
+- `POST /v1/embeddings` — search vectors, Titan v2 at 256 dims via `bedrock-runtime` (no quota; ≤32 texts of ≤8 KB per request)
+
+The transcript and download routes serve the app's deep pass over videos the import already
+charged a quota unit for, so they move no quota. What bounds them is `DEEP_PASS_DAILY_CAP` (default
+300) calls per account per UTC day, counted in one `DEEPPASS` item beside the user's `QUOTA`
+row; over the cap they answer 429 with `Retry-After` set to the next UTC midnight.
 
 ## Invite codes
 No longer a gate — sign-up is open and the App Store price is what limits who arrives.

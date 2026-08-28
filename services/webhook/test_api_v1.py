@@ -1,4 +1,9 @@
-"""Quota behaviour of the /v1 media routes: charge for work done, never for failure."""
+"""Spend guards on the /v1 routes.
+
+The analyzer proxy is quota-metered: charge for work done, never for failure. The transcript
+and download routes are not — they serve the deep pass over a library that already cost a
+quota unit per video at import — so what bounds them is a per-user daily cap instead.
+"""
 
 import json
 import os
@@ -56,15 +61,16 @@ def groq_reply(monkeypatch, status=200, payload=None):
 # ------------------------------------------------------------------ transcript
 
 
-def test_transcript_charges_one_unit_and_echoes_quota(store, monkeypatch):
+def test_transcript_costs_no_quota_and_echoes_the_balance(store, monkeypatch):
+    """The video was paid for at import; reading it deeply must not cost as much again."""
     fake_download(monkeypatch)
     groq_reply(monkeypatch)
     with TestClient(app) as client:
         response = client.post("/v1/videos/transcript", json={"url": URL})
 
     assert response.status_code == 200
-    assert response.json()["quota"]["initialRemaining"] == INITIAL_LIMIT - 1
-    assert store.get_quota().initial_remaining == INITIAL_LIMIT - 1
+    assert response.json()["quota"]["initialRemaining"] == INITIAL_LIMIT
+    assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
 def test_an_unavailable_video_is_not_billable(store, monkeypatch):
@@ -87,16 +93,15 @@ def test_a_provider_failure_is_not_billable(store, monkeypatch, status):
     assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
-def test_transcript_402s_before_doing_any_work(store, monkeypatch):
+def test_a_spent_budget_no_longer_blocks_the_deep_pass(store, monkeypatch):
+    """A library imported on the last of the month is caption-only until the 1st otherwise —
+    and nothing about deepening it spends the counter that ran out."""
     drain(store)
-    monkeypatch.setattr(api_v1.subprocess, "run",
-                        lambda *a, **k: pytest.fail("yt-dlp ran for an exhausted account"))
+    fake_download(monkeypatch)
+    groq_reply(monkeypatch)
     with TestClient(app) as client:
-        response = client.post("/v1/videos/transcript", json={"url": URL})
-
-    assert response.status_code == 402
-    assert response.json()["detail"] == "quota exhausted"
-    assert response.json()["quota"]["monthRemaining"] == 0
+        assert client.post("/v1/videos/transcript", json={"url": URL}).status_code == 200
+        assert client.get(f"/v1/tiktok/download/{VIDEO_ID}").status_code == 200
 
 
 def test_a_non_tiktok_url_is_refused(store):
@@ -116,9 +121,10 @@ def test_download_streams_bytes_and_reports_quota_in_a_header(store, monkeypatch
     assert response.status_code == 200
     assert response.headers["content-type"] == "video/mp4"
     assert response.content == b"\x00" * 16
-    # The body is mp4 bytes, so the fresh quota rides along in a header instead.
-    assert json.loads(response.headers["x-stash-quota"])["initialRemaining"] == INITIAL_LIMIT - 1
-    assert store.get_quota().initial_remaining == INITIAL_LIMIT - 1
+    # The body is mp4 bytes, so the quota rides along in a header instead — unmoved, because
+    # the download is deep-pass work on a video the import already charged for.
+    assert json.loads(response.headers["x-stash-quota"])["initialRemaining"] == INITIAL_LIMIT
+    assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
 def test_download_cleans_up_its_temporary_file(store, monkeypatch):
@@ -136,15 +142,6 @@ def test_download_cleans_up_its_temporary_file(store, monkeypatch):
         client.get(f"/v1/tiktok/download/{VIDEO_ID}")
 
     assert created and not any(os.path.exists(path) for path in created)
-
-
-def test_download_402s_before_fetching_anything(store, monkeypatch):
-    drain(store)
-    monkeypatch.setattr(api_v1.subprocess, "run",
-                        lambda *a, **k: pytest.fail("yt-dlp ran for an exhausted account"))
-    with TestClient(app) as client:
-        response = client.get(f"/v1/tiktok/download/{VIDEO_ID}")
-    assert response.status_code == 402
 
 
 def test_a_failed_download_is_not_billable(store, monkeypatch):
@@ -199,6 +196,54 @@ def test_a_bad_video_id_is_refused(store):
         assert client.get("/v1/tiktok/download/12").status_code == 400
 
 
+# ------------------------------------------------------------------ deep-pass daily cap
+
+
+def deep_pass_calls(client):
+    """The two routes the cap covers, as no-argument calls."""
+    return (lambda: client.post("/v1/videos/transcript", json={"url": URL}),
+            lambda: client.get(f"/v1/tiktok/download/{VIDEO_ID}"))
+
+
+@pytest.mark.parametrize("route", [0, 1])
+def test_the_daily_cap_429s_at_the_limit(store, monkeypatch, route):
+    """Quota no longer bounds these two, so this is the only thing that does."""
+    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "2")
+    fake_download(monkeypatch)
+    groq_reply(monkeypatch)
+    with TestClient(app) as client:
+        call = deep_pass_calls(client)[route]
+        assert call().status_code == 200
+        assert call().status_code == 200
+        refused = call()
+
+    assert refused.status_code == 429
+    assert refused.json()["detail"] == "deep-pass daily cap reached"
+    # The app backs off on any 429; Retry-After says how long — the next UTC midnight.
+    assert 0 < int(refused.headers["retry-after"]) <= 86_400
+
+
+def test_both_routes_draw_on_the_same_daily_counter(store, monkeypatch):
+    """One counter per user, not one per route: a deep pass makes both calls per video, so
+    a cap each would be twice the cap it says it is."""
+    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "1")
+    fake_download(monkeypatch)
+    groq_reply(monkeypatch)
+    with TestClient(app) as client:
+        assert client.post("/v1/videos/transcript", json={"url": URL}).status_code == 200
+        assert client.get(f"/v1/tiktok/download/{VIDEO_ID}").status_code == 429
+
+
+def test_a_capped_account_never_reaches_yt_dlp(store, monkeypatch):
+    """The whole point is bounding what we spend, and yt-dlp is the spend."""
+    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "0")
+    monkeypatch.setattr(api_v1.subprocess, "run",
+                        lambda *a, **k: pytest.fail("yt-dlp ran for a capped account"))
+    with TestClient(app) as client:
+        assert client.post("/v1/videos/transcript", json={"url": URL}).status_code == 429
+        assert client.get(f"/v1/tiktok/download/{VIDEO_ID}").status_code == 429
+
+
 # ------------------------------------------------------------------ analyzer proxy
 
 
@@ -233,6 +278,31 @@ def test_the_analyzer_body_is_rebuilt_from_an_allowlist(store, monkeypatch):
     assert sent["max_tokens"] == api_v1.CHAT_MAX_OUTPUT_TOKENS
     assert sent["temperature"] == 1.0
     assert set(sent) == {"model", "messages", "temperature", "max_tokens"}
+    # No system message to substitute, so the messages go through untouched.
+    assert sent["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_the_proxy_substitutes_its_own_analysis_prompt(store, monkeypatch):
+    """The app's deep pass used to ship a second copy of the analysis rules, and the two copies
+    drifted: a re-analysis answered to instructions the fast pass had never seen. The box owns
+    the prompt now, so the client sends a placeholder and gets the canonical one."""
+    sent = {}
+
+    def capture(_url, headers=None, json=None, timeout=None):
+        sent.update(json)
+        return SimpleNamespace(content=b"{}", status_code=200)
+
+    monkeypatch.setattr(api_v1, "_bedrock_token", lambda: "test-bedrock-token")
+    monkeypatch.setattr(api_v1.requests, "post", capture)
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json={"messages": [
+            {"role": "system", "content": "analyze"},
+            {"role": "user", "content": "Caption: five jungle albums"}]})
+
+    assert response.status_code == 200
+    assert sent["messages"][0] == {"role": "system", "content": api_v1.ANALYSIS_SYSTEM_PROMPT}
+    # Only the system message is replaced; the caller's own context still reaches the model.
+    assert sent["messages"][1] == {"role": "user", "content": "Caption: five jungle albums"}
 
 
 @pytest.fixture
@@ -268,6 +338,10 @@ def test_a_photo_post_goes_to_the_vision_model_with_its_picture(monkeypatch, ana
     assert [part["type"] for part in content] == ["text", "image_url"]
     assert content[1]["image_url"]["url"] == "data:image/jpeg;base64,anBlZw=="
     assert "photo post" in content[0]["text"]
+    # The sleeve-reading rules ride on top of the one analysis prompt, never as a second copy.
+    system = call["body"]["messages"][0]["content"]
+    assert system.startswith(api_v1.ANALYSIS_SYSTEM_PROMPT)
+    assert system.endswith(api_v1.PHOTO_SYSTEM_PROMPT_ADDENDUM)
 
 
 def test_an_ordinary_video_still_goes_to_bedrock(monkeypatch, analyzer_calls):
@@ -277,6 +351,8 @@ def test_an_ordinary_video_still_goes_to_bedrock(monkeypatch, analyzer_calls):
     call = analyzer_calls[-1]
     assert call["url"] == api_v1.BEDROCK_URL
     assert isinstance(call["body"]["messages"][1]["content"], str)
+    # No picture, so none of the photo rules — they describe an image that is not there.
+    assert call["body"]["messages"][0]["content"] == api_v1.ANALYSIS_SYSTEM_PROMPT
 
 
 def test_a_photo_post_falls_back_to_bedrock_without_a_vision_key(monkeypatch, analyzer_calls):

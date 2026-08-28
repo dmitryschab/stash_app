@@ -146,6 +146,9 @@ class DynamoImportStore:
     def _quota_key(self) -> dict[str, str]:
         return {"PK": self.partition, "SK": "QUOTA"}
 
+    def _deep_pass_key(self) -> dict[str, str]:
+        return {"PK": self.partition, "SK": "DEEPPASS"}
+
     def _get(self, key: dict[str, str]) -> dict[str, Any] | None:
         return self.table.get_item(Key=key).get("Item")
 
@@ -625,6 +628,49 @@ class DynamoImportStore:
     def refund_quota(self, units: int) -> Quota:
         """Give `units` back after work that was charged for but did not happen."""
         return self._write_quota(units) if units > 0 else self.get_quota()
+
+    # -------------------------------------------------------------- deep-pass cap
+
+    def charge_deep_pass(self, cap: int) -> bool:
+        """Count one deep-pass call against today's allowance; False means the cap is reached.
+
+        One item beside QUOTA, holding the UTC day it counts and the count. The day is what
+        resets it — a call on a new day overwrites yesterday's number instead of adding to it
+        — so this needs no scheduled sweep, exactly like the month roll above.
+
+        Compare-and-set on the same terms as the quota row: the condition pins both stored
+        values, so two concurrent deep-pass calls cannot both take the last one.
+        """
+        key = self._deep_pass_key()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for _ in range(QUOTA_CAS_ATTEMPTS):
+            item = self._get(key)
+            used = int(item.get("usedToday", 0)) if item and item.get("utcDay") == today else 0
+            if used >= cap:
+                return False
+            try:
+                if item is None:
+                    self.table.put_item(
+                        Item={**key, "utcDay": today, "usedToday": 1, "updatedAt": _now()},
+                        ConditionExpression="attribute_not_exists(PK)",
+                    )
+                else:
+                    self.table.update_item(
+                        Key=key,
+                        UpdateExpression="SET utcDay = :today, usedToday = :used, updatedAt = :now",
+                        ConditionExpression="utcDay = :prevDay AND usedToday = :prevUsed",
+                        ExpressionAttributeValues={
+                            ":today": today, ":used": used + 1, ":now": _now(),
+                            ":prevDay": item.get("utcDay"),
+                            ":prevUsed": int(item.get("usedToday", 0)),
+                        },
+                    )
+            except Exception as error:
+                if _is_conditional_failure(error):
+                    continue
+                raise
+            return True
+        raise RuntimeError("deep-pass cap contention: compare-and-set did not settle")
 
     def list_results(self, import_id: str, cursor: str | None = None, limit: int = 50) -> ResultPage:
         prefix = f"IMPORT#{import_id}#VIDEO#"

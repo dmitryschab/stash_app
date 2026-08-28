@@ -12,9 +12,12 @@ TikTok blocks all in-app media downloads (blank playAddr / CDN 403 / CORS), so t
 box owns every media fetch. Groq free tier: 7200 audio-sec per rolling hour — 429s
 are passed through with Retry-After so the app can park the stage and retry.
 
-All three cost one quota unit, charged only when the work actually produced something: a
-private or deleted video, a throttled provider or a Bedrock error must not eat the caller's
-budget. Nothing here is free — an unmetered authenticated route is an unbounded bill.
+The analyzer proxy costs one quota unit, charged only when the work actually produced
+something: a throttled provider or a Bedrock error must not eat the caller's budget. The
+other two are the app's deep pass over a library it already paid for a unit per video at
+import, so they move no quota at all — re-reading a save must not cost as much as saving it.
+Nothing here is free, though: an unbounded authenticated route is an unbounded bill, so those
+two are capped per user per UTC day instead (`DEEP_PASS_DAILY_CAP`).
 """
 import base64
 import json
@@ -26,6 +29,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -99,6 +103,42 @@ VISION_MAX_OUTPUT_TOKENS = 4096
 
 def _openrouter_key() -> str:
     return stash_secrets.secret("OPENROUTER_API_KEY")
+
+
+# ---------------------------------------------------------------- deep-pass cap
+
+# How many transcript + download calls one account may make in a UTC day. Sized for the
+# honest ceiling of a library (~600 videos, two calls each): a whole library deepens over
+# a few nights of charging rather than in one, which is exactly the pace the client's
+# charging + Wi-Fi gate already implies.
+DEEP_PASS_DAILY_CAP = 300
+
+
+def _daily_cap() -> int:
+    """Read per call, not at import: the box sets this in the unit file and a test sets it in
+    the environment, and a module-level read would freeze whichever got there first."""
+    return int(os.environ.get("DEEP_PASS_DAILY_CAP") or DEEP_PASS_DAILY_CAP)
+
+
+def charge_deep_pass(store: DynamoImportStore) -> None:
+    """Count this call against the caller's daily allowance, or 429.
+
+    Charged up front, before the work — the opposite of the quota rule the analyzer route
+    follows, and deliberately so. Quota counts videos the user got something for; this counts
+    what we spend, and a yt-dlp run costs the same box-minute whether the video turns out to be
+    deleted, silent or a photo post.
+
+    Retry-After points at the next UTC midnight, which is when the counter rolls. The app needs
+    nothing new to honour it: five failures in a row already stop a backfill, and it resumes
+    where it left off on the next pass.
+    """
+    if store.charge_deep_pass(_daily_cap()):
+        return
+    now = datetime.now(timezone.utc)
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    raise HTTPException(
+        status_code=429, detail="deep-pass daily cap reached",
+        headers={"Retry-After": str(max(1, int((midnight - now).total_seconds())))})
 
 
 # ---------------------------------------------------------------- transcript
@@ -188,7 +228,10 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
         raise HTTPException(status_code=503, detail="transcription not configured")
     if not re.match(r"^https://(www\.)?tiktok(v)?\.com/", body.url):
         raise HTTPException(status_code=400, detail="not a tiktok url")
-    quota = peek_quota(store)  # 402 before spending yt-dlp and Groq time
+    charge_deep_pass(store)  # 429 before spending yt-dlp and Groq time
+    # Echoed unchanged: the app keeps its counter fresh from whatever route answered last,
+    # and this one no longer moves it.
+    quota = store.get_quota()
 
     with tempfile.TemporaryDirectory() as td:
         # Keep yt-dlp's native container — Groq accepts m4a/mp4/webm alike.
@@ -199,7 +242,7 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
         produced = [os.path.join(td, f) for f in os.listdir(td)
                     if f.startswith("audio.") and not f.endswith(".info.json")]
         if dl.returncode != 0 or not produced:
-            # deleted / private / region-locked — a normal library condition, not billable
+            # deleted / private / region-locked — a normal library condition
             return {"transcript": None, "duration": 0, "unavailable": True,
                     "quota": quota.model_dump(by_alias=True)}
 
@@ -208,7 +251,7 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
         # as the post's own content — it clears the structured payload and re-analyses from the
         # text alone — so transcribing somebody else's song here destroyed the album picks the
         # fast pass had just read off the picture. Written in the same yt-dlp run as the audio,
-        # so knowing this costs no extra round trip. Not billable: nothing was transcribed.
+        # so knowing this costs no extra round trip.
         if _has_no_video_track(td):
             return {"transcript": None, "duration": 0,
                     "quota": quota.model_dump(by_alias=True)}
@@ -246,9 +289,6 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
     # hallucinated sign-off on a music clip never reaches the analyzer as "content".
     lines = [s.get("text", "") for s in data.get("segments", []) if keep_segment(s)]
     text = filter_transcript(lines)
-    # Commit the unit only now — the 429 and 502 paths above raise before reaching here,
-    # so a throttled or broken provider never costs the caller budget.
-    quota = store.reserve_quota(1) or store.get_quota()
     return {"transcript": text or None, "duration": data.get("duration", 0),
             "quota": quota.model_dump(by_alias=True)}
 
@@ -267,26 +307,59 @@ def _bedrock_token() -> str:
     return _token_cache["token"]
 
 
+# The analysis prompt, and the only one. The app used to ship its own copy for the deep pass,
+# so a re-analysis ran different instructions than the fast pass that produced the entry; the
+# proxy below now substitutes this for whatever system message the client sent. Rules marked by
+# the 855-video validation run live in pipeline-lab/PROMPT.md.
 ANALYSIS_SYSTEM_PROMPT = """
 You classify a short video into a single strict JSON object. Respond with ONLY the JSON
-object, with category, title, summary, and topics fields. Category must be one of
-recipe, fitness, style, travel, home, learning, comedy, music, coding, or other
-(fitness=workouts/gym/nutrition, style=fashion/beauty/makeup, travel=trips/destinations,
-home=decor/DIY/gardening, learning=facts/how-to/study, comedy=skits/jokes/memes,
-coding=software/gadgets/AI); use other only when none fit. Always answer in English. Use
-empty strings or arrays when information is missing. Never output placeholder prose. If
-caption and transcript are empty, use title \"Saved video\" and summarize that no caption
-or audio was available.
+object, no prose and no Markdown code fences. Use this exact shape:
+{
+  "category": "recipe" | "fitness" | "style" | "travel" | "home" | "learning" | "comedy" | "music" | "coding" | "film" | "dining" | "wellness" | "other",
+  "title": string,
+  "summary": string,
+  "topics": [string],            // short lowercase topic keywords
+  "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
+  "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
+  "code": { "summary": string, "links": [string], "techTags": [string] } | null
+}
+Only recipe, music and coding carry a payload: fill the one matching the chosen category and
+leave the others empty — for every other category set "recipe" and "code" to null and "music"
+to []. Never include a "link" field; the app resolves streaming links separately.
+
+Pick the category from the whole post, hashtags included, even when the transcript is empty
+(fitness=workouts/gym/running/nutrition, style=fashion/beauty/makeup,
+travel=trips/destinations/hotels/flights, home=decor/cleaning/DIY/renovation/gardening,
+learning=facts/how-to/study/science/history, comedy=skits/jokes/memes/pranks,
+coding=software/gadgets/AI and tags like #linux #arch #selfhosted #homelab #docker #python
+#react #vim, film=movies/TV/anime/what to watch, dining=restaurants/cafes/coffee/wine,
+wellness=health/supplements/sleep/mental health); use other only when none fit.
+
+Captions and transcripts may be in any language; ALWAYS answer in English. Title max 60
+characters. Use empty strings or arrays when information is missing. NEVER output placeholder
+prose such as "No Content Provided" or "Untitled Video". If caption and transcript are both
+empty, use title "Saved video" and summary "No caption or audio was available for this save."
 
 Two categories carry extra structure, and the Cook and Music screens are empty without it:
-- category recipe: add a "recipe" object {name, ingredients[], steps[]}. Include it only when
-  the source actually lists them; omit the key entirely rather than inventing a recipe.
-- category music: add a "music" array of at most 12 {kind, title, artist} objects, one per
-  release the video recommends, in the order shown. kind is "album" or "track". Leave artist
-  as an empty string when the video does not name one — never guess it, because a guessed
-  artist links the wrong release.
-Omit both keys for every other category.
+- category recipe: fill the "recipe" object only when the source actually lists a name,
+  ingredients or steps; leave it null rather than inventing a recipe. Write every quantity in
+  metric — grams, millilitres, °C, centimetres. Convert cups, ounces, pounds and °F rather
+  than copying them; teaspoons and tablespoons may stay.
+- category music: list EVERY distinct release the video recommends, in the order it shows
+  them, one "music" entry each and at most 12 — a video running through five albums has five
+  entries, not one, and a video about a single song is simply one entry. Do NOT collapse a
+  list into its theme or genre: "jungle selection", "russian shoegaze" and the like are
+  descriptions, never titles. Read the names off the on-screen text; it is usually the only
+  place they appear, and copy each title as written. Set "kind" to "album" for a
+  record/EP/mixtape/compilation and "track" for a single song. Set "artist" to the act named
+  next to that title, or leave it an empty string — NEVER invent an artist you are not
+  confident about, and never reuse one entry's artist for another, because a guessed artist
+  links the wrong release.
+""".strip()
 
+# Appended to the prompt above on the vision path, never copied into it: none of this means
+# anything to a text-only call, where the picture is exactly what is missing.
+PHOTO_SYSTEM_PROMPT_ADDENDUM = """
 A TikTok photo post carries no speech and usually no caption: the attached image IS the whole
 post, and it outranks the rule above about missing information — never answer "Saved video"
 when there is an image. Read every word printed on it.
@@ -348,6 +421,7 @@ def analyze_metadata(metadata: dict) -> dict:
     if image and vision_key:
         provider, url, model, token = "vision", OPENROUTER_URL, OPENROUTER_VISION_MODEL, vision_key
         max_tokens = VISION_MAX_OUTPUT_TOKENS
+        system = f"{ANALYSIS_SYSTEM_PROMPT}\n\n{PHOTO_SYSTEM_PROMPT_ADDENDUM}"
         content = [
             {"type": "text", "text": prompt},
             {"type": "image_url",
@@ -359,6 +433,7 @@ def analyze_metadata(metadata: dict) -> dict:
         # the response to roughly 600 tokens, so an unstated limit is a truncated JSON body
         # — and a truncated body fails the whole analysis, not just the recipe.
         max_tokens = CHAT_MAX_OUTPUT_TOKENS
+        system = ANALYSIS_SYSTEM_PROMPT
         content = prompt
 
     response = requests.post(
@@ -369,7 +444,7 @@ def analyze_metadata(metadata: dict) -> dict:
             "temperature": 0.2,
             "max_tokens": max_tokens,
             "messages": [
-                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
         },
@@ -408,6 +483,16 @@ def chat_completions(body: dict, store: DynamoImportStore = Depends(entitled_sto
         "temperature": max(0.0, min(temperature, 1.0)),
         "max_tokens": max(1, min(wanted, CHAT_MAX_OUTPUT_TOKENS)),
     }
+    # One prompt, not two. The app's deep pass re-analyses videos the fast pass above already
+    # classified, and while it shipped its own copy of the instructions the two drifted apart —
+    # a re-analysis silently answered to rules the original never saw.
+    # ponytail: the substitution is unconditional, with no version handshake. This endpoint has
+    # exactly one caller (AnalyzerClient), which sends a placeholder system message purely so
+    # there is something to replace; a body without a leading system message goes as it is.
+    messages = outbound["messages"]
+    if messages and isinstance(messages[0], dict) and messages[0].get("role") == "system":
+        outbound["messages"] = [{"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                                *messages[1:]]
     resp = requests.post(
         BEDROCK_URL,
         headers={"Authorization": f"Bearer {_bedrock_token()}",
@@ -432,7 +517,8 @@ def tiktok_download(video_id: str, store: DynamoImportStore = Depends(entitled_s
     the file immediately. No persistent offline copy is served or kept anywhere."""
     if not re.fullmatch(r"\d{5,25}", video_id):
         raise HTTPException(status_code=400, detail="bad video id")
-    quota = peek_quota(store)
+    charge_deep_pass(store)
+    quota = store.get_quota()
 
     # Not TemporaryDirectory: the file has to outlive this function so the body can be
     # streamed instead of read whole into a 1 GB box's memory. The generator cleans up.
@@ -453,7 +539,6 @@ def tiktok_download(video_id: str, store: DynamoImportStore = Depends(entitled_s
             if "Requested format is not available" in stderr:
                 raise HTTPException(status_code=415, detail="no video track")
             raise HTTPException(status_code=502, detail="download failed")
-        quota = store.reserve_quota(1) or store.get_quota()  # bytes exist, unit earned
     except BaseException:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise

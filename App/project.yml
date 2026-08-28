@@ -28,6 +28,13 @@ targets:
       - target: StashShare
     # Sign in with Apple is the only auth method; without this entitlement the
     # ASAuthorizationController request fails at runtime (error 1000).
+    #
+    # ShazamKit (the deep pass's music ID) is deliberately absent: it is an App Services
+    # checkbox on the App ID, not a capability, and there is no matching entitlement key —
+    # `com.apple.developer.shazamkit` is not a real one, and adding it breaks automatic
+    # signing ("entitlement not found and could not be included in profile"). Enable
+    # ShazamKit under App Services for dev.dmitryschab.Stash in the developer portal; the
+    # framework needs nothing here, and file matching needs no microphone permission.
     entitlements:
       path: Stash.entitlements
       properties:
@@ -48,15 +55,20 @@ targets:
           NSAllowsLocalNetworking: true
         # Only standard HTTPS — skips the export-compliance question per build.
         ITSAppUsesNonExemptEncryption: false
-        # Import continues in background windows granted by BGTaskScheduler.
+        # Import continues in background windows granted by BGTaskScheduler. Two identifiers,
+        # because the two jobs want opposite conditions: `.process` finishes an import the user
+        # started and must not wait for a charger, while `.deeppass` deepens the whole library
+        # and asks for external power (PipelineCenter.scheduleDeepPassProcessing).
         UIBackgroundModes: [processing]
-        BGTaskSchedulerPermittedIdentifiers: [dev.dmitryschab.Stash.process]
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.dmitryschab.Stash.process
+          - dev.dmitryschab.Stash.deeppass
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "27"
+        MARKETING_VERSION: "1.2"
+        CURRENT_PROJECT_VERSION: "28"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3  # personal team (Dmitrijs Sabelniks) — hosts Orivox too
@@ -95,8 +107,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash.Share
-        MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "27"
+        MARKETING_VERSION: "1.2"
+        CURRENT_PROJECT_VERSION: "28"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3

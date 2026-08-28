@@ -29,7 +29,8 @@ public struct VideoMeta: Equatable, Sendable {
 }
 
 public enum Category: String, Codable, Sendable {
-    case recipe, fitness, style, travel, home, learning, comedy, music, coding, other
+    case recipe, fitness, style, travel, home, learning, comedy, music, coding, film, dining,
+         wellness, other
 
     /// Tolerate an unknown or near-miss category from the model instead of throwing and
     /// failing the whole analysis decode — anything off-list falls back to `.other`.

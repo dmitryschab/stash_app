@@ -152,6 +152,12 @@ final class BoxClientsTests: XCTestCase {
         XCTAssertEqual(sent["model"] as? String, "test-chat")
         let responseFormat = sent["response_format"] as? [String: Any]
         XCTAssertEqual(responseFormat?["type"] as? String, "json_object")
+
+        // The box owns the analysis prompt: the app sends a placeholder for it to substitute,
+        // so the deep pass cannot drift from the fast pass the box already ran.
+        let messages = sent["messages"] as? [[String: Any]]
+        XCTAssertEqual(messages?.first?["role"] as? String, "system")
+        XCTAssertEqual(messages?.first?["content"] as? String, "analyze")
     }
 
     func testAnalyzerUnreachableMapsToBoxError() async {

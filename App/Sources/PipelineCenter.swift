@@ -12,6 +12,7 @@
 // clients ask `StashSession.authProvider` per request.
 
 import BackgroundTasks
+import Network
 import SwiftData
 import SwiftUI
 import TikTokBrainKit
@@ -22,6 +23,10 @@ import UIKit
 final class PipelineCenter {
     static let shared = PipelineCenter()
     static let bgTaskID = "dev.dmitryschab.Stash.process"
+    /// The library deep pass gets its own identifier because it gets its own conditions: this
+    /// one asks iOS for external power, which the import task must never do — an import the
+    /// user is watching cannot wait for a charger.
+    static let deepPassTaskID = "dev.dmitryschab.Stash.deeppass"
 
     var progress: (done: Int, total: Int)?
     var isImporting = false
@@ -53,6 +58,9 @@ final class PipelineCenter {
     private var container: ModelContainer?
     private var processingTask: Task<Void, Never>?
     private var cloudSyncTask: Task<Void, Never>?
+    /// Held apart from `processingTask` so a foreground kick cannot drop the handle of a
+    /// library pass that is already running — this one outlives the screen that started it.
+    private var libraryDeepPassTask: Task<Void, Never>?
     private var extraTime: UIBackgroundTaskIdentifier = .invalid
     private var cloudState = CloudImportSyncState()
     private static let cloudStateKey = "cloudImport.syncState"
@@ -91,6 +99,7 @@ final class PipelineCenter {
             shareImports = imports
         }
         Self.discardLegacyState()
+        Self.startPowerAndPathWatch()
         refreshThumbnails()
     }
 
@@ -117,6 +126,41 @@ final class PipelineCenter {
             if thumbnailsPending {
                 thumbnailsPending = false
                 refreshThumbnails()
+            }
+        }
+    }
+
+    // MARK: - Search vectors
+
+    private var embeddingTask: Task<Void, Never>?
+    /// A pass asked for while one was already running; the in-flight run fetched its work list
+    /// before those saves landed, so it would miss them. Same problem as `thumbnailsPending`.
+    private var embeddingsPending = false
+
+    /// Fills in the search vectors for saves that have none, then leaves them alone.
+    ///
+    /// Called wherever an analysis lands and on every foreground, because this is the cheapest
+    /// drain here — no video download, no quota, one box call per 32 saves — so it needs none of
+    /// the deep pass's charger-and-Wi-Fi gate. Fire and forget, like `refreshThumbnails`.
+    ///
+    /// ponytail: a save re-analyzed after it was embedded keeps its old vector until
+    /// `BoxEmbeddingClient.revision` is bumped. The vector is built from the title, topics and
+    /// summary, which a re-read rarely moves far, and invalidating on every deep-pass write would
+    /// mean embedding the whole library twice over a difference nobody would see in the ranking.
+    func backfillEmbeddings() {
+        guard StashSession.shared.isSignedIn, let container else { return }
+        guard embeddingTask == nil else {
+            embeddingsPending = true
+            return
+        }
+        let embedder = BoxEmbeddingClient(config: Self.currentConfig())
+        embeddingTask = Task { [weak self] in
+            await EmbeddingBackfill(container: container, embedder: embedder).run()
+            guard let self else { return }
+            embeddingTask = nil
+            if embeddingsPending {
+                embeddingsPending = false
+                backfillEmbeddings()
             }
         }
     }
@@ -425,9 +469,9 @@ final class PipelineCenter {
         guard !ready.isEmpty, !isImporting, !deepPassBlocked, let runner = makeRunner() else { return }
         let ids = Set(ready.map(\.id))
         let videoIDs = Set(ready.flatMap(\.videoIDs))
-        let extract = Self.makeVisualTextExtractor()
+        let read = Self.makeDeepPassReader()
         processingTask = Task { [weak self] in
-            await self?.drainDeepPass(runner: runner, shares: ids, videoIDs: videoIDs, extract: extract)
+            await self?.drainDeepPass(runner: runner, shares: ids, videoIDs: videoIDs, read: read)
         }
     }
 
@@ -435,7 +479,7 @@ final class PipelineCenter {
         runner: PipelineRunner,
         shares: Set<UUID>,
         videoIDs: Set<String>,
-        extract: @escaping @Sendable (String, URL) async throws -> String?
+        read: @escaping @Sendable (String, URL) async throws -> DeepPass
     ) async {
         isImporting = true
         UIApplication.shared.isIdleTimerDisabled = true
@@ -447,7 +491,7 @@ final class PipelineCenter {
         let transcripts = await runner.backfillTranscripts(only: videoIDs) { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
-        let visual = await runner.backfillVisualText(only: videoIDs, visualText: extract) { done, total in
+        let visual = await runner.backfillVisualText(only: videoIDs, deepPass: read) { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
 
@@ -497,6 +541,95 @@ final class PipelineCenter {
         if let data = try? JSONEncoder().encode(shareImports) {
             UserDefaults.standard.set(data, forKey: Self.shareImportsKey)
         }
+    }
+
+    // MARK: - Library deep pass
+
+    /// The same two backfills a shared save gets, aimed at the whole library instead of at one
+    /// submission. Without it a bulk import stays caption-only forever: the fast pass classifies
+    /// from the caption, and what a TikTok is actually about is usually spoken or burned into
+    /// the frames — the deep pass was simply never pointed at anything but shares.
+    ///
+    /// Safe to call on every foreground: a closed gate costs one battery read and one path read.
+    func startLibraryDeepPassIfReady() {
+        guard libraryDeepPassTask == nil else { return }
+        libraryDeepPassTask = Task { [weak self] in
+            await self?.runLibraryDeepPass()
+            self?.libraryDeepPassTask = nil
+        }
+    }
+
+    /// Transcripts first, then visual text — the same order, the same serial pacing and the same
+    /// abort conditions as the shared pass, because they are the same two calls with the `only:`
+    /// filter dropped.
+    ///
+    /// Everything above the work is the gate, and there is no setting for any of it. The pass is
+    /// default-on precisely because it can only run where nobody pays for it: charging, on a
+    /// network nobody is billed by the megabyte for, and with the library's own imports already
+    /// settled. A toggle would exist to protect the user from a cost the gate has already ruled
+    /// out. The guards run with no `await` between them and `isImporting = true`, so a background
+    /// wake and a foreground kick cannot both get through.
+    private func runLibraryDeepPass() async {
+        guard Self.cloudImportEnabled, StashSession.shared.isSignedIn else { return }
+        guard !isImporting, !deepPassBlocked else { return }
+        // A share is what the user is standing there waiting for, and an import still landing is
+        // a fast pass with nothing to deepen yet. The library has been waiting for months; it
+        // can wait for those.
+        guard pendingShares.isEmpty, shareImports.isEmpty, !cloudState.isActive else { return }
+        guard Self.isCharging, Self.isOnUnmeteredPath else { return }
+        guard let runner = makeRunner() else { return }
+        let read = Self.makeDeepPassReader()
+
+        isImporting = true
+        // Deliberately not disabling the idle timer, unlike every other drain here: nobody asked
+        // for this pass, so it must not be the reason a charging phone never sleeps. Locking the
+        // screen ends it part-way, which is exactly what the background task is for.
+        defer {
+            isImporting = false
+            progress = nil
+        }
+        let transcripts = await runner.backfillTranscripts { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+        let visual = await runner.backfillVisualText(deepPass: read) { done, total in
+            Task { @MainActor [weak self] in self?.progress = (done, total) }
+        }
+
+        // Budget spent, the box's daily deep-pass cap reached, or the network gone — all three
+        // mean "not now", and all three are already understood by the flag the shared pass sets.
+        // No `lastError`: an unasked-for pass must not put a sentence in front of anyone.
+        guard transcripts.quotaExhausted == nil, visual.quotaExhausted == nil,
+              !transcripts.stoppedEarly, !visual.stoppedEarly else {
+            deepPassBlocked = true
+            return
+        }
+        if transcripts.filled + visual.filled > 0 {
+            lastSummary = "Read \(transcripts.filled) transcripts and \(visual.filled) screens "
+                + "from the library"
+        }
+    }
+
+    /// Both halves of the gate's hardware question have to be watched before they can be asked:
+    /// `batteryState` is `.unknown` until monitoring is on, and a monitor's `currentPath` is
+    /// meaningless for the first instant of its life. Started at launch so the first foreground
+    /// already has an answer.
+    private static let pathMonitor = NWPathMonitor()
+
+    private static func startPowerAndPathWatch() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        pathMonitor.start(queue: DispatchQueue(label: "dev.dmitryschab.Stash.path"))
+    }
+
+    private static var isCharging: Bool {
+        let state = UIDevice.current.batteryState
+        return state == .charging || state == .full
+    }
+
+    /// Wi-Fi or wired, never a cellular or personal-hotspot path: the deep pass downloads every
+    /// video in the library, and `isExpensive` is iOS's own word for "the user pays for this".
+    private static var isOnUnmeteredPath: Bool {
+        let path = pathMonitor.currentPath
+        return path.status == .satisfied && !path.isExpensive
     }
 
     // MARK: - Re-analysis
@@ -564,16 +697,18 @@ final class PipelineCenter {
     func backfillVisualText() {
         guard !isImporting, let runner = makeRunner() else { return }
         lastError = nil
-        let extract = Self.makeVisualTextExtractor()
+        let read = Self.makeDeepPassReader()
         processingTask = Task { [weak self] in
-            await self?.drainVisualBackfill(runner: runner, extract: extract)
+            await self?.drainVisualBackfill(runner: runner, read: read)
         }
     }
 
-    /// Downloads the video through the box (TikTok blocks in-app fetches), samples frames, and
-    /// runs on-device Vision OCR. More keyframes than the pipeline default: on-screen text
-    /// changes fast, and frames are cheap once the video is already downloaded.
-    private static func makeVisualTextExtractor() -> @Sendable (String, URL) async throws -> String? {
+    /// Downloads the video through the box (TikTok blocks in-app fetches), samples frames, runs
+    /// on-device Vision OCR, and asks ShazamKit what is playing. More keyframes than the pipeline
+    /// default: on-screen text changes fast, and frames are cheap once the video is already
+    /// downloaded — and so is the audio, which is why both reads happen here rather than in two
+    /// passes that would pay for the download twice.
+    private static func makeDeepPassReader() -> @Sendable (String, URL) async throws -> DeepPass {
         let config = currentConfig()
         let baseURL = config.baseURL
         let auth = config.auth   // closures, not a token: refreshes mid-backfill reach this
@@ -583,23 +718,26 @@ final class PipelineCenter {
                 file = try await BoxVideoDownload.temporaryFile(
                     videoID: videoID, baseURL: baseURL, auth: auth)
             } catch is BoxVideoDownload.NoVideoTrack {
-                // A photo post: there are no frames to sample and there never will be. Nil is
-                // the same answer as "this video carries no on-screen text", which marks the
-                // stage done — so a library full of photo posts cannot trip the abort
+                // A photo post: there are no frames to sample and there never will be. An empty
+                // pass is the same answer as "this video carries nothing to read", which marks
+                // the stage done — so a library full of photo posts cannot trip the abort
                 // threshold and stop the pass before it reaches the real videos.
-                return nil
+                return DeepPass()
             }
             defer { try? FileManager.default.removeItem(at: file) }
             let frames = try await MediaFetcher(keyframeCount: 12).keyframes(fromLocalFile: file)
             defer { frames.forEach { try? FileManager.default.removeItem(at: $0) } }
             let text = try await FrameReader().recognizeText(in: frames)
-            return text.isEmpty ? nil : text
+            // Inside the same statement group as the download, so the mp4 is still on disk here
+            // and is still deleted on the way out however this returns.
+            let match = await ShazamResolver().match(fileURL: file)
+            return DeepPass(visualText: text.isEmpty ? nil : text, audioMatch: match)
         }
     }
 
     private func drainVisualBackfill(
         runner: PipelineRunner,
-        extract: @escaping @Sendable (String, URL) async throws -> String?
+        read: @escaping @Sendable (String, URL) async throws -> DeepPass
     ) async {
         isImporting = true
         UIApplication.shared.isIdleTimerDisabled = true
@@ -608,7 +746,7 @@ final class PipelineCenter {
             progress = nil
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        let result = await runner.backfillVisualText(visualText: extract) { done, total in
+        let result = await runner.backfillVisualText(deepPass: read) { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
         if let quota = result.quotaExhausted {
@@ -634,9 +772,11 @@ final class PipelineCenter {
         guard StashSession.shared.isSignedIn else { return }
         Task { await StashSession.shared.refreshQuota() }
         deepPassBlocked = false   // a new foreground is exactly when retrying is worth it
+        backfillEmbeddings()
         if Self.cloudImportEnabled {
             drainSharedInbox()
             syncCloudImportIfNeeded()
+            startLibraryDeepPassIfReady()
         } else {
             resumePendingIfNeeded()
         }
@@ -646,6 +786,9 @@ final class PipelineCenter {
         if Self.cloudImportEnabled {
             cloudSyncTask?.cancel()
             cloudSyncTask = nil
+            // The library pass wants a charger and Wi-Fi, which is a description of the night —
+            // so the window it is most likely to run in is one iOS grants after this point.
+            scheduleDeepPassProcessing()
             return
         }
         guard isImporting else { return }
@@ -674,6 +817,10 @@ final class PipelineCenter {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: bgTaskID, using: nil) { task in
             guard let task = task as? BGProcessingTask else { return }
             Task { @MainActor in Self.shared.handleBackgroundTask(task) }
+        }
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: deepPassTaskID, using: nil) { task in
+            guard let task = task as? BGProcessingTask else { return }
+            Task { @MainActor in Self.shared.handleDeepPassBackgroundTask(task) }
         }
     }
 
@@ -707,6 +854,33 @@ final class PipelineCenter {
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
         try? BGTaskScheduler.shared.submit(request)  // duplicate submits just replace
+    }
+
+    /// The deep pass's own window, asked for on iOS's terms rather than only on ours: external
+    /// power is half the gate in `runLibraryDeepPass`, so saying it here lets the scheduler pick
+    /// a moment that already satisfies it instead of waking us to find out it does not.
+    func scheduleDeepPassProcessing() {
+        let request = BGProcessingTaskRequest(identifier: Self.deepPassTaskID)
+        request.requiresNetworkConnectivity = true
+        request.requiresExternalPower = true
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    private func handleDeepPassBackgroundTask(_ task: BGProcessingTask) {
+        let work = Task { [weak self] in
+            // Same cold-start problem as the import task: a background launch never rendered
+            // RootView, so the session is still sitting unread in the Keychain.
+            await StashSession.shared.restore()
+            await self?.runLibraryDeepPass()
+            task.setTaskCompleted(success: true)
+        }
+        task.expirationHandler = {
+            // A direct call, so cancellation reaches the backfills — both stop between videos,
+            // and every stage they finished is already stored.
+            work.cancel()
+            Task { @MainActor in Self.shared.scheduleDeepPassProcessing() }  // next window
+            task.setTaskCompleted(success: true)
+        }
     }
 
     // MARK: - Cloud import synchronization
@@ -773,7 +947,10 @@ final class PipelineCenter {
                     let results = try await client.allResults(importID: importID)
                     if let container {
                         let applied = try CloudImportResultUpserter.apply(results, to: ModelContext(container))
-                        if applied > 0 { refreshThumbnails() }
+                        if applied > 0 {
+                            refreshThumbnails()
+                            backfillEmbeddings()   // a classified save is one there is text to embed
+                        }
                     }
                     guard status.state == .completed || status.state == .cancelled else { continue }
                     for index in shareImports.indices where shareImports[index].id == share.id {
@@ -817,6 +994,7 @@ final class PipelineCenter {
                     if applied > 0 {
                         lastSummary = "Synced \(applied) cloud results"
                         refreshThumbnails()
+                        backfillEmbeddings()
                     }
                 }
                 guard let nextCursor = page.nextCursor else {
@@ -892,6 +1070,52 @@ final class PipelineCenter {
     }
 }
 
+// MARK: - Embedding backfill
+
+/// Fills `Video.embedding` for saves that have none, in serial batches of 32 — the box's own cap.
+///
+/// Its own actor rather than a `PipelineRunner` stage because it shares none of that queue's
+/// problems: nothing here is downloaded, metered or ordered, and the text it embeds is text the
+/// analysis already produced. Off the main actor for the same reason every other drain is — the
+/// fetch is the whole library.
+///
+/// The first failed batch ends the run rather than counting failures like the transcript drain:
+/// the only ways this call fails are "offline", "box down" and "signed out", and none of the
+/// three gets better on the next batch. Everything already written is saved, and the next
+/// foreground resumes from there.
+actor EmbeddingBackfill {
+    private let container: ModelContainer
+    private let embedder: BoxEmbeddingClient
+
+    init(container: ModelContainer, embedder: BoxEmbeddingClient) {
+        self.container = container
+        self.embedder = embedder
+    }
+
+    func run() async {
+        let context = ModelContext(container)
+        let all = (try? context.fetch(FetchDescriptor<Video>(
+            sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
+        // Newest first, and never a save with nothing written about it yet: an unanalyzed row
+        // would cost a round trip to embed the empty string.
+        let pending = all.filter {
+            $0.embeddingRevision < BoxEmbeddingClient.revision && !$0.embeddingText.isEmpty
+        }
+
+        let batchSize = BoxEmbeddingClient.maxTextsPerRequest
+        for start in stride(from: 0, to: pending.count, by: batchSize) {
+            if Task.isCancelled { return }
+            let batch = Array(pending[start..<min(start + batchSize, pending.count)])
+            guard let vectors = try? await embedder.embed(batch.map(\.embeddingText)) else { return }
+            for (video, vector) in zip(batch, vectors) {
+                video.embedding = EmbeddingVector.pack(vector)
+                video.embeddingRevision = BoxEmbeddingClient.revision
+            }
+            try? context.save()
+        }
+    }
+}
+
 // MARK: - Transient video download
 
 /// Fetches a video through the box (`GET {base}/tiktok/download/{id}`, yt-dlp server-side —
@@ -900,10 +1124,11 @@ final class PipelineCenter {
 /// temporary file the caller deletes immediately.
 ///
 /// Deliberately temporary-only. Persistent user-facing copies were removed (App Store
-/// guideline 5.2.3); the sole caller is `makeVisualTextExtractor`, which samples frames for
-/// on-device OCR and unlinks the file in the same statement group. Metered like any other
-/// quota route: the response carries `X-Stash-Quota` and an empty budget arrives as
-/// `StashError.quotaExhausted` from the shared funnel.
+/// guideline 5.2.3); the sole caller is `makeDeepPassReader`, which samples frames for on-device
+/// OCR, matches the audio against the Shazam catalogue, and unlinks the file in the same
+/// statement group. Costs no quota — the video was charged for at import, and re-reading a save
+/// must not cost as much as saving it — but the box caps these calls per account per day, and
+/// over that cap this returns the 429 every other download failure already looks like.
 enum BoxVideoDownload {
     /// The post is a TikTok photo post — a still and a backing track, no video track to sample.
     /// Permanent, so callers skip the read rather than retrying it.

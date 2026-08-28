@@ -185,7 +185,10 @@ class VideoResult(ContractModel):
     # with an analysis of the backing track's lyrics. Those saves sit at revision 4 with their
     # music gone and their category flipped, and the upserter only applies a strictly greater
     # revision — so without this bump a re-share is a no-op for exactly the people who hit it.
-    analysis_revision: int = Field(alias="analysisRevision", default=5)
+    # 6: taxonomy v6 splits film, dining and wellness out of "other" — 85 of the 330 videos the
+    # 855-video validation run left in that bucket. Every one of them is stored with category
+    # "other", which is now the wrong answer, and only a greater revision re-buckets them.
+    analysis_revision: int = Field(alias="analysisRevision", default=6)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)

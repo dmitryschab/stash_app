@@ -15,3 +15,9 @@ public protocol Analyzing: Sendable {
 public protocol MusicLinkResolving: Sendable {
     func resolve(_ picks: [MusicPick]) async -> [MusicPick]
 }
+/// Identifies the music in a local media file. Wrapped in a protocol so the merge rules can be
+/// exercised with canned matches — the ShazamKit implementation needs the network and a real
+/// recording. Non-throwing: an unidentifiable video is the normal case, not a failure.
+public protocol AudioMatching: Sendable {
+    func match(fileURL: URL) async -> AudioMatch?
+}

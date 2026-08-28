@@ -3,8 +3,15 @@
 // Search has no tab. Hold the pill, push right, and the pill itself becomes the field
 // (StashTabBar); what opens above it is `SearchOverlay`: one list over everything the pipeline
 // extracted — titles, captions, summaries, transcripts, OCR text, topics — with a per-result
-// match strength and the field that matched. Meaning, not just keywords (the transcript is in
-// the index). `SearchGrip` is the gesture arithmetic, kept out of the view so it can be checked.
+// match strength and the field that matched.
+//
+// Meaning, not just keywords, and now literally: every keystroke runs the lexical scorer, and
+// four hundred milliseconds after the typing stops the query goes to the box for an embedding
+// and the two are blended (`SearchBlend`). The lexical half is never switched off — it is what
+// answers offline, what answers while the box is thinking, and what answers for a save the
+// embedding backfill has not reached yet.
+//
+// `SearchGrip` is the gesture arithmetic, kept out of the view so it can be checked.
 
 import SwiftUI
 import SwiftData
@@ -48,6 +55,10 @@ struct SearchOverlay: View {
     @Binding var query: String
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
 
+    /// The current query's vector, or nil while it is being typed, being fetched, or unavailable.
+    /// Nil is not an error state — it is the lexical-only mode the whole screen degrades to.
+    @State private var queryEmbedding: [Float]?
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -77,7 +88,29 @@ struct SearchOverlay: View {
             .scrollDismissesKeyboard(.interactively)
             .background(Color.stashBackground.opacity(0.96).ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .task(id: trimmedQuery) { await embedQuery() }
         }
+    }
+
+    // MARK: - The meaning half
+
+    /// Fetches one vector for the query, four hundred milliseconds after the last keystroke —
+    /// `.task(id:)` cancels and restarts this on every change, which is the whole debounce.
+    ///
+    /// Every failure path ends in `queryEmbedding == nil` and nothing else: offline, box down,
+    /// session expired, budget spent. Search then answers exactly as it did before this existed.
+    /// A search field that apologises is worse than one that just answers.
+    private func embedQuery() async {
+        let text = trimmedQuery
+        queryEmbedding = nil
+        guard !text.isEmpty else { return }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        guard !Task.isCancelled else { return }
+
+        let client = BoxEmbeddingClient(config: PipelineCenter.currentConfig())
+        let vectors = try? await client.embed([text])
+        guard !Task.isCancelled else { return }
+        queryEmbedding = vectors?.first
     }
 
     // MARK: - Matching
@@ -88,16 +121,28 @@ struct SearchOverlay: View {
 
     private struct Hit: Identifiable {
         let video: Video
-        let percent: Int
+        let score: Double
         let matchedIn: String
         var id: String { video.videoID }
+        /// The badge. Same arithmetic the lexical-only scorer always used, so a keystroke result
+        /// still reads exactly as it did; 20 is the floor because "3%" reads as a bug.
+        var percent: Int { max(20, min(98, Int(score * 98))) }
     }
 
-    /// Token-overlap scoring across the extracted fields, weighted by field quality.
-    // ponytail: naive token matching stands in for the future embedding search.
+    /// Token overlap across the extracted fields, weighted by field quality, blended with cosine
+    /// distance to the query's embedding once there is one.
+    ///
+    /// The lexical half is unchanged and unconditional: it is what runs per keystroke, what runs
+    /// offline, and what runs for a save the embedding backfill has not reached — a library
+    /// mid-backfill has to stay searchable, not half-searchable. Only a save that has a vector
+    /// gets the blend, which is why one without keeps its lexical-only score rather than being
+    /// pushed down by a semantic term it cannot score.
     private var results: [Hit] {
         let tokens = trimmedQuery.lowercased().split(separator: " ").map(String.init)
         guard !tokens.isEmpty else { return [] }
+        let query = queryEmbedding
+        let oldest = videos.last?.bookmarkedAt ?? .distantPast
+        let newest = videos.first?.bookmarkedAt ?? .distantPast
 
         return videos.compactMap { video in
             // (field label, text, weight) — title matches count double.
@@ -109,21 +154,53 @@ struct SearchOverlay: View {
                 ("transcript", video.transcript ?? "", 1),
                 ("on-screen text", video.ocrText ?? "", 1),
             ]
-            var score = 0.0
+            var raw = 0.0
             var matchedIn: String?
             for (label, text, weight) in fields {
                 let lower = text.lowercased()
                 let hits = tokens.filter { lower.contains($0) }
                 if !hits.isEmpty {
-                    score += Double(hits.count) * weight
+                    raw += Double(hits.count) * weight
                     if matchedIn == nil { matchedIn = label }
                 }
             }
-            guard let matchedIn, score > 0 else { return nil }
-            let percent = min(98, Int(score / (Double(tokens.count) * 2) * 98))
-            return Hit(video: video, percent: max(percent, 20), matchedIn: matchedIn)
+            // The normalization the percent above always applied, now named because the blend
+            // needs it as a 0...1 term rather than as a badge.
+            let lexical = min(1, raw / (Double(tokens.count) * 2))
+
+            guard let query, let stored = video.embedding.map(EmbeddingVector.unpack),
+                  !stored.isEmpty else {
+                guard let matchedIn else { return nil }
+                return Hit(video: video, score: lexical, matchedIn: matchedIn)
+            }
+
+            let cosine = EmbeddingVector.cosine(query, stored)
+            let meaning = cosine >= SearchBlend.meaningFloor
+            // A save has to have matched a word or come close enough in meaning; otherwise the
+            // blend's recency term alone would return the entire library for every query.
+            guard matchedIn != nil || meaning else { return nil }
+            let reason: String
+            switch (matchedIn, meaning) {
+            case (let field?, true): reason = "meaning and \(field)"
+            case (let field?, false): reason = field
+            case (nil, _): reason = "meaning"
+            }
+            return Hit(
+                video: video,
+                score: SearchBlend.score(cosine: cosine, lexical: lexical,
+                                         recency: recency(of: video, oldest: oldest, newest: newest)),
+                matchedIn: reason)
         }
-        .sorted { $0.percent > $1.percent }
+        .sorted { $0.score > $1.score }
+    }
+
+    /// Recency as 0...1 across the library's own span: the oldest save scores 0, the newest 1.
+    /// Relative rather than absolute, so a library imported last month and one imported three
+    /// years ago both get a usable tie-breaker out of the blend's smallest term.
+    private func recency(of video: Video, oldest: Date, newest: Date) -> Double {
+        let span = newest.timeIntervalSince(oldest)
+        guard span > 0 else { return 1 }
+        return min(1, max(0, video.bookmarkedAt.timeIntervalSince(oldest) / span))
     }
 
     // MARK: - Pieces

@@ -43,6 +43,22 @@ public struct PipelineDeps: Sendable {
     }
 }
 
+/// What one deep-pass download yielded.
+///
+/// The download is the expensive part — a metered round trip through the box — so both reads of
+/// the file come back together: the words burned into the frames, and the track playing under
+/// them. Either half can be absent; a music video with nothing written on screen is exactly the
+/// case the audio half exists for.
+public struct DeepPass: Sendable {
+    public var visualText: String?
+    public var audioMatch: AudioMatch?
+
+    public init(visualText: String? = nil, audioMatch: AudioMatch? = nil) {
+        self.visualText = visualText
+        self.audioMatch = audioMatch
+    }
+}
+
 /// The five pipeline stages. Raw values match the keys `Video` seeds into `stageStatesJSON`.
 enum PipelineStage: String, CaseIterable {
     case enrich, media, transcribe, ocr, analyze
@@ -314,13 +330,14 @@ public actor PipelineRunner {
 
     // MARK: - Visual text backfill
 
-    /// Extracts on-screen text for videos that have none, then re-analyzes each one with it.
+    /// Extracts on-screen text for videos that have none, then re-analyzes each one with it, and
+    /// folds in whatever the audio identified along the way.
     ///
     /// On TikTok the words burned into the frame are often the actual content (recipe steps,
     /// list items, auto-captions), and Vision OCR is free and unmetered — unlike cloud Whisper,
     /// which is why this needs none of the transcript backfill's hourly pacing. The real cost is
-    /// bandwidth for the video download, which `visualText` owns; it receives the video's ID and
-    /// URL and returns recognized text (nil when the video carries none).
+    /// bandwidth for the video download, which `deepPass` owns; it receives the video's ID and
+    /// URL and returns everything read off that one file (see `DeepPass`).
     ///
     /// Resumable on the same terms as the transcript backfill: only videos with no stored
     /// `ocrText` whose ocr stage is not already done are picked up.
@@ -328,7 +345,7 @@ public actor PipelineRunner {
     public func backfillVisualText(
         limit: Int = Int.max,
         only: Set<String>? = nil,
-        visualText: @escaping @Sendable (String, URL) async throws -> String?,
+        deepPass: @escaping @Sendable (String, URL) async throws -> DeepPass,
         progress: @escaping @Sendable (Int, Int) -> Void
     ) async -> BackfillResult {
         let all = (try? ModelContext(container).fetch(
@@ -349,7 +366,7 @@ public actor PipelineRunner {
         for id in targets {
             if Task.isCancelled { break }
             attempted += 1
-            switch await backfillVisualOne(videoID: id, visualText: visualText) {
+            switch await backfillVisualOne(videoID: id, deepPass: deepPass) {
             case .filled: filled += 1; consecutiveFailures = 0
             case .empty: consecutiveFailures = 0   // no on-screen text is a normal result
             case .failed: consecutiveFailures += 1
@@ -373,15 +390,15 @@ public actor PipelineRunner {
 
     private func backfillVisualOne(
         videoID: String,
-        visualText: @escaping @Sendable (String, URL) async throws -> String?
+        deepPass: @escaping @Sendable (String, URL) async throws -> DeepPass
     ) async -> BackfillOutcome {
         let context = ModelContext(container)
         guard let video = try? context.fetch(
             FetchDescriptor<Video>(predicate: #Predicate { $0.videoID == videoID })).first else { return .failed }
 
-        let recognized: String?
+        let pass: DeepPass
         do {
-            recognized = try await visualText(video.videoID, video.url)
+            pass = try await deepPass(video.videoID, video.url)
         } catch StashError.quotaExhausted(let quota) {
             return .quotaExhausted(quota)
         } catch {
@@ -392,29 +409,65 @@ public actor PipelineRunner {
         stages[PipelineStage.ocr.rawValue] = .done
         store(stages, on: video)
 
-        guard let recognized, !recognized.isEmpty else {
-            try? context.save()
-            return .empty
+        var outcome = BackfillOutcome.empty
+        if let recognized = pass.visualText, !recognized.isEmpty {
+            // Always stored in the marked format, whatever produced it. The re-read above is
+            // triggered by the absence of a marker, so text stored without one would be re-read on
+            // every run — a silent, unbounded spend. A reader that returns one unmarked blob is
+            // recorded as a single frame, which is what it is.
+            let marked = recognized.hasPrefix(FrameReader.frameMarker) ? recognized : "[1] " + recognized
+            video.ocrText = marked
+            let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
+                                 author: video.author, thumbnailURL: video.thumbnailURL)
+            if let analysis = try? await deps.analyzer.analyze(
+                meta: meta, transcript: video.transcript, ocrText: marked) {
+                video.recipeJSON = nil
+                video.trackJSON = nil
+                video.musicJSON = nil
+                video.codeJSON = nil
+                await applyAnalysis(analysis, to: video)
+            }
+            outcome = .filled
         }
 
-        // Always stored in the marked format, whatever produced it. The re-read above is
-        // triggered by the absence of a marker, so text stored without one would be re-read on
-        // every run — a silent, unbounded spend. A reader that returns one unmarked blob is
-        // recorded as a single frame, which is what it is.
-        let marked = recognized.hasPrefix(FrameReader.frameMarker) ? recognized : "[1] " + recognized
-        video.ocrText = marked
-        let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
-                             author: video.author, thumbnailURL: video.thumbnailURL)
-        if let analysis = try? await deps.analyzer.analyze(
-            meta: meta, transcript: video.transcript, ocrText: marked) {
-            video.recipeJSON = nil
-            video.trackJSON = nil
-            video.musicJSON = nil
-            video.codeJSON = nil
-            await applyAnalysis(analysis, to: video)
-        }
+        // After the re-analysis, so the match lands on the picks the video ends the pass with —
+        // and outside the branch above, because a music video with nothing written on screen is
+        // precisely the kind the audio has something to say about.
+        await apply(pass.audioMatch, to: video)
         try? context.save()
-        return .filled
+        return outcome
+    }
+
+    /// Folds a recognised track into the video's picks: the artist the model was forbidden to
+    /// guess, or the one pick a music video with none should have had. See `AudioMatch.merged`
+    /// for what it refuses to touch.
+    private func apply(_ match: AudioMatch?, to video: Video) async {
+        guard let match else { return }
+        var stored = video.musicJSON
+            .flatMap { try? JSONDecoder().decode([MusicPick].self, from: $0) } ?? []
+        // A legacy single-track save counts as the video's picks, or the rule that protects an
+        // artist the model gave would not protect that one. Writing `musicJSON` below retires the
+        // old shape, exactly as re-analysis does.
+        if stored.isEmpty,
+           let legacy = video.trackJSON.flatMap({ try? JSONDecoder().decode(TrackData.self, from: $0) }),
+           !legacy.title.isEmpty {
+            stored = [MusicPick(kind: .track, title: legacy.title,
+                                artist: legacy.artist, link: legacy.universalLink)]
+        }
+        guard let merged = match.merged(
+            into: stored, category: Category(rawValue: video.categoryRaw) ?? .other) else { return }
+
+        // Re-resolve, because a pick that just gained an artist can now be looked up properly.
+        // `resolve` overwrites every link outright, so keep the old one wherever the new lookup
+        // came back empty — a catalogue that is down today must not erase yesterday's answer.
+        let resolved = await deps.musicResolver.resolve(merged)
+        let kept = zip(resolved, merged).map { new, old -> MusicPick in
+            var new = new
+            if new.link == nil { new.link = old.link }
+            return new
+        }
+        video.musicJSON = try? JSONEncoder().encode(kept)
+        video.trackJSON = nil
     }
 
     /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.

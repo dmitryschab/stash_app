@@ -48,6 +48,9 @@ extension Color {
     static let categoryComedy = Color(light: 0x9B2FC4, dark: 0xB44CDE)   // purple
     static let categoryMusic = Color(light: 0x2743C7, dark: 0x4A63E7)    // cobalt
     static let categoryCoding = Color(light: 0x1A6F52, dark: 0x2A9271)   // forest green
+    static let categoryFilm = Color(light: 0x1F6BA8, dark: 0x3389C6)     // steel blue
+    static let categoryDining = Color(light: 0xB02C55, dark: 0xCE4670)   // rose
+    static let categoryWellness = Color(light: 0x3F8A3A, dark: 0x55A84F) // grass green
     static let categoryOther = Color(light: 0xC98A12, dark: 0xC98A12)    // amber
 
     // Chrome.
@@ -209,6 +212,9 @@ extension Category {
         case .comedy: "Comedy"
         case .music: "Music"
         case .coding: "Tech"
+        case .film: "Film & TV"
+        case .dining: "Dining"
+        case .wellness: "Wellness"
         case .other: "Other"
         }
     }
@@ -225,6 +231,9 @@ extension Category {
         case .comedy: "Comedy"
         case .music: "Music"
         case .coding: "Tech"
+        case .film: "Film"
+        case .dining: "Dining"
+        case .wellness: "Wellness"
         case .other: "Other"
         }
     }
@@ -240,6 +249,9 @@ extension Category {
         case .comedy: .categoryComedy
         case .music: .categoryMusic
         case .coding: .categoryCoding
+        case .film: .categoryFilm
+        case .dining: .categoryDining
+        case .wellness: .categoryWellness
         case .other: .categoryOther
         }
     }
@@ -255,6 +267,9 @@ extension Category {
         case .comedy: "theatermasks.fill"
         case .music: "music.note"
         case .coding: "chevron.left.forwardslash.chevron.right"
+        case .film: "film"
+        case .dining: "cup.and.saucer.fill"
+        case .wellness: "leaf.fill"
         case .other: "sparkles"
         }
     }
@@ -262,7 +277,8 @@ extension Category {
 
 /// The library segments, in tab order.
 let librarySegments: [Category] = [
-    .recipe, .fitness, .style, .travel, .home, .learning, .comedy, .music, .coding, .other,
+    .recipe, .fitness, .style, .travel, .home, .learning, .comedy, .music, .coding,
+    .film, .dining, .wellness, .other,
 ]
 
 /// The Library tab's shelves: every segment that has no tab of its own. Recipes live on

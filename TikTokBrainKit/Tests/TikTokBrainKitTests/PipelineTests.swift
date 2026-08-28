@@ -325,7 +325,8 @@ extension PipelineTests {
 
         // …the words on screen are the only real signal.
         let first = await runner.backfillVisualText(
-            visualText: { _, _ in "MISO RAMEN\n2 eggs\nboil 4 minutes" }, progress: { _, _ in })
+            deepPass: { _, _ in DeepPass(visualText: "MISO RAMEN\n2 eggs\nboil 4 minutes") },
+            progress: { _, _ in })
         XCTAssertEqual(first.filled, 1)
         XCTAssertFalse(first.stoppedEarly)
 
@@ -335,8 +336,48 @@ extension PipelineTests {
         XCTAssertEqual(updated.categoryRaw, Category.recipe.rawValue)
 
         let second = await runner.backfillVisualText(
-            visualText: { _, _ in "should not be called" }, progress: { _, _ in })
+            deepPass: { _, _ in DeepPass(visualText: "should not be called") }, progress: { _, _ in })
         XCTAssertEqual(second.attempted, 0)
+    }
+
+    /// The other half of the same download: a save whose artist the model refused to guess gets
+    /// one from the audio, even though there is not a word on screen — and the filled pick goes
+    /// back through the catalogue, because a title with an artist can be looked up properly and a
+    /// title without one could not.
+    func testTheAudioMatchFillsAMissingArtistAndReResolvesThePick() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "7000000000000000051",
+            url: URL(string: "https://www.tiktok.com/@x/video/7000000000000000051")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1100))
+        video.categoryRaw = Category.music.rawValue
+        video.musicJSON = try JSONEncoder().encode(
+            [MusicPick(kind: .track, title: "Polaris", artist: "")])
+        context.insert(video)
+        try context.save()
+
+        let seen = SeenPicks()
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+            transcriber: StubTranscriber(transcript: ""),
+            analyzer: StubAnalyzer(),
+            musicResolver: RecordingMusicResolver(seen: seen),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        let result = await runner.backfillVisualText(deepPass: { _, _ in
+            DeepPass(audioMatch: AudioMatch(title: "Polaris", artist: "KMC"))
+        }) { _, _ in }
+        XCTAssertEqual(result.attempted, 1)
+
+        let stored = try XCTUnwrap(fetchVideo("7000000000000000051", in: container))
+        XCTAssertNil(stored.ocrText, "there was nothing to read, so nothing was stored")
+        XCTAssertEqual(stored.categoryRaw, Category.music.rawValue, "no text, no re-analysis")
+        let picks = try JSONDecoder().decode([MusicPick].self, from: XCTUnwrap(stored.musicJSON))
+        XCTAssertEqual(picks, [MusicPick(kind: .track, title: "Polaris", artist: "KMC")])
+        XCTAssertEqual(seen.titles, ["Polaris"], "the filled pick was offered to the catalogue")
     }
 
     /// The backfill fills a missing transcript, re-analyzes with it, and — crucially — does not
@@ -410,7 +451,7 @@ extension PipelineTests {
 
         let visual = await runner.backfillVisualText(
             only: ["7000000000000000021"],
-            visualText: { _, _ in "MISO RAMEN" },
+            deepPass: { _, _ in DeepPass(visualText: "MISO RAMEN") },
             progress: { _, _ in })
         XCTAssertEqual(visual.filled, 1)
         XCTAssertEqual(visual.attempted, 1)
@@ -517,18 +558,18 @@ extension PipelineTests {
             musicResolver: StubMusicResolver(link: nil),
             ocr: { _ in "" })
         let runner = PipelineRunner(deps: deps, container: container)
-        let extractor: @Sendable (String, URL) async throws -> String? = { id, _ in
+        let extractor: @Sendable (String, URL) async throws -> DeepPass = { id, _ in
             read.record([id])
-            return "[1] Polaris | KMC"
+            return DeepPass(visualText: "[1] Polaris | KMC")
         }
 
-        let first = await runner.backfillVisualText(visualText: extractor) { _, _ in }
+        let first = await runner.backfillVisualText(deepPass: extractor) { _, _ in }
         XCTAssertEqual(first.attempted, 1)
         XCTAssertEqual(read.titles, ["7000000000000000041"],
                        "only the flat one is re-read; the marked one is left alone")
 
         // Terminates: the re-read stored marked text, so a second run finds nothing.
-        let second = await runner.backfillVisualText(visualText: extractor) { _, _ in }
+        let second = await runner.backfillVisualText(deepPass: extractor) { _, _ in }
         XCTAssertEqual(second.attempted, 0, "re-reading must not repeat every run")
     }
 
@@ -553,11 +594,13 @@ extension PipelineTests {
             ocr: { _ in "" })
         let runner = PipelineRunner(deps: deps, container: container)
 
-        _ = await runner.backfillVisualText(visualText: { _, _ in "no markers here" }) { _, _ in }
+        _ = await runner.backfillVisualText(
+            deepPass: { _, _ in DeepPass(visualText: "no markers here") }) { _, _ in }
         let stored = try XCTUnwrap(fetchVideo("7000000000000000043", in: container))
         XCTAssertEqual(stored.ocrText, "[1] no markers here")
 
-        let second = await runner.backfillVisualText(visualText: { _, _ in "unused" }) { _, _ in }
+        let second = await runner.backfillVisualText(
+            deepPass: { _, _ in DeepPass(visualText: "unused") }) { _, _ in }
         XCTAssertEqual(second.attempted, 0)
     }
 

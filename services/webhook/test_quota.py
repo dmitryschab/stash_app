@@ -1,4 +1,8 @@
-"""Quota: initial budget first, then the calendar month, and never more than exists."""
+"""Quota: initial budget first, then the calendar month, and never more than exists.
+
+Plus the counter beside it: the deep pass spends no quota, so a per-UTC-day cap is what
+bounds it instead.
+"""
 
 import time
 from datetime import datetime, timezone
@@ -10,6 +14,7 @@ from cloud_import_store import QUOTA_CAS_ATTEMPTS, DynamoImportStore, _next_mont
 from conftest import ConditionalTable
 
 QUOTA_KEY = ("INSTALL#user-a", "QUOTA")
+DEEP_PASS_KEY = ("INSTALL#user-a", "DEEPPASS")
 
 
 def store(table=None):
@@ -147,6 +152,42 @@ def test_the_retry_budget_covers_the_clients_own_concurrency():
     assert losses < QUOTA_CAS_ATTEMPTS
     assert subject.reserve_quota(1) is not None
     assert int(table.items[QUOTA_KEY]["initialRemaining"]) == INITIAL_LIMIT - 2
+
+
+def test_the_deep_pass_cap_counts_up_and_then_refuses():
+    subject = store()
+    assert subject.charge_deep_pass(2) is True
+    assert subject.charge_deep_pass(2) is True
+    assert subject.charge_deep_pass(2) is False
+    assert subject.get_quota().initial_remaining == INITIAL_LIMIT  # a separate counter entirely
+
+
+def test_the_deep_pass_cap_rolls_over_at_the_next_utc_day():
+    """No scheduled sweep: yesterday's day key is what makes today's first call start at one."""
+    table = ConditionalTable()
+    subject = store(table)
+    assert subject.charge_deep_pass(1) is True
+    assert subject.charge_deep_pass(1) is False
+
+    table.items[DEEP_PASS_KEY]["utcDay"] = "2020-01-01"
+    assert subject.charge_deep_pass(1) is True
+    assert int(table.items[DEEP_PASS_KEY]["usedToday"]) == 1
+
+
+def test_two_deep_pass_calls_cannot_both_take_the_last_one():
+    """The same stale-read interleaving the quota row is protected against."""
+    table = ConditionalTable()
+    loser, winner = store(table), store(table)
+    assert loser.charge_deep_pass(2) is True
+    stale = table.get_item(Key={"PK": DEEP_PASS_KEY[0], "SK": DEEP_PASS_KEY[1]})["Item"]
+    assert winner.charge_deep_pass(2) is True  # that was the last one
+
+    pending = [{"Item": dict(stale)}]
+    live_get_item = table.get_item
+    table.get_item = lambda **kwargs: pending.pop(0) if pending else live_get_item(**kwargs)
+
+    assert loser.charge_deep_pass(2) is False
+    assert int(table.items[DEEP_PASS_KEY]["usedToday"]) == 2
 
 
 def test_contention_that_never_settles_is_loud_not_silent():
