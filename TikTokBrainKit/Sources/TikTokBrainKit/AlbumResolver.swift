@@ -18,6 +18,13 @@ public struct AlbumRef: Codable, Equatable, Sendable {
 /// Resolves a track title/artist to its album, and an album to its full tracklist,
 /// via the public iTunes Search API. Best-effort: empty titles and "original sound"
 /// placeholders return `nil`, and so does a hit that does not resemble what was asked for.
+///
+/// iTunes is asked first because it is the only one of the two that can also hand back a
+/// tracklist. It is not asked alone: its Search API indexes the *purchasable* iTunes Store,
+/// which has lost most streaming-only back catalogue — Death Grips' entire discography comes
+/// back as singles, and Tyler, The Creator returns CHROMAKOPIA but not IGOR. Measured over one
+/// real recommendation list it found 5 of 12 sleeves where Deezer found 12, which is why a
+/// miss falls through to Deezer for the artwork rather than leaving a hole in the wall.
 public struct AlbumResolver {
     private let session: URLSession
 
@@ -51,7 +58,8 @@ public struct AlbumResolver {
               }),
               let collectionID = hit.collectionId,
               let albumTitle = hit.collectionName,
-              let trackCount = hit.trackCount else { return nil }
+              let trackCount = hit.trackCount
+        else { return try? await deezerAlbum(title: trimmed, artist: artist) }
         return AlbumRef(
             collectionID: collectionID,
             albumTitle: albumTitle,
@@ -90,7 +98,8 @@ public struct AlbumResolver {
                       returnedTitle: $0.collectionName ?? "", returnedArtist: $0.artistName ?? "")
               }),
               let collectionID = hit.collectionId,
-              let albumTitle = hit.collectionName else { return nil }
+              let albumTitle = hit.collectionName
+        else { return try? await deezerAlbum(title: trimmed, artist: pick.artist) }
         return AlbumRef(
             collectionID: collectionID,
             albumTitle: albumTitle,
@@ -102,6 +111,67 @@ public struct AlbumResolver {
             albumURL: hit.collectionViewUrl.flatMap(URL.init(string:)),
             artworkURL: Self.artwork(hit.artworkUrl100)
         )
+    }
+
+    /// The same album out of Deezer's catalogue, for the sleeve iTunes did not have.
+    ///
+    /// Deliberately artwork-first: Deezer has no tracklist endpoint we use, so the ref it
+    /// produces carries a **negative** `collectionID`. That is the marker for "art only" —
+    /// it cannot collide with an iTunes id, it still keys the sleeve cache, and callers that
+    /// would otherwise ask iTunes to look it up check the sign first (`AlbumStore.loadTracklist`).
+    /// Same confidence gate as iTunes: a sleeve for the wrong record is worse than none.
+    func deezerAlbum(title: String, artist: String) async throws -> AlbumRef? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Deezer's field-scoped query syntax. A bare term matches lyrics and playlists too,
+        // which is exactly the loose matching the confidence gate then has to throw away.
+        let query = artist.isEmpty ? "album:\"\(trimmed)\"" : "artist:\"\(artist)\" album:\"\(trimmed)\""
+        var components = URLComponents(string: "https://api.deezer.com/search/album")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: "5"),
+        ]
+        guard let url = components?.url else { return nil }
+
+        let (data, _) = try await session.data(from: url)
+        let decoded = try JSONDecoder().decode(DeezerResponse.self, from: data)
+        guard let hit = decoded.data.first(where: {
+            MatchConfidence.accepts(
+                askedTitle: trimmed, askedArtist: artist,
+                returnedTitle: $0.title, returnedArtist: $0.artist?.name ?? "")
+        }), let cover = hit.coverBig.flatMap(URL.init(string:)) else { return nil }
+
+        return AlbumRef(
+            collectionID: -hit.id,
+            albumTitle: hit.title,
+            artist: hit.artist?.name ?? artist,
+            year: nil,
+            trackCount: hit.nbTracks ?? 0,
+            trackNumber: nil,
+            trackName: "",
+            albumURL: hit.link.flatMap(URL.init(string:)),
+            artworkURL: cover
+        )
+    }
+
+    private struct DeezerResponse: Decodable {
+        let data: [Album]
+        struct Album: Decodable {
+            let id: Int
+            let title: String
+            let link: String?
+            let coverBig: String?
+            let nbTracks: Int?
+            let artist: Artist?
+            struct Artist: Decodable { let name: String }
+
+            private enum CodingKeys: String, CodingKey {
+                case id, title, link, artist
+                case coverBig = "cover_big"
+                case nbTracks = "nb_tracks"
+            }
+        }
     }
 
     /// iTunes only ever returns the 100 px sleeve, but the CDN serves any size at the same

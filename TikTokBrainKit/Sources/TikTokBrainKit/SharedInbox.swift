@@ -41,6 +41,19 @@ public struct SharedInbox: Sendable {
 
     public var pendingCount: Int { files().count }
 
+    /// The pending links without consuming them, for UI that wants to show a share is on its
+    /// way before the drain's network work starts. Keyed by filename, the only identity a
+    /// share has before its link resolves to a video id.
+    public func peek() -> [(id: String, url: URL)] {
+        files().compactMap { file in
+            guard let data = try? Data(contentsOf: file) else { return nil }
+            let text = String(decoding: data, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: text), url.scheme != nil, url.host != nil else { return nil }
+            return (file.lastPathComponent, url)
+        }
+    }
+
     /// Reads every pending file and deletes it, returning the links that parsed.
     ///
     /// A file that does not parse is deleted too: leaving it would jam every later share behind

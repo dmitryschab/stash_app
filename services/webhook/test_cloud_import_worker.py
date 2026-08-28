@@ -103,6 +103,75 @@ def test_empty_metadata_is_unavailable(monkeypatch):
     assert result.unavailable is True
 
 
+PHOTO_METADATA = {
+    "id": "123",
+    "description": "",
+    "formats": [{"format_id": "audio", "vcodec": "none"}],
+    "thumbnails": [{"id": "cover", "url": "https://cdn.test/x~tplv-photomode-image.jpeg"}],
+    "track": "Age of Consent",
+    "artist": "New Order",
+}
+
+
+def _run_photo_pass(monkeypatch, metadata, image_response):
+    monkeypatch.setattr(
+        cloud_import_pipeline.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(metadata), stderr=""),
+    )
+    monkeypatch.setattr(cloud_import_pipeline.requests, "get", lambda *a, **k: image_response)
+    seen = {}
+    pipeline = cloud_import_pipeline.FastPassPipeline(
+        analyzer=lambda payload: seen.update(payload) or {"category": "music", "title": "Albums"}
+    )
+    pipeline.process("https://www.tiktok.com/@x/video/123")
+    return seen
+
+
+def test_a_photo_post_url_is_rewritten_for_yt_dlp(monkeypatch):
+    """TikTok shares a photo post as /photo/<id>. yt-dlp refuses that spelling outright, so
+    every shared photo post failed as invalid_metadata before the analyzer ever ran."""
+    seen = {}
+
+    def run(args, **_kwargs):
+        seen["url"] = args[-1]
+        return SimpleNamespace(returncode=0, stdout=json.dumps(PHOTO_METADATA), stderr="")
+
+    monkeypatch.setattr(cloud_import_pipeline.subprocess, "run", run)
+    monkeypatch.setattr(cloud_import_pipeline.requests, "get",
+                        lambda *a, **k: SimpleNamespace(status_code=404, content=b""))
+    result = cloud_import_pipeline.FastPassPipeline(
+        analyzer=lambda _: {"category": "music"}
+    ).process("https://www.tiktok.com/@soundhostage/photo/7678492109686476045")
+
+    assert seen["url"] == "https://www.tiktok.com/@soundhostage/video/7678492109686476045"
+    # The id has to survive the rewrite too — VIDEO_ID_RE used to miss /photo/ entirely.
+    assert result.video_id == "7678492109686476045"
+
+
+def test_a_photo_post_sends_its_image_to_the_analyzer(monkeypatch):
+    """A photo post has no video track, so the OCR pass can never see it — the albums it
+    names exist only in this image."""
+    seen = _run_photo_pass(
+        monkeypatch, PHOTO_METADATA, SimpleNamespace(status_code=200, content=b"jpeg-bytes"))
+    assert seen["image"] == b"jpeg-bytes"
+
+
+def test_an_unreachable_photo_image_still_analyses(monkeypatch):
+    """TikTok's signed photomode URLs 404 often; a miss falls back to caption-only rather
+    than failing the video."""
+    seen = _run_photo_pass(
+        monkeypatch, PHOTO_METADATA, SimpleNamespace(status_code=404, content=b"nope"))
+    assert "image" not in seen
+
+
+def test_a_real_video_fetches_no_image(monkeypatch):
+    metadata = dict(PHOTO_METADATA, formats=[{"format_id": "0", "vcodec": "h264"}])
+    seen = _run_photo_pass(
+        monkeypatch, metadata, SimpleNamespace(status_code=200, content=b"jpeg-bytes"))
+    assert "image" not in seen
+
+
 def test_duplicate_delivery_does_not_call_provider():
     store = FakeStore(claimed=False)
     queue = FakeQueue()

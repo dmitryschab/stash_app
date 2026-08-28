@@ -192,7 +192,12 @@ struct RootView: View {
 
             VStack(spacing: 8) {
                 if center.isImporting, let progress = center.progress, progress.total > 0 {
-                    ImportSyncPill(done: progress.done, total: progress.total)
+                    ImportSyncPill(text: "Syncing \(progress.done) of \(progress.total)")
+                } else if !center.pendingShares.isEmpty {
+                    // A shared TikTok has no done/total — the pill just says one is in flight.
+                    ImportSyncPill(text: center.pendingShares.count == 1
+                        ? "Syncing 1 share" : "Syncing \(center.pendingShares.count) shares")
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if !gripHintDone && !searchOpen {
                     Micro(text: "Hold the bar · push right to search", size: 9, tracking: 1.4, color: .stashInk.opacity(0.5))
@@ -202,6 +207,7 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: searchOpen)
+        .animation(.spring(duration: 0.4, bounce: 0.2), value: center.pendingShares.isEmpty)
         .onChange(of: searchOpen) { _, open in
             if open { gripHintDone = true }
         }
@@ -238,18 +244,17 @@ struct RootView: View {
     }
 }
 
-/// Slim status pill above the tab bar, shown on every tab while a local import is still
-/// draining in the background — so leaving the Import screen never hides that it's running.
+/// Slim status pill above the tab bar, shown on every tab while an import or a shared
+/// TikTok is still syncing in the background — so no screen ever hides that it's running.
 private struct ImportSyncPill: View {
-    let done: Int
-    let total: Int
+    let text: String
 
     var body: some View {
         HStack(spacing: 9) {
             ProgressView()
                 .controlSize(.mini)
                 .tint(.stashOnInk)
-            Micro(text: "Syncing \(done) of \(total)", size: 9.5, tracking: 0.9, color: .stashOnInk)
+            Micro(text: text, size: 9.5, tracking: 0.9, color: .stashOnInk)
         }
         .padding(.horizontal, 16)
         .frame(height: 32)

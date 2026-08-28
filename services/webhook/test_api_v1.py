@@ -154,6 +154,45 @@ def test_a_failed_download_is_not_billable(store, monkeypatch):
     assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
+def test_a_photo_post_is_never_transcribed(store, monkeypatch):
+    """Its audio is a licensed backing track, not speech. The app treats any non-empty
+    transcript as the post's own content and re-analyses from text alone, which wiped the
+    album picks the fast pass had just read off the picture."""
+    def run(args, **_kwargs):
+        target = args[args.index("-o") + 1]
+        directory = os.path.dirname(target)
+        with open(target.replace("%(ext)s", "m4a"), "wb") as handle:
+            handle.write(b"\x00" * 16)
+        with open(os.path.join(directory, "audio.info.json"), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"formats": [{"format_id": "audio", "vcodec": "none"}]}))
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(api_v1.subprocess, "run", run)
+    monkeypatch.setattr(api_v1.requests, "post",
+                        lambda *a, **k: pytest.fail("Whisper ran for a photo post"))
+    with TestClient(app) as client:
+        response = client.post("/v1/videos/transcript", json={"url": URL})
+
+    assert response.status_code == 200
+    assert response.json()["transcript"] is None
+    assert store.get_quota().initial_remaining == INITIAL_LIMIT
+
+
+def test_a_photo_post_is_refused_as_unreadable_not_as_a_failure(store, monkeypatch):
+    """A photo post has no video track, so yt-dlp reports the format missing. 502 made that
+    look retryable, and five in a row abort the app's whole visual backfill — 415 tells it to
+    record the read as done and move on to the real videos behind it."""
+    def run(args, **_kwargs):
+        return SimpleNamespace(
+            returncode=1, stdout=b"",
+            stderr=b"ERROR: [TikTok] 123: Requested format is not available.")
+
+    monkeypatch.setattr(api_v1.subprocess, "run", run)
+    with TestClient(app) as client:
+        assert client.get(f"/v1/tiktok/download/{VIDEO_ID}").status_code == 415
+    assert store.get_quota().initial_remaining == INITIAL_LIMIT
+
+
 def test_a_bad_video_id_is_refused(store):
     with TestClient(app) as client:
         assert client.get("/v1/tiktok/download/../etc/passwd").status_code in (400, 404)
@@ -194,6 +233,72 @@ def test_the_analyzer_body_is_rebuilt_from_an_allowlist(store, monkeypatch):
     assert sent["max_tokens"] == api_v1.CHAT_MAX_OUTPUT_TOKENS
     assert sent["temperature"] == 1.0
     assert set(sent) == {"model", "messages", "temperature", "max_tokens"}
+
+
+@pytest.fixture
+def analyzer_calls(monkeypatch):
+    """Capture the outbound analyzer request without spending a provider call."""
+    calls = []
+
+    def capture(url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": headers, "body": json})
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"choices": [{"message": {"content": '{"category":"music"}'}}]})
+
+    monkeypatch.setattr(api_v1, "_bedrock_token", lambda: "test-bedrock-token")
+    monkeypatch.setattr(api_v1.requests, "post", capture)
+    return calls
+
+
+def test_a_photo_post_goes_to_the_vision_model_with_its_picture(monkeypatch, analyzer_calls):
+    """Bedrock's Gemma cannot recognise album artwork, so an album-grid post has to reach a
+    model that can — with the picture attached, since its releases are only ever pixels."""
+    monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "test-openrouter-key")
+
+    api_v1.analyze_metadata({"caption": "", "track": "Age of Consent",
+                             "isPhotoPost": True, "image": b"jpeg"})
+    call = analyzer_calls[-1]
+    assert call["url"] == api_v1.OPENROUTER_URL
+    assert call["body"]["model"] == api_v1.OPENROUTER_VISION_MODEL
+    assert call["headers"]["Authorization"] == "Bearer test-openrouter-key"
+    # A sixteen-album grid runs past the text ceiling; truncation loses the whole analysis.
+    assert call["body"]["max_tokens"] == api_v1.VISION_MAX_OUTPUT_TOKENS
+    content = call["body"]["messages"][1]["content"]
+    assert [part["type"] for part in content] == ["text", "image_url"]
+    assert content[1]["image_url"]["url"] == "data:image/jpeg;base64,anBlZw=="
+    assert "photo post" in content[0]["text"]
+
+
+def test_an_ordinary_video_still_goes_to_bedrock(monkeypatch, analyzer_calls):
+    monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "test-openrouter-key")
+
+    api_v1.analyze_metadata({"caption": "a real video"})
+    call = analyzer_calls[-1]
+    assert call["url"] == api_v1.BEDROCK_URL
+    assert isinstance(call["body"]["messages"][1]["content"], str)
+
+
+def test_a_photo_post_falls_back_to_bedrock_without_a_vision_key(monkeypatch, analyzer_calls):
+    """One missing credential must degrade to an unread picture, not turn every photo post
+    in an import into an error."""
+    monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "")
+
+    api_v1.analyze_metadata({"caption": "", "isPhotoPost": True, "image": b"jpeg"})
+    call = analyzer_calls[-1]
+    assert call["url"] == api_v1.BEDROCK_URL
+    assert isinstance(call["body"]["messages"][1]["content"], str)
+
+
+def test_a_photo_post_with_no_picture_says_so(monkeypatch, analyzer_calls):
+    """TikTok would not serve the image. The prompt must still say it is a photo post, or the
+    backing track is the only line in it and comes back as the recommendation."""
+    monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "test-openrouter-key")
+
+    api_v1.analyze_metadata({"caption": "", "track": "Age of Consent", "isPhotoPost": True})
+    call = analyzer_calls[-1]
+    assert call["url"] == api_v1.BEDROCK_URL
+    assert "could not be fetched" in call["body"]["messages"][1]["content"]
 
 
 def test_an_exhausted_account_cannot_drive_the_analyzer(store, monkeypatch):

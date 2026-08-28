@@ -31,6 +31,23 @@ final class PipelineCenter {
     var cloudStatus: CloudImportStatus?
     var cloudSyncing = false
 
+    /// A share surfaced to the UI from the moment the inbox is peeked until the fast pass
+    /// classifies it (or the attempt fails) — what the Library's incoming card and the sync
+    /// pill render during the otherwise silent resolve/submit window. Deliberately not
+    /// persisted: the entries mirror the inbox files and the in-flight submission, both of
+    /// which are re-derived on the next foreground.
+    struct PendingShare: Identifiable, Equatable {
+        enum Stage: Equatable { case fetching, saving, reading, failed }
+        let id: String              // inbox filename — exists before any video id does
+        var stage: Stage = .fetching
+        var videoIDs: [String] = []
+    }
+
+    var pendingShares: [PendingShare] = []
+    /// Rows already ingested but still represented by the incoming card, so lists can
+    /// avoid showing the same save twice.
+    var pendingShareVideoIDs: Set<String> { Set(pendingShares.flatMap(\.videoIDs)) }
+
     var cloudImportEnabled: Bool { Self.cloudImportEnabled }
 
     private var container: ModelContainer?
@@ -336,6 +353,11 @@ final class PipelineCenter {
     func drainSharedInbox() {
         guard StashSession.shared.isSignedIn, Self.cloudImportEnabled, !isImporting else { return }
         guard let inbox = SharedInbox(), inbox.pendingCount > 0 else { return }
+        // The placeholder exists before any network: peeking is a directory read, and these
+        // entries are what the Library renders during the resolve and submit round trips.
+        for entry in inbox.peek() where !pendingShares.contains(where: { $0.id == entry.id }) {
+            pendingShares.append(PendingShare(id: entry.id))
+        }
         processingTask = Task { [weak self] in
             await self?.importShared(links: inbox.drain(), returningTo: inbox)
         }
@@ -350,6 +372,7 @@ final class PipelineCenter {
         guard !links.isEmpty else { return }
         guard let runner = makeRunner(), let client = Self.makeCloudClient() else {
             links.forEach { _ = try? inbox.write($0) }
+            pendingShares.removeAll()
             lastError = "Cloud import isn't configured — check the base URL in Settings."
             return
         }
@@ -361,7 +384,11 @@ final class PipelineCenter {
         batch.requeue.forEach { _ = try? inbox.write($0) }
         lastError = batch.rejectionMessage
         let bookmarks = batch.bookmarks
-        guard !bookmarks.isEmpty else { return }
+        guard !bookmarks.isEmpty else {
+            failPendingShares()
+            return
+        }
+        setPendingShares(stage: .saving)
 
         // The counter the box charges against; one unit per video here, as with any import.
         await StashSession.shared.refreshQuota()
@@ -372,11 +399,13 @@ final class PipelineCenter {
             shareImports.append(ShareImport(
                 id: clientImportID, importID: submission.importID, videoIDs: bookmarks.map(\.id)))
             persistShareImports()
+            setPendingShares(stage: .reading, videoIDs: bookmarks.map(\.id))
             lastSummary = bookmarks.count == 1
                 ? "Saved a shared TikTok — reading it now"
                 : "Saved \(bookmarks.count) shared TikToks — reading them now"
             syncCloudImportIfNeeded()
         } catch {
+            failPendingShares()
             bookmarks.forEach { _ = try? inbox.write($0.url) }
             if let stashError = error as? StashError {
                 lastError = stashError.localizedDescription
@@ -441,6 +470,27 @@ final class PipelineCenter {
         persistShareImports()
         lastSummary = "Shared TikTok ready · \(transcripts.filled) transcribed · "
             + "\(visual.filled) read on screen"
+    }
+
+    /// Advances every in-flight placeholder together: a share batch is one submission, so
+    /// its card moves through the stages as one.
+    private func setPendingShares(stage: PendingShare.Stage, videoIDs: [String]? = nil) {
+        for index in pendingShares.indices {
+            pendingShares[index].stage = stage
+            if let videoIDs { pendingShares[index].videoIDs = videoIDs }
+        }
+    }
+
+    /// Flips the placeholders to their failure caption, then clears them a beat later — the
+    /// inbox files remain the durable record of the share, so the card only has to say what
+    /// happened before getting out of the way.
+    private func failPendingShares() {
+        guard !pendingShares.isEmpty else { return }
+        setPendingShares(stage: .failed)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.pendingShares.removeAll { $0.stage == .failed }
+        }
     }
 
     private func persistShareImports() {
@@ -528,8 +578,17 @@ final class PipelineCenter {
         let baseURL = config.baseURL
         let auth = config.auth   // closures, not a token: refreshes mid-backfill reach this
         return { videoID, _ in
-            let file = try await BoxVideoDownload.temporaryFile(
-                videoID: videoID, baseURL: baseURL, auth: auth)
+            let file: URL
+            do {
+                file = try await BoxVideoDownload.temporaryFile(
+                    videoID: videoID, baseURL: baseURL, auth: auth)
+            } catch is BoxVideoDownload.NoVideoTrack {
+                // A photo post: there are no frames to sample and there never will be. Nil is
+                // the same answer as "this video carries no on-screen text", which marks the
+                // stage done — so a library full of photo posts cannot trip the abort
+                // threshold and stop the pass before it reaches the real videos.
+                return nil
+            }
             defer { try? FileManager.default.removeItem(at: file) }
             let frames = try await MediaFetcher(keyframeCount: 12).keyframes(fromLocalFile: file)
             defer { frames.forEach { try? FileManager.default.removeItem(at: $0) } }
@@ -670,6 +729,7 @@ final class PipelineCenter {
         cloudState = CloudImportSyncState()
         cloudStatus = nil
         shareImports = []
+        pendingShares = []
         UserDefaults.standard.removeObject(forKey: Self.cloudStateKey)
         UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
     }
@@ -720,10 +780,14 @@ final class PipelineCenter {
                         shareImports[index].importID = nil
                     }
                     persistShareImports()
+                    // The fast pass classified these saves — the real rows carry the story
+                    // from here, so their placeholders leave.
+                    pendingShares.removeAll { !Set($0.videoIDs).isDisjoint(with: share.videoIDs) }
                 } catch is CancellationError {
                     return true
                 } catch let error as StashError {
                     // Session gone or budget spent: neither is fixed by polling again.
+                    failPendingShares()
                     lastError = error.localizedDescription
                     return false
                 } catch {
@@ -841,11 +905,16 @@ final class PipelineCenter {
 /// quota route: the response carries `X-Stash-Quota` and an empty budget arrives as
 /// `StashError.quotaExhausted` from the shared funnel.
 enum BoxVideoDownload {
+    /// The post is a TikTok photo post — a still and a backing track, no video track to sample.
+    /// Permanent, so callers skip the read rather than retrying it.
+    struct NoVideoTrack: Error {}
+
     static func temporaryFile(videoID: String, baseURL: URL, auth: StashAuthProvider) async throws -> URL {
         var request = URLRequest(url: baseURL.appendingPathComponent("tiktok/download/\(videoID)"))
         request.timeoutInterval = 120  // yt-dlp on the box takes 5–20 s per video
 
         let (data, response) = try await StashHTTP.send(request, on: .shared, auth: auth)
+        guard response.statusCode != 415 else { throw NoVideoTrack() }
         // Valid mp4s carry "ftyp" at byte 4; error bodies are small HTML/text.
         guard response.statusCode == 200,
               data.count > 50_000,

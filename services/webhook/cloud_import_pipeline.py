@@ -14,7 +14,56 @@ from api_v1 import YTDLP, analyze_metadata
 from cloud_import_models import VideoResult
 
 
-VIDEO_ID_RE = re.compile(r"/video/(\d+)(?:/|$)")
+VIDEO_ID_RE = re.compile(r"/(?:video|photo)/(\d+)(?:/|$)")
+_PHOTO_PATH_RE = re.compile(r"/photo/(\d+)")
+
+
+def _canonical(url: str) -> str:
+    """Rewrite a photo post's `/photo/<id>` path to `/video/<id>`.
+
+    yt-dlp's TikTok extractor refuses `/photo/` outright — "Unsupported URL" — but serves the
+    very same post under `/video/`. The app submits whatever TikTok's share sheet redirected
+    to, and for a photo post that is always the `/photo/` spelling, so every shared photo post
+    failed here as `invalid_metadata` before the analyzer ever saw it.
+    """
+    return _PHOTO_PATH_RE.sub(r"/video/\1", url, count=1)
+
+# Bedrock takes the JPEG inline and a photomode image measures ~250 KB, so this is a sanity
+# bound rather than a real limit — an image past it is dropped, not resized.
+PHOTO_IMAGE_MAX_BYTES = 4_000_000
+
+
+def _is_photo_post(metadata: dict) -> bool:
+    """True for a TikTok photo post: a still (or a few) plus a backing track, no video.
+
+    It exposes no video track, so `/tiktok/download/{id}` can never hand the app an mp4 and
+    the on-device OCR pass never sees it. For the album-grid posts that fill the music side of
+    TikTok, every release named in the post lives in its pixels and nowhere else — the caption
+    is empty and the only sound is somebody else's song.
+    """
+    formats = metadata.get("formats") or []
+    return bool(formats) and all(fmt.get("vcodec") == "none" for fmt in formats)
+
+
+def _photo_image(metadata: dict) -> bytes | None:
+    """The photo post's own picture, or None when TikTok will not serve it.
+
+    Best-effort on purpose. TikTok's signed photomode URLs 404 for a sizeable share of posts
+    — two of five measured across one account, and confirmed from the box itself, so it is the
+    signature going stale rather than anything local. A miss falls through to a text-only
+    analysis that at least knows it is looking at a photo post.
+    """
+    for thumbnail in metadata.get("thumbnails") or []:
+        url = thumbnail.get("url") or ""
+        if "photomode" not in url:
+            continue
+        try:
+            response = requests.get(url, timeout=30)
+        except requests.RequestException:
+            continue
+        if response.status_code == 200 and 0 < len(response.content) <= PHOTO_IMAGE_MAX_BYTES:
+            return response.content
+    return None
 
 
 class PipelineError(Exception):
@@ -54,6 +103,7 @@ class FastPassPipeline:
         return metadata if isinstance(metadata, dict) and metadata else None
 
     def process(self, url: str, video_id: str | None = None) -> VideoResult:
+        url = _canonical(url)
         match = VIDEO_ID_RE.search(url)
         resolved_id = video_id or (match.group(1) if match else None)
         metadata = self._metadata(url)
@@ -74,6 +124,14 @@ class FastPassPipeline:
             "track": metadata.get("track") or "",
             "artist": metadata.get("artist") or "",
         }
+        if _is_photo_post(metadata):
+            # Flagged even when the picture cannot be fetched: without it the prompt's only
+            # line is the backing track, and the model dutifully recommends somebody else's
+            # song as the thing the post was about.
+            payload["isPhotoPost"] = True
+            image = _photo_image(metadata)
+            if image:
+                payload["image"] = image
         try:
             analysis = self.analyzer(payload) or {}
         except PipelineError:

@@ -154,6 +154,46 @@ extension View {
     }
 }
 
+// MARK: - Shimmer
+
+/// A slow highlight sweep across a placeholder — the app's only loading texture. Static
+/// under Reduce Motion: the dimmed block reads as a placeholder without moving.
+struct ShimmerModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if reduceMotion {
+            content
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                let phase = timeline.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 1.5) / 1.5
+                content.overlay {
+                    GeometryReader { geo in
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.55), .clear],
+                            startPoint: .leading, endPoint: .trailing)
+                            .frame(width: geo.size.width * 0.6)
+                            .offset(x: geo.size.width * 1.6 * phase - geo.size.width * 0.6)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A shimmering placeholder block, clipped to its rounded shape.
+struct ShimmerBlock: View {
+    var cornerRadius: CGFloat = 5
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.stashInk.opacity(0.09))
+            .modifier(ShimmerModifier())
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+}
+
 // MARK: - Category display
 
 extension Category {

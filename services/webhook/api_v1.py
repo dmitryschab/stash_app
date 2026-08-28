@@ -16,6 +16,7 @@ All three cost one quota unit, charged only when the work actually produced some
 private or deleted video, a throttled provider or a Bedrock error must not eat the caller's
 budget. Nothing here is free — an unmetered authenticated route is an unbounded bill.
 """
+import base64
 import json
 import os
 import re
@@ -63,6 +64,41 @@ def _groq_key() -> str:
     """Read lazily: a module-level read would make pytest and `python api_v1.py` reach
     for instance metadata off-box."""
     return stash_secrets.secret("GROQ_API_KEY")
+
+
+def _has_no_video_track(directory: str) -> bool:
+    """True when yt-dlp's sidecar metadata says every format is audio-only — a photo post.
+
+    Unreadable or absent metadata answers False: the caller then transcribes as before, which
+    is the behaviour this whole check is narrowing, not a new risk.
+    """
+    for name in os.listdir(directory):
+        if not name.endswith(".info.json"):
+            continue
+        try:
+            with open(os.path.join(directory, name), encoding="utf-8") as handle:
+                formats = json.load(handle).get("formats") or []
+        except (OSError, ValueError):
+            return False
+        return bool(formats) and all(fmt.get("vcodec") == "none" for fmt in formats)
+    return False
+
+
+# The photo-post analyzer. Gemma cannot recognise album artwork — asked outright it answers
+# that it cannot — and this account's Bedrock endpoint serves no other model that takes an
+# image. Measured against a real album-grid post, this one named every sleeve that could be
+# checked by hand, matched Claude Opus 5 for accuracy at a twenty-fourth of the cost, and
+# returned the same list on four consecutive runs. Roughly $0.0035 per photo post.
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_VISION_MODEL = "google/gemini-3.7-flash"
+# One entry per sleeve, and a sixteen-album grid runs past 1500 output tokens. At
+# CHAT_MAX_OUTPUT_TOKENS the JSON is cut mid-object and the whole analysis is lost, not just
+# the tail of the list.
+VISION_MAX_OUTPUT_TOKENS = 4096
+
+
+def _openrouter_key() -> str:
+    return stash_secrets.secret("OPENROUTER_API_KEY")
 
 
 # ---------------------------------------------------------------- transcript
@@ -157,13 +193,24 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
     with tempfile.TemporaryDirectory() as td:
         # Keep yt-dlp's native container — Groq accepts m4a/mp4/webm alike.
         dl = subprocess.run(
-            [YTDLP, "-q", "--no-warnings", "-f", "bestaudio/best",
+            [YTDLP, "-q", "--no-warnings", "-f", "bestaudio/best", "--write-info-json",
              "-o", os.path.join(td, "audio.%(ext)s"), body.url],
             capture_output=True, timeout=180)
-        produced = [os.path.join(td, f) for f in os.listdir(td) if f.startswith("audio.")]
+        produced = [os.path.join(td, f) for f in os.listdir(td)
+                    if f.startswith("audio.") and not f.endswith(".info.json")]
         if dl.returncode != 0 or not produced:
             # deleted / private / region-locked — a normal library condition, not billable
             return {"transcript": None, "duration": 0, "unavailable": True,
+                    "quota": quota.model_dump(by_alias=True)}
+
+        # A photo post has no speech: its audio is a licensed backing track the poster chose,
+        # and Whisper duly returns that song's lyrics. The app treats any non-empty transcript
+        # as the post's own content — it clears the structured payload and re-analyses from the
+        # text alone — so transcribing somebody else's song here destroyed the album picks the
+        # fast pass had just read off the picture. Written in the same yt-dlp run as the audio,
+        # so knowing this costs no extra round trip. Not billable: nothing was transcribed.
+        if _has_no_video_track(td):
+            return {"transcript": None, "duration": 0,
                     "quota": quota.model_dump(by_alias=True)}
         audio = produced[0]
 
@@ -239,6 +286,20 @@ Two categories carry extra structure, and the Cook and Music screens are empty w
   as an empty string when the video does not name one — never guess it, because a guessed
   artist links the wrong release.
 Omit both keys for every other category.
+
+A TikTok photo post carries no speech and usually no caption: the attached image IS the whole
+post, and it outranks the rule above about missing information — never answer "Saved video"
+when there is an image. Read every word printed on it.
+
+A grid, ranking or chart of album sleeves is category music, however few words it carries.
+Name each sleeve you recognise from its cover artwork — most carry no readable title, and a
+sleeve you leave out is a release the user loses. Put one "music" entry per sleeve, in reading
+order, kind "album", and skip only the ones you genuinely cannot identify. The words printed
+beside a sleeve are almost always a genre, a mood or a rank: those belong in topics, never in
+title and never in artist.
+
+A photo post's "Sound" is the backing track the poster picked, not something the post
+recommends — never put it in "music" unless the image itself is about that release.
 """.strip()
 
 
@@ -256,30 +317,67 @@ def build_analysis_prompt(metadata: dict) -> str:
         if metadata.get("artist"):
             sound += f" by {metadata['artist']}"
         parts.append(f"Sound: {sound}")
+    if metadata.get("isPhotoPost"):
+        # Without this the sound is the only line in the prompt, and the model reads a photo
+        # post as a song recommendation — naming the backing track instead of the nine albums
+        # the picture is actually about. Said even when the picture could not be fetched,
+        # which is exactly when the prompt is otherwise just a song title.
+        parts.append(
+            "This is a photo post: the picture is the entire post and the sound above is only "
+            "the backing track, not a recommendation."
+            if metadata.get("image") else
+            "This is a photo post whose picture could not be fetched. The sound above is only "
+            "the backing track, not a recommendation — leave \"music\" empty.")
     return "\n".join(parts) if parts else "(no metadata available)"
 
 
 def analyze_metadata(metadata: dict) -> dict:
-    """Run the existing Bedrock analyzer directly for a worker fast pass."""
+    """Analyze one video's metadata, or one photo post's picture, into the Analysis object.
+
+    Everything with words goes to Bedrock, as it always has. A photo post — `metadata["image"]`,
+    raw JPEG bytes — goes to the vision model instead, because its releases exist as pixels and
+    nowhere else: no caption, no speech, and no video track for the OCR pass to sample.
+
+    A photo post with no vision key configured falls back to the text path rather than failing.
+    The picture is then unread, which the prompt already knows how to say honestly, and one
+    missing credential must not turn every photo post in an import into an error.
+    """
+    prompt = build_analysis_prompt(metadata)
+    image = metadata.get("image")
+    vision_key = _openrouter_key() if image else ""
+    if image and vision_key:
+        provider, url, model, token = "vision", OPENROUTER_URL, OPENROUTER_VISION_MODEL, vision_key
+        max_tokens = VISION_MAX_OUTPUT_TOKENS
+        content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode()}},
+        ]
+    else:
+        provider, url, model, token = "bedrock", BEDROCK_URL, BEDROCK_MODEL, _bedrock_token()
+        # Was unset, which left the ceiling to the provider default. A recipe object pushes
+        # the response to roughly 600 tokens, so an unstated limit is a truncated JSON body
+        # — and a truncated body fails the whole analysis, not just the recipe.
+        max_tokens = CHAT_MAX_OUTPUT_TOKENS
+        content = prompt
+
     response = requests.post(
-        BEDROCK_URL,
-        headers={"Authorization": f"Bearer {_bedrock_token()}", "Content-Type": "application/json"},
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         json={
-            "model": BEDROCK_MODEL,
+            "model": model,
             "temperature": 0.2,
-            # Was unset, which left the ceiling to the provider default. A recipe object pushes
-            # the response to roughly 600 tokens, so an unstated limit is a truncated JSON body
-            # — and a truncated body fails the whole analysis, not just the recipe.
-            "max_tokens": CHAT_MAX_OUTPUT_TOKENS,
+            "max_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": build_analysis_prompt(metadata)},
+                {"role": "user", "content": content},
             ],
         },
-        timeout=120,
+        # The vision model takes 12-18 s on a full grid, well inside this.
+        timeout=180,
     )
     if response.status_code != 200:
-        error = requests.HTTPError(f"bedrock {response.status_code}", response=response)
+        error = requests.HTTPError(f"{provider} {response.status_code}", response=response)
         raise error
     try:
         content = response.json()["choices"][0]["message"]["content"]
@@ -346,6 +444,14 @@ def tiktok_download(video_id: str, store: DynamoImportStore = Depends(entitled_s
              f"https://www.tiktok.com/@/video/{video_id}"],
             capture_output=True, timeout=180)
         if dl.returncode != 0 or not os.path.exists(out):
+            # A photo post has no video track at all, so yt-dlp reports the mp4 format as
+            # missing. That is a permanent property of the post, not a transient failure, and
+            # saying so lets the app record the read as done. Answering 502 instead made every
+            # photo post look retryable, and five in a row abort the whole visual backfill —
+            # starving the real videos behind them of their OCR pass.
+            stderr = (dl.stderr or b"").decode("utf-8", "replace")
+            if "Requested format is not available" in stderr:
+                raise HTTPException(status_code=415, detail="no video track")
             raise HTTPException(status_code=502, detail="download failed")
         quota = store.reserve_quota(1) or store.get_quota()  # bytes exist, unit earned
     except BaseException:

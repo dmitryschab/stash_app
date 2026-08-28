@@ -179,7 +179,13 @@ class VideoResult(ContractModel):
     # Leaving this at 1 would make re-importing a no-op for exactly those users. Bump this
     # again after any change that makes previously-stored results wrong.
     # 3: results now carry recipe and music, so rows analysed before that must be superseded.
-    analysis_revision: int = Field(alias="analysisRevision", default=3)
+    # 4: photo posts are read from their image. Every one imported before this holds a row
+    # analysed from an empty caption and a backing track — usually the wrong single "release".
+    # 5: revision 4 landed correct picks, and then the app's transcript pass overwrote them
+    # with an analysis of the backing track's lyrics. Those saves sit at revision 4 with their
+    # music gone and their category flipped, and the upserter only applies a strictly greater
+    # revision — so without this bump a re-share is a no-op for exactly the people who hit it.
+    analysis_revision: int = Field(alias="analysisRevision", default=5)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)

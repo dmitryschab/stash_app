@@ -24,6 +24,8 @@ struct LibraryView: View {
     /// True once the shelf on screen is the one *you* asked for — a tapped pill, or the
     /// `-initialSegment` a smoke run opened with. Until then the biggest shelf wins.
     @State private var pickedShelf = UserDefaults.standard.string(forKey: "initialSegment") != nil
+    // Drives the incoming-share card; observed the same way RootView observes the sync pill.
+    private var center = PipelineCenter.shared
 
     var body: some View {
         NavigationStack {
@@ -34,6 +36,12 @@ struct LibraryView: View {
                         pills.padding(.top, 14)
                         if !topicChips.isEmpty {
                             chips.padding(.top, 10)
+                        }
+
+                        if !center.pendingShares.isEmpty {
+                            IncomingShareCard(shares: center.pendingShares)
+                                .padding(.top, 14)
+                                .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
                         if let featured = filtered.first {
@@ -52,6 +60,7 @@ struct LibraryView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, stashTabBarClearance)
+                    .animation(.spring(duration: 0.45, bounce: 0.25), value: center.pendingShares)
                 }
                 .background(Color.stashBackground.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
@@ -101,8 +110,12 @@ struct LibraryView: View {
         return inSegment.filter { $0.topics.contains(topic) }
     }
 
+    /// In-flight shares are excluded: until the fast pass classifies them, the incoming card
+    /// at the top is their representation — a second "Not classified yet" row would show the
+    /// same save twice.
     private var needsLook: [Video] {
-        videos.filter(\.needsLook)
+        let inFlight = center.pendingShareVideoIDs
+        return videos.filter { $0.needsLook && !inFlight.contains($0.videoID) }
     }
 
     /// Top topics within the segment, by save count. Computed over the whole
@@ -417,6 +430,47 @@ private struct LibraryRow: View {
             }
         }
         .padding(.vertical, 9)
+    }
+}
+
+// MARK: - Incoming share
+
+/// The optimistic entry for a shared TikTok: on screen from the moment the app notices the
+/// share-extension inbox — before any network — and shimmering until the fast pass files the
+/// save onto its real shelf. The caption follows the pipeline's actual checkpoints, so a slow
+/// stage holds its line rather than pretending progress.
+private struct IncomingShareCard: View {
+    let shares: [PipelineCenter.PendingShare]
+
+    private var stage: PipelineCenter.PendingShare.Stage { shares.first?.stage ?? .fetching }
+
+    private var caption: String {
+        let base: String = switch stage {
+        case .fetching: "Fetching link…"
+        case .saving: "Saving…"
+        case .reading: "Reading the video…"
+        case .failed: "Couldn't sync — will retry"
+        }
+        return shares.count > 1 ? "\(shares.count) shares · \(base)" : base
+    }
+
+    var body: some View {
+        HStack(spacing: 11) {
+            ShimmerBlock(cornerRadius: 10)
+                .frame(width: 38, height: 38)
+            VStack(alignment: .leading, spacing: 6) {
+                ShimmerBlock().frame(width: 150, height: 11)
+                ShimmerBlock().frame(width: 90, height: 9)
+                Micro(text: caption, size: 10, tracking: 1.6,
+                      color: stage == .failed ? .categoryOther : .categoryMusic)
+                    .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+        }
+        .stashOutlineCard(padding: 12)
+        .animation(.easeOut(duration: 0.25), value: caption)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Syncing a shared TikTok — \(caption)")
     }
 }
 

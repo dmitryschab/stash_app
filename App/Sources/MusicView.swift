@@ -254,8 +254,11 @@ final class AlbumStore {
         list.picks.indices.map { pickRefs[Self.pickKey(list.id, $0)].flatMap { sleeves[$0.collectionID] } }
     }
 
+    /// A negative id is a Deezer-sourced ref — artwork only, with no iTunes catalogue entry to
+    /// look a tracklist up in. Asking anyway returns nothing and leaves the album page saying
+    /// "Fetching the tracklist…" forever, so it is not asked.
     func loadTracklist(_ collectionID: Int) async {
-        guard tracklists[collectionID] == nil,
+        guard collectionID > 0, tracklists[collectionID] == nil,
               let names = try? await resolver.tracklist(collectionID: collectionID),
               !names.isEmpty else { return }
         tracklists[collectionID] = names
@@ -377,10 +380,14 @@ struct MusicView: View {
                 .buttonStyle(.plain)
                 .rotationEffect(.degrees(s.angle))
                 .offset(y: s.dy)
+                // A save the fast pass just filed as music springs into the wall rather
+                // than blinking in — the arrival the incoming card was promising.
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
                 .accessibilityLabel("\(item.title), \(item.artist), \(item.clipsLabel)")
             }
         }
         .animation(.easeOut(duration: 0.3), value: sorting)
+        .animation(.spring(duration: 0.5, bounce: 0.25), value: items.map(\.id))
     }
 
     private var emptyState: some View {
@@ -710,7 +717,9 @@ struct AlbumDetailView: View {
 
     @ViewBuilder
     private var tracklistSection: some View {
-        if let collectionID = album.collectionID {
+        // Positive only: a Deezer-sourced album carries a negative id and no tracklist, and an
+        // eternal "Fetching the tracklist…" reads as broken rather than as absent.
+        if let collectionID = album.collectionID, collectionID > 0 {
             VStack(alignment: .leading, spacing: 4) {
                 Micro(text: "Tracklist" + (album.trackCount.map { " · \($0)" } ?? ""),
                       size: 10, tracking: 2, color: .stashInk.opacity(0.45))

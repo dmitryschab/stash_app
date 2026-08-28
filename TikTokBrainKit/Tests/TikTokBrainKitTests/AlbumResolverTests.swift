@@ -29,6 +29,55 @@ final class AlbumResolverTests: XCTestCase {
         }
     }
 
+    /// Routes by host so one test can answer iTunes and Deezer differently.
+    private func stubByHost(itunes: String, deezer: String) {
+        MusicLinkStubURLProtocol.requestHandler = { request in
+            let isDeezer = request.url?.host?.contains("deezer") == true
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200,
+                                           httpVersion: nil, headerFields: nil)!
+            return (response, Data((isDeezer ? deezer : itunes).utf8))
+        }
+    }
+
+    private static let deezerHit = #"""
+    {"data": [{
+        "id": 119606,
+        "title": "The Money Store",
+        "link": "https://www.deezer.com/album/119606",
+        "cover_big": "https://cdn.deezer.com/images/cover/x/500x500.jpg",
+        "nb_tracks": 13,
+        "artist": {"name": "Death Grips"}
+    }]}
+    """#
+
+    /// iTunes Search indexes the purchasable store, which is missing most streaming-only back
+    /// catalogue — it found 5 of 12 sleeves on a real recommendation list where Deezer found
+    /// all 12. A miss has to fall through rather than leave a hole in the wall.
+    func testAnAlbumMissingFromITunesFallsBackToDeezer() async throws {
+        stubByHost(itunes: #"{"resultCount": 0, "results": []}"#, deezer: Self.deezerHit)
+
+        let ref = try await AlbumResolver(session: makeSession())
+            .album(for: MusicPick(kind: .album, title: "The Money Store", artist: "Death Grips"))
+
+        XCTAssertEqual(ref?.albumTitle, "The Money Store")
+        XCTAssertEqual(ref?.artist, "Death Grips")
+        XCTAssertEqual(ref?.artworkURL?.absoluteString,
+                       "https://cdn.deezer.com/images/cover/x/500x500.jpg")
+        // Negative marks "artwork only, no iTunes catalogue entry": it cannot collide with an
+        // iTunes id, and it is what stops the album page asking iTunes for a tracklist.
+        XCTAssertEqual(ref?.collectionID, -119606)
+    }
+
+    /// The same gate as iTunes. A sleeve for the wrong record is worse than no sleeve.
+    func testDeezerFallbackStillRefusesAWrongRecord() async throws {
+        stubByHost(itunes: #"{"resultCount": 0, "results": []}"#, deezer: Self.deezerHit)
+
+        let ref = try await AlbumResolver(session: makeSession())
+            .album(for: MusicPick(kind: .album, title: "Exmilitary", artist: "Neutral Milk Hotel"))
+
+        XCTAssertNil(ref)
+    }
+
     func testSearchResolvesAlbum() async throws {
         stub(#"""
         {"resultCount": 1, "results": [{
