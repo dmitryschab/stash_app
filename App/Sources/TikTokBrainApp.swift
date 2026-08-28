@@ -195,8 +195,13 @@ struct RootView: View {
                     ImportSyncPill(text: "Syncing \(progress.done) of \(progress.total)")
                 } else if !center.pendingShares.isEmpty {
                     // A shared TikTok has no done/total — the pill just says one is in flight.
-                    ImportSyncPill(text: center.pendingShares.count == 1
-                        ? "Syncing 1 share" : "Syncing \(center.pendingShares.count) shares")
+                    // A failure carries its own words (out of imports, signed out) so the pill
+                    // never claims "Syncing" over a share that already died.
+                    ImportSyncPill(text: {
+                        if case .failed(let message) = center.pendingShares[0].stage { return message }
+                        return center.pendingShares.count == 1
+                            ? "Syncing 1 share" : "Syncing \(center.pendingShares.count) shares"
+                    }())
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if !gripHintDone && !searchOpen {

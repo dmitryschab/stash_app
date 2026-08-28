@@ -449,10 +449,12 @@ private struct IncomingShareCard: View {
         case .fetching: "Fetching link…"
         case .saving: "Saving…"
         case .reading: "Reading the video…"
-        case .failed: "Couldn't sync — will retry"
+        case .failed(let message): message
         }
         return shares.count > 1 ? "\(shares.count) shares · \(base)" : base
     }
+
+    private var isFailed: Bool { if case .failed = stage { true } else { false } }
 
     var body: some View {
         HStack(spacing: 11) {
@@ -462,7 +464,7 @@ private struct IncomingShareCard: View {
                 ShimmerBlock().frame(width: 150, height: 11)
                 ShimmerBlock().frame(width: 90, height: 9)
                 Micro(text: caption, size: 10, tracking: 1.6,
-                      color: stage == .failed ? .categoryOther : .categoryMusic)
+                      color: isFailed ? .categoryOther : .categoryMusic)
                     .padding(.top, 2)
             }
             Spacer(minLength: 0)

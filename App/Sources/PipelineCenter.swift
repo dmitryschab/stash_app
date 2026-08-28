@@ -42,7 +42,7 @@ final class PipelineCenter {
     /// persisted: the entries mirror the inbox files and the in-flight submission, both of
     /// which are re-derived on the next foreground.
     struct PendingShare: Identifiable, Equatable {
-        enum Stage: Equatable { case fetching, saving, reading, failed }
+        enum Stage: Equatable { case fetching, saving, reading, failed(String) }
         let id: String              // inbox filename — exists before any video id does
         var stage: Stage = .fetching
         var videoIDs: [String] = []
@@ -449,11 +449,14 @@ final class PipelineCenter {
                 : "Saved \(bookmarks.count) shared TikToks — reading them now"
             syncCloudImportIfNeeded()
         } catch {
-            failPendingShares()
             bookmarks.forEach { _ = try? inbox.write($0.url) }
             if let stashError = error as? StashError {
+                // Out of budget (or signed out) is a state, not a glitch — say so on the
+                // card itself and hold it long enough to read, or the share just looks broken.
+                failPendingShares(message: stashError.localizedDescription, holdSeconds: 8)
                 lastError = stashError.localizedDescription
             } else {
+                failPendingShares()
                 lastError = "Could not save the shared TikTok: \(error.localizedDescription)"
                     + " Will try again."
             }
@@ -528,12 +531,13 @@ final class PipelineCenter {
     /// Flips the placeholders to their failure caption, then clears them a beat later — the
     /// inbox files remain the durable record of the share, so the card only has to say what
     /// happened before getting out of the way.
-    private func failPendingShares() {
+    private func failPendingShares(message: String = "Couldn't sync — will retry",
+                                   holdSeconds: UInt64 = 4) {
         guard !pendingShares.isEmpty else { return }
-        setPendingShares(stage: .failed)
+        setPendingShares(stage: .failed(message))
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            self?.pendingShares.removeAll { $0.stage == .failed }
+            try? await Task.sleep(nanoseconds: holdSeconds * 1_000_000_000)
+            self?.pendingShares.removeAll { if case .failed = $0.stage { true } else { false } }
         }
     }
 
@@ -964,7 +968,7 @@ final class PipelineCenter {
                     return true
                 } catch let error as StashError {
                     // Session gone or budget spent: neither is fixed by polling again.
-                    failPendingShares()
+                    failPendingShares(message: error.localizedDescription, holdSeconds: 8)
                     lastError = error.localizedDescription
                     return false
                 } catch {
