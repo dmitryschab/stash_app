@@ -628,6 +628,28 @@ Unchanged and now load-bearing: the `--demo` code entitles the account server-si
 who redeems it never meets a checkout. Say so in the App Review notes — a paywall a reviewer
 cannot pass is a 2.1 rejection.
 
+### Done 2026-08-28 — everything up to the submit button
+
+| Item | State |
+|---|---|
+| Subscription `Stash Pro` (`6806036250`, group `22340161`) | `READY_TO_SUBMIT` — €2.99 base LVA, priced across all 175 storefronts, availability all 175, review screenshot uploaded (1206×2622) |
+| App price | **Free**, effective 2026-08-28, all 175 storefronts (was €4.99/$3.99). Storefront cache lags a few hours. |
+| Build 25 | Uploaded, `VALID` |
+| Version 1.1 | Created, build 25 attached, "What's New" written, screenshots and review detail inherited from 1.0 |
+| App Review notes | Rewritten: the old text said "not a subscription… no further payment is ever requested", which alone was a rejection. Now leads with the paywall, states the reviewer needs no purchase, and explains grandfathering. Fresh demo code `STASH-QNC5-PPHH` (50 uses, 120 days). |
+| Backend | Deployed and verified — `/health` ok, `POST /v1/me/subscription` 401 |
+| Site | `terms.html` (subscription terms, dated 28 Aug) and `index.html` (€2.99 a month) live |
+| Draft submission `44be2694…` | 2 items ready: **iOS App 1.1 (25)** and **Stash Pro**. Not submitted. |
+
+**The only remaining action is pressing "Submit for Review"** in App Store Connect →
+Distribution → Draft Submissions.
+
+One process note worth keeping: a subscription cannot be added to a submission through the API
+(`POST /v1/reviewSubmissionItems` returns `ENTITY_ERROR.RELATIONSHIP.UNKNOWN` for the
+`subscription` relationship). It goes in through the subscription page's **Add for Review**
+dropdown, which only offers an existing draft once one exists — so create the submission with
+the version first, then attach the subscription from that dropdown.
+
 ### Still open
 
 | # | Item | Where |
