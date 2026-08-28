@@ -206,6 +206,7 @@ public actor PipelineRunner {
         video.trackJSON = nil
         video.musicJSON = nil
         video.codeJSON = nil
+        video.buysJSON = nil
         await applyAnalysis(analysis, to: video)
         try? context.save()
     }
@@ -322,6 +323,7 @@ public actor PipelineRunner {
             video.trackJSON = nil
             video.musicJSON = nil
             video.codeJSON = nil
+            video.buysJSON = nil
             await applyAnalysis(analysis, to: video)
         }
         try? context.save()
@@ -425,6 +427,7 @@ public actor PipelineRunner {
                 video.trackJSON = nil
                 video.musicJSON = nil
                 video.codeJSON = nil
+                video.buysJSON = nil
                 await applyAnalysis(analysis, to: video)
             }
             outcome = .filled
@@ -592,6 +595,9 @@ public actor PipelineRunner {
         }
         if let code = analysis.code {
             video.codeJSON = try? encoder.encode(code)
+        }
+        if !analysis.buys.isEmpty {
+            video.buysJSON = try? encoder.encode(analysis.buys)
         }
     }
 

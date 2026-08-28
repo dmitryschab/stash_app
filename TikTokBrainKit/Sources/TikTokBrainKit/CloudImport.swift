@@ -88,6 +88,9 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
     /// without them leaves both walls empty however many saves the category holds.
     public var recipe: RecipeData?
     public var music: [MusicPick]
+    /// Haul is a query over these, not a category segment, so a cloud result without them
+    /// leaves the shelf empty however many product videos the library holds.
+    public var buys: [BuyPick]
     public var unavailable: Bool
     public var errorCode: String?
 
@@ -105,6 +108,7 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         topics: [String] = [],
         recipe: RecipeData? = nil,
         music: [MusicPick] = [],
+        buys: [BuyPick] = [],
         unavailable: Bool = false,
         errorCode: String? = nil
     ) {
@@ -121,13 +125,14 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         self.topics = topics
         self.recipe = recipe
         self.music = music
+        self.buys = buys
         self.unavailable = unavailable
         self.errorCode = errorCode
     }
 
     private enum CodingKeys: String, CodingKey {
         case videoID, analysisRevision, author, caption, hashtags, thumbnailURL, duration
-        case category, title, summary, topics, recipe, music, unavailable, errorCode
+        case category, title, summary, topics, recipe, music, buys, unavailable, errorCode
     }
 
     public init(from decoder: Decoder) throws {
@@ -148,6 +153,8 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         // rather than failing the whole result decode.
         music = Array((try values.decodeIfPresent([MusicPick].self, forKey: .music) ?? [])
             .filter { !$0.title.isEmpty }.prefix(MusicPick.maxPerVideo))
+        buys = Array((try values.decodeIfPresent([BuyPick].self, forKey: .buys) ?? [])
+            .filter { !$0.name.isEmpty }.prefix(BuyPick.maxPerVideo))
         unavailable = try values.decodeIfPresent(Bool.self, forKey: .unavailable) ?? false
         errorCode = try values.decodeIfPresent(String.self, forKey: .errorCode)
     }
@@ -427,6 +434,7 @@ public enum CloudImportResultUpserter {
                 // caption-only fast pass that found nothing.
                 if let recipe = result.recipe { video.recipeJSON = try? JSONEncoder().encode(recipe) }
                 if !result.music.isEmpty { video.musicJSON = try? JSONEncoder().encode(result.music) }
+                if !result.buys.isEmpty { video.buysJSON = try? JSONEncoder().encode(result.buys) }
             }
             video.unavailable = result.unavailable
             video.cloudAnalysisRevision = result.analysisRevision

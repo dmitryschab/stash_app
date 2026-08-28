@@ -53,6 +53,10 @@ extension Color {
     static let categoryWellness = Color(light: 0x3F8A3A, dark: 0x55A84F) // grass green
     static let categoryOther = Color(light: 0xC98A12, dark: 0xC98A12)    // amber
 
+    /// Haul's accent. Not a category jewel — Haul is a query across all thirteen, so it takes a
+    /// tone none of them uses: tanned leather, the colour of a shop rather than a subject.
+    static let stashHaul = Color(light: 0x7A4A22, dark: 0xA9713C)        // saddle tan
+
     // Chrome.
     static let stashBackground = Color(light: 0xF3ECDB, dark: 0x191408) // warm cream / near-black
     static let stashSurface = Color(light: 0xF7F1E1, dark: 0x241D0F)    // raised fields
@@ -281,10 +285,16 @@ let librarySegments: [Category] = [
     .film, .dining, .wellness, .other,
 ]
 
-/// The Library tab's shelves: every segment that has no tab of its own. Recipes live on
-/// Cook, music on Music and coding on Code, each richer than a list row, so a Library copy
-/// of any of them was the same saves a second time.
-let libraryShelves: [Category] = librarySegments.filter { $0 != .recipe && $0 != .music && $0 != .coding }
+/// The Library tab's shelves: every segment whose own tab is not currently on the pill.
+///
+/// Recipes live on Cook, music on Music and coding on Code, each richer than a list row, so a
+/// Library copy of one of those is the same saves a second time. But the pill is configurable
+/// now (`TabSlots`), and a category whose tab has been switched off has nowhere else to be —
+/// hiding Code must not also hide every coding save in the app.
+func libraryShelves(visible: [StashTab]) -> [Category] {
+    let spokenFor = Set(visible.compactMap(\.ownedCategory))
+    return librarySegments.filter { !spokenFor.contains($0) }
+}
 
 // MARK: - Stage state display
 
@@ -345,6 +355,10 @@ extension Video {
         return recipe
     }
     var codeNote: CodeData? { Self.decode(codeJSON, as: CodeData.self) }
+
+    /// Everything this save is selling, in the order the video presented it. Empty for most
+    /// saves and for every save analyzed before `buys` existed — see `BuyPick`.
+    var buys: [BuyPick] { Self.decode(buysJSON, as: [BuyPick].self) ?? [] }
 
     /// Every release this save recommends, in the order the video showed them.
     ///

@@ -10,6 +10,17 @@ import SwiftData
 import TikTokBrainKit
 
 struct LibraryView: View {
+    /// The shelves this library is responsible for, passed in because it depends on which
+    /// sections the pill is currently showing — Library takes back the ones switched off.
+    /// See `libraryShelves(visible:)`.
+    let shelves: [Category]
+
+    // Spelled out because `@Query private var videos` makes the synthesized memberwise
+    // initializer private, and RootView is in another file.
+    init(shelves: [Category] = libraryShelves(visible: TabSlots.fallback)) {
+        self.shelves = shelves
+    }
+
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     // Simulator smoke runs can open a specific segment: `-initialSegment other`.
     // Recipes, music and coding are not shelves here any more — they have their own tabs.
@@ -76,10 +87,15 @@ struct LibraryView: View {
         .onChange(of: segment) { _, _ in selectedTopic = nil }
         // Saves arrive after the first render (SwiftData query, then imports), so the
         // biggest shelf is not known at init — follow it until you pick one yourself.
-        .onChange(of: shelves.first) { _, top in
+        .onChange(of: orderedShelves.first) { _, top in
             if !pickedShelf, let top { segment = top }
         }
-        .onAppear { if !pickedShelf, let top = shelves.first { segment = top } }
+        .onAppear { if !pickedShelf, let top = orderedShelves.first { segment = top } }
+        // Turning a section off in Settings hands its category back to Library, and turning one
+        // on takes it away — the shelf you were standing on can stop existing either way.
+        .onChange(of: shelves) { _, current in
+            if !current.contains(segment) { segment = orderedShelves.first ?? .other }
+        }
     }
 
     // MARK: - Data
@@ -90,13 +106,13 @@ struct LibraryView: View {
 
     /// Shelves in the order this library actually uses them, biggest first. A library that
     /// is mostly coding opens on coding; empty shelves fall to the end but stay reachable.
-    private var shelves: [Category] {
+    private var orderedShelves: [Category] {
         var counts: [Category: Int] = [:]
         for video in videos where !video.needsLook {
             guard let category = video.category else { continue }
             counts[category, default: 0] += 1
         }
-        return libraryShelves.enumerated()
+        return shelves.enumerated()
             .sorted { a, b in
                 let (countA, countB) = (counts[a.element, default: 0], counts[b.element, default: 0])
                 return countA == countB ? a.offset < b.offset : countA > countB
@@ -191,7 +207,7 @@ struct LibraryView: View {
     private var pills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(shelves, id: \.self) { category in
+                ForEach(orderedShelves, id: \.self) { category in
                     Button {
                         segment = category
                         pickedShelf = true

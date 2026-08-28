@@ -151,3 +151,28 @@ def test_result_without_structure_omits_both_keys():
     result = VideoResult(videoID="4", category="comedy")
     assert result.recipe is None
     assert result.music == []
+
+
+def test_buys_ride_along_with_any_category():
+    """Haul is a query, not a segment: a style save carries picks just like a haul does."""
+    from cloud_import_models import VideoResult
+
+    result = VideoResult.model_validate({
+        "videoID": "5",
+        "category": "style",
+        "buys": [{"name": "Levi's 501 '93", "kind": "jeans", "price": "€110"},
+                 {"name": "Uniqlo U crew tee"}],
+    })
+    assert [b.name for b in result.buys] == ["Levi's 501 '93", "Uniqlo U crew tee"]
+    assert result.buys[1].price == ""  # never estimated
+
+
+def test_buys_are_bounded_and_name_checked():
+    from cloud_import_models import MAX_BUY_PICKS, VideoResult
+
+    result = VideoResult.model_validate({
+        "videoID": "6",
+        "buys": [{"name": ""}, {"name": "   "}] + [{"name": f"item {i}"} for i in range(20)],
+    })
+    assert len(result.buys) == MAX_BUY_PICKS
+    assert all(b.name.strip() for b in result.buys)

@@ -86,6 +86,7 @@ enum SampleData {
             if let recipe = item["recipe"] as? [String: Any] { video.recipeJSON = json(recipe) }
             if let track = item["track"] as? [String: Any] { video.trackJSON = json(track) }
             if let code = item["code"] as? [String: Any] { video.codeJSON = json(code) }
+            if let buys = item["buys"] as? [[String: Any]] { video.buysJSON = json(buys) }
             let done: [String: StageState] = [
                 "enrich": .done, "media": .done,
                 "transcribe": video.transcript == nil ? .skipped : .done,
@@ -340,6 +341,9 @@ enum SampleData {
                     "summary": "git worktree add ../hotfix main checks a branch out beside the repo and leaves the current tree untouched.",
                     "links": ["https://git-scm.com/docs/git-worktree"],
                     "techTags": ["git", "cli"],
+                ]),
+                buysJSON: json([
+                    ["name": "Keychron K3 Pro low profile", "kind": "keyboard", "price": "$94"],
                 ])
             ),
             make(
@@ -384,7 +388,14 @@ enum SampleData {
                 title: "The three-colour rule",
                 summary: "Hold an outfit to three colours and let texture carry the rest.",
                 topics: ["outfits", "colour"],
-                transcript: "Three colours maximum. Past that it reads as busy no matter how good the pieces are."
+                transcript: "Three colours maximum. Past that it reads as busy no matter how good the pieces are.",
+                // Filed under style, shelved under Haul: `BuyPick` does not follow the category,
+                // and the sample library has to show that or Haul looks like a fourth tab for
+                // one more kind of video.
+                buysJSON: json([
+                    ["name": "Uniqlo U crew neck tee", "kind": "t-shirt", "price": "€14.90"],
+                    ["name": "Levi's 501 '93 straight", "kind": "jeans", "price": ""],
+                ])
             ),
             make(
                 id: "7234567890000000017",
@@ -410,7 +421,10 @@ enum SampleData {
                 title: "A shelf with no drilling",
                 summary: "Two tension rods and a plank: a shelf that comes down without patching the wall.",
                 topics: ["renting", "storage"],
-                transcript: "The load sits on the rods, not the wall, which is the whole point when you are renting."
+                transcript: "The load sits on the rods, not the wall, which is the whole point when you are renting.",
+                buysJSON: json([
+                    ["name": "Umbra Anywhere tension rod", "kind": "shelf", "price": "€22"],
+                ])
             ),
             make(
                 id: "7234567890000000019",
@@ -476,7 +490,8 @@ enum SampleData {
         recipeJSON: Data? = nil,
         trackJSON: Data? = nil,
         musicJSON: Data? = nil,
-        codeJSON: Data? = nil
+        codeJSON: Data? = nil,
+        buysJSON: Data? = nil
     ) -> Video {
         let video = Video(
             videoID: id,
@@ -495,6 +510,7 @@ enum SampleData {
         video.trackJSON = trackJSON
         video.musicJSON = musicJSON
         video.codeJSON = codeJSON
+        video.buysJSON = buysJSON
 
         let done: [String: StageState] = [
             "enrich": .done,

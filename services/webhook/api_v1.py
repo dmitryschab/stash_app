@@ -61,7 +61,7 @@ YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 # on the total, so the route is quota-metered too: one unit per answer Bedrock actually
 # returned, which is what caps an account at its budget instead of at our bill.
 CHAT_MAX_BYTES = 32_000
-CHAT_MAX_OUTPUT_TOKENS = 1024  # a full recipe Analysis object measures ~600
+CHAT_MAX_OUTPUT_TOKENS = 1280  # a full recipe measures ~600; eight "buys" entries add ~250
 
 
 def _groq_key() -> str:
@@ -321,11 +321,15 @@ object, no prose and no Markdown code fences. Use this exact shape:
   "topics": [string],            // short lowercase topic keywords
   "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
   "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
-  "code": { "summary": string, "links": [string], "techTags": [string] } | null
+  "code": { "summary": string, "links": [string], "techTags": [string] } | null,
+  "buys": [ { "name": string, "kind": string, "price": string } ]
 }
-Only recipe, music and coding carry a payload: fill the one matching the chosen category and
+recipe, music and code belong to a category: fill the one matching the category you chose and
 leave the others empty — for every other category set "recipe" and "code" to null and "music"
 to []. Never include a "link" field; the app resolves streaming links separately.
+
+"buys" is different, and it is the one field that does NOT follow the category. Judge it
+separately, on every video, whatever you filed it under.
 
 Pick the category from the whole post, hashtags included, even when the transcript is empty
 (fitness=workouts/gym/running/nutrition, style=fashion/beauty/makeup,
@@ -355,6 +359,33 @@ Two categories carry extra structure, and the Cook and Music screens are empty w
   next to that title, or leave it an empty string — NEVER invent an artist you are not
   confident about, and never reuse one entry's artist for another, because a guessed artist
   links the wrong release.
+
+"buys" — things the user might want to own, collected from every category into one shelf.
+Ask one question: is a specific, purchasable product a FOCAL POINT of this post? If the video
+is built around some item — a shoe, a phone, a bag, a chair, a camera, a serum, a gadget, a
+tool, a pan, a supplement, a game — then list it. A haul, an unboxing, a review, a comparison,
+a "things I use daily", a get-ready-with-me that names what it is wearing, a desk tour, a gift
+guide, a "this changed my life" pitch: all of these are buys, and they arrive filed as style,
+home, coding, fitness, wellness or anything else. That is expected. Fill "buys" anyway.
+
+Include an item when the post names it, holds it up, wears it, demonstrates it, or puts it on
+screen as the thing being talked about. Exclude:
+- scenery and props: the mug on the desk, the couch behind the speaker, the car it was filmed
+  in — anything merely visible rather than presented;
+- ingredients of a recipe, which are already in "recipe";
+- releases in "music", and software, apps and repos, which are already in "code";
+- services, subscriptions, courses, hotels, restaurants, flights and destinations — this is a
+  shelf of objects you can put in a cart, not of things you can book;
+- categories rather than products: "a good moisturiser", "running shoes" with no brand.
+
+Write "name" as the shortest string that would find the product in a store's search box —
+brand and model as the video says them ("Nike Vomero 5", "Aesop Resurrection hand balm"),
+never a sentence and never a description. Write "kind" as one lowercase noun for what it is
+("sneakers", "phone", "serum", "chair"). Write "price" ONLY when the post states one, copied
+as written with its currency ("€39", "under $20"); leave it "" otherwise and NEVER estimate a
+price you were not told. At most 8 entries, in the order the video presents them, no
+duplicates. Most posts sell nothing at all: [] is the correct and common answer, and a list of
+props is worse than an empty one.
 """.strip()
 
 # Appended to the prompt above on the vision path, never copied into it: none of this means
@@ -373,6 +404,11 @@ title and never in artist.
 
 A photo post's "Sound" is the backing track the poster picked, not something the post
 recommends — never put it in "music" unless the image itself is about that release.
+
+A photo post is very often a product: one item shot on a table, a wishlist grid, an outfit
+flatlay, a "what's in my bag". Read the brands and models off the image and off any price tag
+in frame, and fill "buys" from what you see — this is the path where the picture is the only
+place the product name ever appears.
 """.strip()
 
 

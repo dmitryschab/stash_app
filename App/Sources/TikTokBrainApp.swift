@@ -40,6 +40,7 @@ struct TikTokBrainApp: App {
         #if DEBUG
         assert(MindMapEngine.selfTest(), "MindMapEngine self-test failed")
         assert(SearchGrip.selfTest(), "SearchGrip self-test failed")
+        assert(TabSlots.selfTest(), "TabSlots self-test failed")
         #endif
     }
 
@@ -62,8 +63,13 @@ struct TikTokBrainApp: App {
 
 // MARK: - Tab shell
 
-enum StashTab: CaseIterable {
-    case today, code, cook, music, library
+/// Every section that can hold a slot on the pill. `allCases` is the catalogue, in the order
+/// Settings offers it and the order slots are drawn in; what is actually on screen is whatever
+/// subset `TabSlots` holds.
+enum StashTab: String, CaseIterable, Identifiable {
+    case today, code, cook, music, haul, library
+
+    var id: String { rawValue }
 
     var label: String {
         switch self {
@@ -71,6 +77,7 @@ enum StashTab: CaseIterable {
         case .code: "Code"
         case .cook: "Cook"
         case .music: "Music"
+        case .haul: "Haul"
         case .library: "Library"
         }
     }
@@ -81,22 +88,100 @@ enum StashTab: CaseIterable {
         case .code: "chevron.left.forwardslash.chevron.right"
         case .cook: "fork.knife"
         case .music: "music.note"
+        case .haul: "bag.fill"
         case .library: "square.grid.2x2.fill"
+        }
+    }
+
+    /// One line for the Settings picker, so turning a section off is an informed choice.
+    var blurb: String {
+        switch self {
+        case .today: "The day's saves, newest first."
+        case .code: "Coding saves, links first."
+        case .cook: "Recipes as a photo wall."
+        case .music: "Records and recommendation lists."
+        case .haul: "Everything your saves are selling."
+        case .library: "Every shelf, plus Import and Settings."
+        }
+    }
+
+    /// The category this tab shows on the app's behalf, if any. Library falls back on these
+    /// when the tab is off (`libraryShelves(visible:)`); Today and Haul own nothing, because
+    /// both are queries across every category rather than a home for one.
+    var ownedCategory: Category? {
+        switch self {
+        case .cook: .recipe
+        case .music: .music
+        case .code: .coding
+        case .today, .haul, .library: nil
         }
     }
 }
 
+/// Which sections the pill shows. Persisted as comma-joined `StashTab` raw values.
+///
+/// Two rules, both learned the hard way rather than chosen: Library can never be switched off,
+/// because Import and Settings are only reachable from its header — a pill without it is a
+/// configuration that cannot be undone from inside the app. And five is the ceiling; six slots
+/// crowded the pill badly enough that Mind Map was moved off it (see the file header).
+enum TabSlots {
+    static let key = "tabSlots"
+    static let maximum = 5
+    /// Library last, and pinned: `decode` puts it back however the stored string was mangled.
+    static let pinned: StashTab = .library
+    static let fallback: [StashTab] = [.today, .code, .cook, .music, .library]
+
+    static func decode(_ raw: String) -> [StashTab] {
+        // Filtered through `allCases` rather than trusted in stored order: the pill's left-to-
+        // right order is the catalogue's, duplicates collapse, and unknown names disappear.
+        let stored = Set(raw.split(separator: ",").compactMap { StashTab(rawValue: String($0)) })
+        guard !stored.isEmpty else { return fallback }
+        var tabs = StashTab.allCases.filter(stored.contains)
+        if !tabs.contains(pinned) { tabs.append(pinned) }
+        // Trimming from the front would drop Today; the pinned tab has to survive either way.
+        while tabs.count > maximum { tabs.removeFirst(where: { $0 != pinned }) }
+        return tabs
+    }
+
+    static func encode(_ tabs: [StashTab]) -> String {
+        StashTab.allCases.filter(tabs.contains).map(\.rawValue).joined(separator: ",")
+    }
+
+    #if DEBUG
+    /// The rules above are three lines of set arithmetic that decide whether the user can reach
+    /// Settings at all, so they get a check that runs on every debug launch.
+    static func selfTest() -> Bool {
+        decode("") == fallback
+            && decode("garbage") == fallback
+            && decode("cook") == [.cook, .library]
+            && decode("library") == [.library]
+            && decode("music,cook") == [.cook, .music, .library]        // catalogue order, not stored order
+            && decode("cook,cook,cook") == [.cook, .library]            // duplicates collapse
+            && decode("today,code,cook,music,haul") == [.code, .cook, .music, .haul, .library]
+            && encode([.haul, .today]) == "today,haul"
+            && decode(encode([.today, .haul, .library])) == [.today, .haul, .library]
+    }
+    #endif
+}
+
+private extension Array {
+    /// Removes the first element matching `predicate`, if any.
+    mutating func removeFirst(where predicate: (Element) -> Bool) {
+        guard let index = firstIndex(where: predicate) else { return }
+        remove(at: index)
+    }
+}
+
 struct RootView: View {
-    // Simulator smoke runs can open a specific tab: `-initialTab code|cook|music|library`.
-    @State private var tab: StashTab = {
-        switch UserDefaults.standard.string(forKey: "initialTab") {
-        case "code": .code
-        case "cook": .cook
-        case "music": .music
-        case "library": .library
-        default: .today
-        }
-    }()
+    // Simulator smoke runs can open a specific tab: `-initialTab code|cook|music|haul|library`.
+    @State private var tab: StashTab = UserDefaults.standard.string(forKey: "initialTab")
+        .flatMap(StashTab.init(rawValue:)) ?? .today
+
+    /// Which sections are on the pill, chosen in Settings. Read here rather than inside
+    /// `StashTabBar` because the shell needs it too: a tab switched off while it is on screen
+    /// has to hand the user somewhere, and Library needs to know which shelves to take back.
+    @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
+    private var slots: [StashTab] { TabSlots.decode(slotsRaw) }
 
     /// Bumped when the tab already on screen is tapped again; each section watches it.
     @State private var reselect = TabReselect()
@@ -178,7 +263,8 @@ struct RootView: View {
                 case .code: CodeView()
                 case .cook: CookView()
                 case .music: MusicView()
-                case .library: LibraryView()
+                case .haul: HaulView()
+                case .library: LibraryView(shelves: libraryShelves(visible: slots))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -208,8 +294,14 @@ struct RootView: View {
                     Micro(text: "Hold the bar · push right to search", size: 9, tracking: 1.4, color: .stashInk.opacity(0.5))
                         .transition(.opacity)
                 }
-                StashTabBar(selection: $tab, reselect: $reselect, searchOpen: $searchOpen, query: $query)
+                StashTabBar(slots: slots, selection: $tab, reselect: $reselect,
+                            searchOpen: $searchOpen, query: $query)
             }
+        }
+        // Switching a section off in Settings while standing on it would otherwise leave the
+        // shell rendering a tab no slot points at, with no way back but a relaunch.
+        .onChange(of: slotsRaw) { _, _ in
+            if !slots.contains(tab) { tab = slots.first ?? .library }
         }
         .animation(.easeOut(duration: 0.25), value: searchOpen)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: center.pendingShares.isEmpty)
@@ -269,11 +361,13 @@ private struct ImportSyncPill: View {
     }
 }
 
-/// The solid ink pill: five equal slots, cream icons, uppercase micro labels — and the search
-/// field, once you hold it and push right. The pill *is* the field: the slots slide out the
-/// right end while the magnifier and the text field slide in from the left, 1:1 with the
+/// The solid ink pill: up to five equal slots, cream icons, uppercase micro labels — and the
+/// search field, once you hold it and push right. The pill *is* the field: the slots slide out
+/// the right end while the magnifier and the text field slide in from the left, 1:1 with the
 /// finger (`SearchGrip`). A tap is still a tap; the hold has to come first.
 struct StashTabBar: View {
+    /// Which sections have a slot, left to right. Chosen in Settings (`TabSlots`).
+    var slots: [StashTab] = TabSlots.fallback
     @Binding var selection: StashTab
     @Binding var reselect: TabReselect
     @Binding var searchOpen: Bool
@@ -328,7 +422,7 @@ struct StashTabBar: View {
     /// tabs. A tap gesture is cancelled by the drag.
     private var tabs: some View {
         HStack(spacing: 0) {
-            ForEach(StashTab.allCases, id: \.self) { tab in
+            ForEach(slots) { tab in
                 VStack(spacing: 3) {
                     Image(systemName: tab.symbol)
                         .font(.system(size: 17, weight: .semibold))

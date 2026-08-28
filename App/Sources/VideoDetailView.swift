@@ -31,6 +31,7 @@ struct VideoDetailView: View {
                 if let recipe = video.recipe { recipeSection(recipe) }
                 if !video.music.isEmpty { musicSection(video.music) }
                 if let code = video.codeNote { codeSection(code) }
+                if !video.buys.isEmpty { buysSection(video.buys) }
                 textSection
                 actions
             }
@@ -212,6 +213,57 @@ struct VideoDetailView: View {
                 Text(code.techTags.map { "#\($0)" }.joined(separator: " "))
                     .font(.archivo(12, .semibold))
                     .foregroundStyle(Color.categoryCoding)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .stashOutlineCard()
+        .padding(.top, 8)
+    }
+
+    /// What this save is selling. Shown on every category, because that is what `BuyPick` is —
+    /// the sneakers in a style video belong here as much as the keyboard in a coding one.
+    /// Each row is a store search, built the same way Haul builds it (`Shop.searchURL`).
+    @ViewBuilder
+    private func buysSection(_ buys: [BuyPick]) -> some View {
+        sectionHeader(buys.count == 1 ? "In this video" : "\(buys.count) things in this video")
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(buys.enumerated()), id: \.offset) { index, pick in
+                if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
+                Menu {
+                    if let link = pick.link {
+                        Link(destination: link) {
+                            Label("Open the link from the video", systemImage: "arrow.up.right")
+                        }
+                    }
+                    ForEach(Shop.allCases, id: \.self) { shop in
+                        if let url = shop.searchURL(for: pick.name) {
+                            Link(destination: url) {
+                                Label("Search \(shop.label)", systemImage: "magnifyingglass")
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pick.name)
+                                .font(.archivo(14, .bold))
+                                .foregroundStyle(Color.stashInk)
+                                .multilineTextAlignment(.leading)
+                            if !pick.kind.isEmpty || !pick.price.isEmpty {
+                                Text([pick.kind, pick.price].filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .font(.archivo(12))
+                                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "bag")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.stashHaul)
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Shop for \(pick.name)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

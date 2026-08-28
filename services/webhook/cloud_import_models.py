@@ -171,6 +171,23 @@ class MusicPick(ContractModel):
 MAX_MUSIC_PICKS = 12
 
 
+class BuyPick(ContractModel):
+    """One thing a video is plainly selling. Cross-cutting: unlike recipe/music/code this is
+    not tied to the chosen category, because the sneakers in a style video and the desk in a
+    home tour belong on the same shelf. Mirrors BuyPick in the Kit."""
+
+    name: str
+    kind: str = ""
+    # As stated in the video, never estimated — an invented price is the one field here that
+    # could cost somebody money.
+    price: str = ""
+
+
+# A haul video runs through a bagful; past this the model is listing props, not picks.
+# Mirrors BuyPick.maxPerVideo in the Kit.
+MAX_BUY_PICKS = 8
+
+
 class VideoResult(ContractModel):
     video_id: str = Field(alias="videoID")
     # Bumped 1 -> 2 when the stale-yt-dlp bug was fixed. The client upserter only applies a
@@ -188,7 +205,9 @@ class VideoResult(ContractModel):
     # 6: taxonomy v6 splits film, dining and wellness out of "other" — 85 of the 330 videos the
     # 855-video validation run left in that bucket. Every one of them is stored with category
     # "other", which is now the wrong answer, and only a greater revision re-buckets them.
-    analysis_revision: int = Field(alias="analysisRevision", default=6)
+    # 7: results now carry "buys". Every row analysed before this has none, and the Haul shelf
+    # reads empty for the whole library until a greater revision re-runs them.
+    analysis_revision: int = Field(alias="analysisRevision", default=7)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)
@@ -203,6 +222,9 @@ class VideoResult(ContractModel):
     # cloud pipeline could not populate either screen at all.
     recipe: RecipeData | None = None
     music: list[MusicPick] = Field(default_factory=list)
+    # Haul is a query over these rather than a category segment, so without them the shelf is
+    # empty however many product videos the library holds.
+    buys: list[BuyPick] = Field(default_factory=list)
     unavailable: bool = False
     error_code: str | None = Field(default=None, alias="errorCode")
 
@@ -210,6 +232,13 @@ class VideoResult(ContractModel):
     @classmethod
     def bounded_picks(cls, value: list[MusicPick]) -> list[MusicPick]:
         return [pick for pick in value if pick.title.strip()][:MAX_MUSIC_PICKS]
+
+    @field_validator("buys")
+    @classmethod
+    def bounded_buys(cls, value: list[BuyPick]) -> list[BuyPick]:
+        # A nameless pick is one nothing can be searched for; drop it rather than shipping a
+        # blank row to the shelf.
+        return [pick for pick in value if pick.name.strip()][:MAX_BUY_PICKS]
 
 
 class ResultPage(ContractModel):

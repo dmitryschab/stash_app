@@ -448,6 +448,8 @@ struct SettingsView: View {
     @State private var exportFile: URL?
     @State private var isExporting = false
     @State private var accountError: String?
+    /// The pill's slots. See `TabSlots` for the two rules this editor has to respect.
+    @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
     /// Saves still classified from the caption alone — the backfill's work queue.
     private var missingTranscripts: Int {
         videos.filter { !$0.unavailable && $0.transcript == nil }.count
@@ -473,6 +475,7 @@ struct SettingsView: View {
             Form {
                 accountSection
                 if let quota = session.quota { quotaSection(quota) }
+                tabBarSection
                 #if DEBUG
                 Section("Stash cloud") {
                     field("Base URL", text: $boxBaseURL, placeholder: BoxDefaults.baseURL, disableAutocaps: true)
@@ -563,6 +566,49 @@ struct SettingsView: View {
                     Your videos on TikTok are untouched. This cannot be undone.
                     """)
             }
+        }
+    }
+
+    // MARK: - Tab bar
+
+    /// Which sections get a slot on the pill. Five is the ceiling and Library is not optional —
+    /// both rules are `TabSlots`', and this editor only has to make them legible: the row that
+    /// cannot be turned off says so, and the rest go dim once the last slot is spoken for.
+    private var tabBarSection: some View {
+        let slots = TabSlots.decode(slotsRaw)
+        return Section("Tab bar") {
+            ForEach(StashTab.allCases) { tab in
+                let isOn = slots.contains(tab)
+                let pinned = tab == TabSlots.pinned
+                let full = slots.count >= TabSlots.maximum
+                Button {
+                    slotsRaw = TabSlots.encode(isOn ? slots.filter { $0 != tab } : slots + [tab])
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 22)
+                            .foregroundStyle(isOn ? Color.accentColor : .secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(tab.label)
+                            Text(pinned ? "Always on — Import and Settings live here" : tab.blurb)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isOn ? Color.accentColor : .secondary)
+                    }
+                }
+                .tint(.primary)
+                // Pinned can never come off; the rest can always come off, and can only go on
+                // while there is a slot left.
+                .disabled(pinned || (!isOn && full))
+                .accessibilityAddTraits(isOn ? [.isSelected] : [])
+            }
+            Text("Up to \(TabSlots.maximum) sections fit on the bar. Whatever you leave off keeps its saves — anything with its own shelf goes back to Library.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 

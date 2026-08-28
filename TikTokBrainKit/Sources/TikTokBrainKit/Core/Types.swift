@@ -89,6 +89,98 @@ public struct MusicPick: Codable, Equatable, Sendable {
     }
 }
 
+/// One thing a video is plainly trying to make you buy.
+///
+/// Cross-cutting on purpose, and this is the only payload that is. A save is filed under exactly
+/// one `Category`, but the sneakers in a style video, the lens in a travel vlog and the standing
+/// desk in a home tour are all the same note — *you wanted this*. Filing them by category would
+/// scatter one shopping list across four shelves, so picks hang off every analysis instead and
+/// the Haul shelf is a query, not a segment.
+public struct BuyPick: Codable, Equatable, Sendable {
+    /// A haul video runs through a bagful; a review covers one. Past this the model has stopped
+    /// listing recommendations and started listing props.
+    public static let maxPerVideo = 8
+
+    /// Brand and model as the video says them — "Nike Vomero 5", not "running shoes". This is
+    /// what gets typed into a store's search box, so a vague name is a useless pick.
+    public var name: String
+    /// Short lowercase noun the shelf groups by: "sneakers", "phone", "serum". Empty when the
+    /// video never makes the kind clear.
+    public var kind: String
+    /// The price exactly as stated ("€39", "under $20"). Empty rather than estimated — of
+    /// everything in this struct, an invented price is the one that could cost somebody money.
+    public var price: String
+    /// A link the video itself gave. Usually nil; `Shop.searchURL` is how the rest reach a store.
+    public var link: URL?
+
+    public init(name: String, kind: String = "", price: String = "", link: URL? = nil) {
+        self.name = name
+        self.kind = kind
+        self.price = price
+        self.link = link
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try values.decodeIfPresent(String.self, forKey: .name) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        kind = (try values.decodeIfPresent(String.self, forKey: .kind) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        price = (try values.decodeIfPresent(String.self, forKey: .price) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        link = try values.decodeIfPresent(URL.self, forKey: .link)
+    }
+}
+
+/// Where a pick can be looked up. No affiliate tags, no product API, no price scraping: a search
+/// URL is a link, and a link needs no key, no quota and no privacy policy of its own.
+public enum Shop: String, CaseIterable, Codable, Sendable {
+    case amazon, google
+
+    public var label: String {
+        switch self {
+        case .amazon: "Amazon"
+        case .google: "Google"
+        }
+    }
+
+    /// Amazon by region. Defaults to `.de` because there is no worldwide amazon.com search that
+    /// ships anywhere useful, and a European reader sent to the US store gets a store that will
+    /// not sell to them — a wrong-but-nearby storefront beats a right-but-unreachable one.
+    static func amazonHost(region: String?) -> String {
+        let domains = [
+            "US": "com", "CA": "ca", "MX": "com.mx", "BR": "com.br",
+            "GB": "co.uk", "IE": "co.uk", "FR": "fr", "ES": "es", "IT": "it",
+            "NL": "nl", "BE": "com.be", "SE": "se", "PL": "pl", "TR": "com.tr",
+            "JP": "co.jp", "AU": "com.au", "IN": "in", "SG": "sg", "AE": "ae",
+        ]
+        return "www.amazon." + (region.flatMap { domains[$0] } ?? "de")
+    }
+
+    public func searchURL(for query: String, region: String? = Locale.current.region?.identifier) -> URL? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "https"
+        switch self {
+        case .amazon:
+            components.host = Self.amazonHost(region: region)
+            components.path = "/s"
+            components.queryItems = [URLQueryItem(name: "k", value: trimmed)]
+        case .google:
+            components.host = "www.google.com"
+            components.path = "/search"
+            // `tbm=shop` is Google's shopping tab: results are products with prices rather than
+            // ten reviews of the product.
+            components.queryItems = [
+                URLQueryItem(name: "q", value: trimmed),
+                URLQueryItem(name: "tbm", value: "shop"),
+            ]
+        }
+        return components.url
+    }
+}
+
 public struct Analysis: Codable, Equatable, Sendable {
     public var category: Category
     public var title: String
@@ -98,9 +190,12 @@ public struct Analysis: Codable, Equatable, Sendable {
     /// Every release the video recommends, in the order it showed them. Empty for non-music.
     public var music: [MusicPick]
     public var code: CodeData?
+    /// Everything the video is selling, whatever it was filed under. Empty for the vast majority.
+    public var buys: [BuyPick]
 
     public init(category: Category, title: String, summary: String, topics: [String] = [],
-                recipe: RecipeData? = nil, music: [MusicPick] = [], code: CodeData? = nil) {
+                recipe: RecipeData? = nil, music: [MusicPick] = [], code: CodeData? = nil,
+                buys: [BuyPick] = []) {
         self.category = category
         self.title = title
         self.summary = summary
@@ -108,10 +203,11 @@ public struct Analysis: Codable, Equatable, Sendable {
         self.recipe = recipe
         self.music = music
         self.code = code
+        self.buys = buys
     }
 
     private enum CodingKeys: String, CodingKey {
-        case category, title, summary, topics, recipe, music, code
+        case category, title, summary, topics, recipe, music, code, buys
     }
     /// Read-only: the pre-multi-pick key. Declared separately so `encode(to:)` stays synthesized
     /// and nothing ever writes the old shape back out.
@@ -125,6 +221,10 @@ public struct Analysis: Codable, Equatable, Sendable {
         topics = try values.decodeIfPresent([String].self, forKey: .topics) ?? []
         recipe = try values.decodeIfPresent(RecipeData.self, forKey: .recipe)
         code = try values.decodeIfPresent(CodeData.self, forKey: .code)
+        // A nameless pick is a pick nothing can be searched for; drop it here rather than
+        // letting the shelf render a blank row.
+        buys = Array((try values.decodeIfPresent([BuyPick].self, forKey: .buys) ?? [])
+            .filter { !$0.name.isEmpty }.prefix(BuyPick.maxPerVideo))
 
         if let picks = try values.decodeIfPresent([MusicPick].self, forKey: .music) {
             music = Array(picks.filter { !$0.title.isEmpty }.prefix(MusicPick.maxPerVideo))

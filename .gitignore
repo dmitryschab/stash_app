@@ -42,3 +42,6 @@ App/Sources/Generated/
 
 # local verification venv (services/webhook)
 services/webhook/.venv-verify/
+
+# Not just .build: a `swift build` inside the package writes here too (135M of artifacts).
+TikTokBrainKit/build/

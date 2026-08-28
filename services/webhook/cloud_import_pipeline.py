@@ -155,6 +155,7 @@ class FastPassPipeline:
                 topics=analysis.get("topics") or [],
                 recipe=analysis.get("recipe") or None,
                 music=analysis.get("music") or [],
+                buys=analysis.get("buys") or [],
             )
         except (ValidationError, TypeError, ValueError) as error:
             raise PipelineError("analysis output failed validation", False, "invalid_output") from error
