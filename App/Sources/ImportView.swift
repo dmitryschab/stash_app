@@ -448,6 +448,7 @@ struct SettingsView: View {
     @State private var exportFile: URL?
     @State private var isExporting = false
     @State private var accountError: String?
+    @State private var showPaywall = false
     /// The pill's slots. See `TabSlots` for the two rules this editor has to respect.
     @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
     /// Saves still classified from the caption alone — the backfill's work queue.
@@ -474,6 +475,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 accountSection
+                subscriptionSection
                 if let quota = session.quota { quotaSection(quota) }
                 tabBarSection
                 #if DEBUG
@@ -551,6 +553,18 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showPaywall) {
+                NavigationStack {
+                    PaywallView(showsAccountLinks: false)
+                        .navigationTitle("Stash Pro")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showPaywall = false }
+                            }
+                        }
+                }
+            }
             // Guideline 5.1.1(v) asks for deletion the user can actually find and understand,
             // so the dialog names each store instead of saying "everything".
             .confirmationDialog("Delete your Stash account?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -566,6 +580,31 @@ struct SettingsView: View {
                     Your videos on TikTok are untouched. This cannot be undone.
                     """)
             }
+        }
+    }
+
+    // MARK: - Subscription
+
+    /// The only way into the paywall once you are past it, and the reason this section exists.
+    ///
+    /// Build 28 was rejected under guideline 2.1(b): App Review could not find the In-App
+    /// Purchase. They were right — `RootView.paidShell` renders the paywall *instead of* the
+    /// shell, so the screen is unreachable by construction the moment an account is entitled,
+    /// and a demo account is entitled unconditionally (`stash_subscription.is_entitled`). The
+    /// reviewer had no path to Stash Pro at all. Neither did a subscriber wanting to see what
+    /// they pay or hit Restore. One row fixes both.
+    private var subscriptionSection: some View {
+        Section("Subscription") {
+            Button { showPaywall = true } label: {
+                LabeledContent("Stash Pro") {
+                    Text(session.isEntitled ? "Subscribed" : "Not subscribed")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .tint(.primary)
+            Text("Opens the Stash Pro page, where you can subscribe, see the price and renewal terms, or restore a purchase.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -18,6 +18,17 @@ import SwiftUI
 import TikTokBrainKit
 
 struct PaywallView: View {
+    /// Off when Settings presents this as a sheet: sign-out and delete are already one row
+    /// away there, and offering them twice on stacked screens is its own kind of confusing.
+    /// The gate keeps them, because on the gate they are the only exit that exists.
+    let showsAccountLinks: Bool
+
+    // Spelled out because the private stored properties below make the synthesized memberwise
+    // initializer private, and SettingsView is in another file.
+    init(showsAccountLinks: Bool = true) {
+        self.showsAccountLinks = showsAccountLinks
+    }
+
     private var store = Subscription.shared
     private var session = StashSession.shared
 
@@ -51,7 +62,11 @@ struct PaywallView: View {
 
                 renewalTerms.padding(.top, 20)
                 legalLine.padding(.top, 12)
-                accountLinks.padding(.top, 26).padding(.bottom, 28)
+                if showsAccountLinks {
+                    accountLinks.padding(.top, 26).padding(.bottom, 28)
+                } else {
+                    Spacer(minLength: 28)
+                }
             }
             .padding(.horizontal, 24)
         }
