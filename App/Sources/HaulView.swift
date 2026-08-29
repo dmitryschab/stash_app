@@ -2,16 +2,17 @@
 //
 // The Haul tab: everything your saves are trying to sell you, pulled out of every category and
 // hung on one shelf. Built on Code's bones — StashHeader, chips, a featured card, month runs
-// with the TimeRail — but the unit of a row is different, and that difference is the whole
-// section. Cook lists recipes, Code lists saves; Haul lists *picks*. One video that runs
-// through six products is six rows here, because six is how many things you wanted.
+// with the TimeRail. The row unit is the save: one video that runs through six products is ONE
+// row here, and the six live inside, on the save's own page — six sibling rows made a haul
+// video read as six unrelated saves. A save with a single pick still reads as the pick itself.
 //
 // The other tabs are windows onto a `Category`. This one is a query: a `BuyPick` hangs off the
 // analysis regardless of what the save was filed under, so the sneakers from a style video and
 // the desk lamp from a home tour land side by side. See `BuyPick` for why that is the only
 // payload built that way.
 //
-// Nothing here knows a product's price, stock or seller, and nothing tries to: a row's action is
+// A row's tap opens the pick's own page (`HaulDetailView`), which is where prices live — looked
+// up there, for the reader's country, never here. The bag glyph keeps the keyless escape hatch:
 // a search URL at a store (`Shop`), which needs no API key, no affiliate account and no quota.
 
 import SwiftUI
@@ -32,6 +33,15 @@ private struct HaulItem: Identifiable {
     /// video gave one — this is deliberately not "name + kind", which turns "Nike Vomero 5" into
     /// "Nike Vomero 5 sneakers" and narrows a good query into a bad one.
     var query: String { pick.name }
+}
+
+/// One save's worth of picks: the row unit of the shelf.
+private struct HaulSave: Identifiable {
+    let video: Video
+    let items: [HaulItem]
+
+    var id: String { video.videoID }
+    var date: Date { video.bookmarkedAt }
 }
 
 struct HaulView: View {
@@ -82,8 +92,28 @@ struct HaulView: View {
         return "\(items.count) item\(items.count == 1 ? "" : "s") · \(sourceCount) saves"
     }
 
-    private var runs: [MonthRun<HaulItem>] {
-        monthRuns(Array(shown.dropFirst())) { $0.date }
+    /// The (filtered) picks regrouped one row per save, newest save first. Under a kind focus a
+    /// six-pick haul may group down to the one matching pick — it then reads as that pick.
+    private var saves: [HaulSave] {
+        var rowIndex: [String: Int] = [:]
+        var result: [HaulSave] = []
+        for item in shown {
+            if let at = rowIndex[item.video.videoID] {
+                result[at] = HaulSave(video: result[at].video, items: result[at].items + [item])
+            } else {
+                rowIndex[item.video.videoID] = result.count
+                result.append(HaulSave(video: item.video, items: [item]))
+            }
+        }
+        return result
+    }
+
+    /// The featured card already wears the newest save (and links to it), so its row is dropped
+    /// whole — the old dropFirst() kept the same video's other picks as rows, which is exactly
+    /// the duplication the per-save row exists to end.
+    private var runs: [MonthRun<HaulSave>] {
+        let featuredID = shown.first?.video.videoID
+        return monthRuns(saves.filter { $0.id != featuredID }) { $0.date }
     }
 
     var body: some View {
@@ -137,12 +167,13 @@ struct HaulView: View {
         }
     }
 
-    /// The newest pick, big. Not a NavigationLink like Code's: the card's job here is the
-    /// shopping action, so the whole card is the store button and the small "from this save"
-    /// row underneath is the way to the video.
+    /// The newest pick, big. The whole card opens the pick's page — offers, product frame, the
+    /// lot — and the small "from this save" row underneath stays the shortcut to the video.
     private func featuredCard(_ item: HaulItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            ShopMenu(item: item) {
+            NavigationLink {
+                HaulDetailView(video: item.video, pick: item.pick, pickIndex: item.index)
+            } label: {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Micro(text: "Latest want", size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.65))
@@ -168,7 +199,7 @@ struct HaulView: View {
                                 .background(Capsule().strokeBorder(Color.stashOnAccent.opacity(0.5), lineWidth: 1.2))
                         }
                         Spacer()
-                        Image(systemName: "magnifyingglass")
+                        Image(systemName: "arrow.right")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(Color.stashOnAccent)
                             .frame(width: 32, height: 32)
@@ -177,8 +208,12 @@ struct HaulView: View {
                     .padding(.top, 16)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .stashArtCard(fill: .stashHaul, art: item.video.thumbnailURL)
+                .stashArtCard(fill: .stashHaul,
+                              art: PickFrameStore.shared.frame(videoID: item.video.videoID,
+                                                               pickIndex: item.index)
+                                   ?? item.video.thumbnailURL)
             }
+            .buttonStyle(.plain)
             NavigationLink { VideoDetailView(video: item.video) } label: {
                 HStack(spacing: 6) {
                     Micro(text: "from \(item.video.rowTitle)", size: 9.5, tracking: 1.2,
@@ -200,8 +235,8 @@ struct HaulView: View {
                     .padding(.top, 18)
                     .padding(.bottom, 4)
                     .id(run.id)
-                ForEach(run.items) { item in
-                    HaulRow(item: item)
+                ForEach(run.items) { save in
+                    HaulSaveRow(save: save)
                     Divider().overlay(Color.stashInk.opacity(0.12))
                 }
             }
@@ -224,16 +259,68 @@ struct HaulView: View {
 
 // MARK: - Row
 
-/// One pick: thumbnail, the searchable name, then kind · price · author. Tapping the text goes
-/// to the video it came from; the bag on the right goes shopping.
+/// One save. A save with a single pick reads as the pick itself — name, price, bag menu, the
+/// pick's own page — and a save with several reads as the video with its product count, and
+/// opens the save's page, where every pick is listed with its own row.
+private struct HaulSaveRow: View {
+    let save: HaulSave
+
+    var body: some View {
+        if save.items.count == 1, let item = save.items.first {
+            HaulRow(item: item)
+        } else {
+            NavigationLink { VideoDetailView(video: save.video) } label: {
+                HStack(spacing: 11) {
+                    Thumbnail(url: save.video.thumbnailURL,
+                              category: save.video.category, size: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(save.video.rowTitle)
+                            .font(.archivo(15, .bold))
+                            .foregroundStyle(Color.stashInk)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(1)
+                        Text(meta)
+                            .font(.archivo(12))
+                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.stashInk.opacity(0.4))
+                        .frame(width: 44, height: 44)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 9)
+            .accessibilityLabel("Open \(save.video.rowTitle)")
+        }
+    }
+
+    private var meta: String {
+        let tail = save.video.author.isEmpty ? "" : "@\(save.video.author)"
+        return ["\(save.items.count) products", tail].filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+}
+
+/// One pick: thumbnail, the searchable name, then kind · price · author. Tapping the text
+/// opens the pick's page; the bag on the right keeps the quick search menu. The thumbnail is
+/// the pick's own frame once one is extracted.
 private struct HaulRow: View {
     let item: HaulItem
 
     var body: some View {
         HStack(spacing: 11) {
-            NavigationLink { VideoDetailView(video: item.video) } label: {
+            NavigationLink {
+                HaulDetailView(video: item.video, pick: item.pick, pickIndex: item.index)
+            } label: {
                 HStack(spacing: 11) {
-                    Thumbnail(url: item.video.thumbnailURL, category: item.video.category, size: 36)
+                    Thumbnail(url: PickFrameStore.shared.frame(videoID: item.video.videoID,
+                                                               pickIndex: item.index)
+                                   ?? item.video.thumbnailURL,
+                              category: item.video.category, size: 36)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.pick.name)
                             .font(.archivo(15, .bold))

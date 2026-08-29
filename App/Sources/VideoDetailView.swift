@@ -222,28 +222,22 @@ struct VideoDetailView: View {
 
     /// What this save is selling. Shown on every category, because that is what `BuyPick` is —
     /// the sneakers in a style video belong here as much as the keyboard in a coding one.
-    /// Each row is a store search, built the same way Haul builds it (`Shop.searchURL`).
+    /// Each row opens the pick's page (`HaulDetailView`): live offers, the pick's own frame,
+    /// and the store searches that used to be the only action here.
     @ViewBuilder
     private func buysSection(_ buys: [BuyPick]) -> some View {
         sectionHeader(buys.count == 1 ? "In this video" : "\(buys.count) things in this video")
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(buys.enumerated()), id: \.offset) { index, pick in
                 if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
-                Menu {
-                    if let link = pick.link {
-                        Link(destination: link) {
-                            Label("Open the link from the video", systemImage: "arrow.up.right")
-                        }
-                    }
-                    ForEach(Shop.allCases, id: \.self) { shop in
-                        if let url = shop.searchURL(for: pick.name) {
-                            Link(destination: url) {
-                                Label("Search \(shop.label)", systemImage: "magnifyingglass")
-                            }
-                        }
-                    }
+                NavigationLink {
+                    HaulDetailView(video: video, pick: pick, pickIndex: index)
                 } label: {
                     HStack(spacing: 10) {
+                        if let frame = PickFrameStore.shared.frame(videoID: video.videoID,
+                                                                   pickIndex: index) {
+                            Thumbnail(url: frame, category: video.category, size: 36)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(pick.name)
                                 .font(.archivo(14, .bold))
@@ -263,7 +257,8 @@ struct VideoDetailView: View {
                     .padding(.vertical, 10)
                     .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Shop for \(pick.name)")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open \(pick.name)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

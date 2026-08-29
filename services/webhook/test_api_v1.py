@@ -5,6 +5,7 @@ and download routes are not — they serve the deep pass over a library that alr
 quota unit per video at import — so what bounds them is a per-user daily cap instead.
 """
 
+import base64
 import json
 import os
 from types import SimpleNamespace
@@ -330,7 +331,7 @@ def test_a_photo_post_goes_to_the_vision_model_with_its_picture(monkeypatch, ana
     monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "test-openrouter-key")
 
     api_v1.analyze_metadata({"caption": "", "track": "Age of Consent",
-                             "isPhotoPost": True, "image": b"jpeg"})
+                             "isPhotoPost": True, "images": [b"jpeg"]})
     call = analyzer_calls[-1]
     assert call["url"] == api_v1.OPENROUTER_URL
     assert call["body"]["model"] == api_v1.OPENROUTER_VISION_MODEL
@@ -345,6 +346,22 @@ def test_a_photo_post_goes_to_the_vision_model_with_its_picture(monkeypatch, ana
     system = call["body"]["messages"][0]["content"]
     assert system.startswith(api_v1.ANALYSIS_SYSTEM_PROMPT)
     assert system.endswith(api_v1.PHOTO_SYSTEM_PROMPT_ADDENDUM)
+
+
+def test_every_slide_reaches_the_vision_model_in_order(monkeypatch, analyzer_calls):
+    """A slideshow's list lives on its later slides; the model must see all of them, in the
+    order the post shows them, or a seven-slide topster reads as a one-image meme."""
+    monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "test-openrouter-key")
+
+    api_v1.analyze_metadata({"caption": "", "isPhotoPost": True,
+                             "images": [b"one", b"two", b"three"]})
+    call = analyzer_calls[-1]
+    content = call["body"]["messages"][1]["content"]
+    assert [part["type"] for part in content] == ["text", "image_url", "image_url", "image_url"]
+    assert [part["image_url"]["url"] for part in content[1:]] == [
+        "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+        for raw in (b"one", b"two", b"three")]
+    assert "3 slides" in content[0]["text"]
 
 
 def test_an_ordinary_video_still_goes_to_bedrock(monkeypatch, analyzer_calls):
@@ -363,7 +380,7 @@ def test_a_photo_post_falls_back_to_bedrock_without_a_vision_key(monkeypatch, an
     in an import into an error."""
     monkeypatch.setattr(api_v1, "_openrouter_key", lambda: "")
 
-    api_v1.analyze_metadata({"caption": "", "isPhotoPost": True, "image": b"jpeg"})
+    api_v1.analyze_metadata({"caption": "", "isPhotoPost": True, "images": [b"jpeg"]})
     call = analyzer_calls[-1]
     assert call["url"] == api_v1.BEDROCK_URL
     assert isinstance(call["body"]["messages"][1]["content"], str)

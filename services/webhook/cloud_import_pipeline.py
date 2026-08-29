@@ -32,6 +32,19 @@ def _canonical(url: str) -> str:
 # bound rather than a real limit — an image past it is dropped, not resized.
 PHOTO_IMAGE_MAX_BYTES = 4_000_000
 
+# TikTok allows 35 slides; past a dozen it is a photo dump, not a list, and every extra
+# slide is another ~250 KB into the vision call. Matches MusicPick.maxPerVideo on the app side.
+PHOTO_SLIDES_MAX = 12
+
+_UNIVERSAL_DATA_RE = re.compile(
+    r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>', re.S)
+
+# TikTok serves the box a shell page under some agents; this one is measured to get the
+# rehydration JSON through. The /photo/ spelling gets the shell regardless — see _canonical.
+_PAGE_HEADERS = {"User-Agent": (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.4 Safari/605.1.15")}
+
 
 def _is_photo_post(metadata: dict) -> bool:
     """True for a TikTok photo post: a still (or a few) plus a backing track, no video.
@@ -43,6 +56,42 @@ def _is_photo_post(metadata: dict) -> bool:
     """
     formats = metadata.get("formats") or []
     return bool(formats) and all(fmt.get("vcodec") == "none" for fmt in formats)
+
+
+def _photo_slides(url: str) -> list[bytes]:
+    """Every slide of a photo post, in order, or [] when TikTok will not say.
+
+    yt-dlp's metadata carries only the cover, and an album-list slideshow keeps its list on
+    the later slides — a cover analysed alone filed a seven-slide topster under comedy with
+    no picks. The post's own webpage still embeds every slide URL in its rehydration JSON,
+    and (unlike the /photo/ spelling) the /video/ spelling serves it from this box.
+    """
+    try:
+        response = requests.get(url, headers=_PAGE_HEADERS, timeout=30)
+    except requests.RequestException:
+        return []
+    if response.status_code != 200:
+        return []
+    match = _UNIVERSAL_DATA_RE.search(response.text or "")
+    if not match:
+        return []
+    try:
+        detail = json.loads(match.group(1))["__DEFAULT_SCOPE__"]["webapp.video-detail"]
+        images = detail["itemInfo"]["itemStruct"]["imagePost"]["images"]
+    except (ValueError, KeyError, TypeError):
+        return []
+    slides = []
+    for image in images[:PHOTO_SLIDES_MAX] if isinstance(images, list) else []:
+        candidates = (image.get("imageURL") or {}).get("urlList") or []
+        if not candidates:
+            continue
+        try:
+            slide = requests.get(candidates[0], timeout=30)
+        except requests.RequestException:
+            continue
+        if slide.status_code == 200 and 0 < len(slide.content) <= PHOTO_IMAGE_MAX_BYTES:
+            slides.append(slide.content)
+    return slides
 
 
 def _photo_image(metadata: dict) -> bytes | None:
@@ -125,13 +174,16 @@ class FastPassPipeline:
             "artist": metadata.get("artist") or "",
         }
         if _is_photo_post(metadata):
-            # Flagged even when the picture cannot be fetched: without it the prompt's only
+            # Flagged even when no picture can be fetched: without it the prompt's only
             # line is the backing track, and the model dutifully recommends somebody else's
             # song as the thing the post was about.
             payload["isPhotoPost"] = True
-            image = _photo_image(metadata)
-            if image:
-                payload["image"] = image
+            images = _photo_slides(url)
+            if not images:
+                cover = _photo_image(metadata)
+                images = [cover] if cover else []
+            if images:
+                payload["images"] = images
         try:
             analysis = self.analyzer(payload) or {}
         except PipelineError:

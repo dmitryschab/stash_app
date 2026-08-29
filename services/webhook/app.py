@@ -4,9 +4,9 @@ Receives TikTok's "archive ready" webhooks, verifies the signature, and durably
 records each event. The archive download + favourite extraction is a separate
 worker built once the app is approved and we can see a real payload.
 
-Everything under /v1 lives in four routers: stash_auth (sign-in and account),
-api_v1 (transcript, analyzer proxy, transient media), cloud_import_api (imports)
-and embeddings_api (search vectors).
+Everything under /v1 lives in five routers: stash_auth (sign-in and account),
+api_v1 (transcript, analyzer proxy, transient media), cloud_import_api (imports),
+embeddings_api (search vectors) and haul_offers_api (live prices for picks).
 Only /health and /v1/auth/* are reachable without a per-user Stash JWT.
 """
 import hashlib
@@ -54,6 +54,9 @@ app.include_router(cloud_import_router)
 # Search's meaning half — one route, its own module, no quota. See embeddings_api.py.
 from embeddings_api import router as embeddings_router  # noqa: E402
 app.include_router(embeddings_router)
+# Haul's price check — one route, a daily cap instead of quota. See haul_offers_api.py.
+from haul_offers_api import router as haul_offers_router  # noqa: E402
+app.include_router(haul_offers_router)
 
 
 @app.exception_handler(stash_auth.QuotaExhausted)

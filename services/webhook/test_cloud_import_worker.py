@@ -113,13 +113,29 @@ PHOTO_METADATA = {
 }
 
 
-def _run_photo_pass(monkeypatch, metadata, image_response):
+def _page_html(slide_urls):
+    """A TikTok post page as the box sees it: slides live only in the rehydration JSON."""
+    data = {"__DEFAULT_SCOPE__": {"webapp.video-detail": {"itemInfo": {"itemStruct": {
+        "imagePost": {"images": [{"imageURL": {"urlList": [url]}} for url in slide_urls]}}}}}}
+    return ('<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">'
+            + json.dumps(data) + "</script>")
+
+
+def _run_photo_pass(monkeypatch, metadata, responses):
+    """`responses` maps a URL (or a startswith prefix) to its faked requests.get response."""
     monkeypatch.setattr(
         cloud_import_pipeline.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(metadata), stderr=""),
     )
-    monkeypatch.setattr(cloud_import_pipeline.requests, "get", lambda *a, **k: image_response)
+
+    def fake_get(url, **_kwargs):
+        for prefix, response in responses.items():
+            if url.startswith(prefix):
+                return response
+        return SimpleNamespace(status_code=404, text="", content=b"")
+
+    monkeypatch.setattr(cloud_import_pipeline.requests, "get", fake_get)
     seen = {}
     pipeline = cloud_import_pipeline.FastPassPipeline(
         analyzer=lambda payload: seen.update(payload) or {"category": "music", "title": "Albums"}
@@ -139,7 +155,7 @@ def test_a_photo_post_url_is_rewritten_for_yt_dlp(monkeypatch):
 
     monkeypatch.setattr(cloud_import_pipeline.subprocess, "run", run)
     monkeypatch.setattr(cloud_import_pipeline.requests, "get",
-                        lambda *a, **k: SimpleNamespace(status_code=404, content=b""))
+                        lambda *a, **k: SimpleNamespace(status_code=404, text="", content=b""))
     result = cloud_import_pipeline.FastPassPipeline(
         analyzer=lambda _: {"category": "music"}
     ).process("https://www.tiktok.com/@soundhostage/photo/7678492109686476045")
@@ -149,27 +165,57 @@ def test_a_photo_post_url_is_rewritten_for_yt_dlp(monkeypatch):
     assert result.video_id == "7678492109686476045"
 
 
-def test_a_photo_post_sends_its_image_to_the_analyzer(monkeypatch):
-    """A photo post has no video track, so the OCR pass can never see it — the albums it
-    names exist only in this image."""
-    seen = _run_photo_pass(
-        monkeypatch, PHOTO_METADATA, SimpleNamespace(status_code=200, content=b"jpeg-bytes"))
-    assert seen["image"] == b"jpeg-bytes"
+def test_a_photo_post_sends_every_slide_to_the_analyzer(monkeypatch):
+    """An album-list slideshow keeps its list on the later slides — the cover is routinely a
+    meme, and analysing it alone filed a seven-slide topster under comedy with no picks."""
+    seen = _run_photo_pass(monkeypatch, PHOTO_METADATA, {
+        "https://www.tiktok.com/": SimpleNamespace(
+            status_code=200,
+            text=_page_html(["https://cdn.test/s1.jpeg", "https://cdn.test/s2.jpeg",
+                             "https://cdn.test/s3.jpeg"])),
+        "https://cdn.test/s1.jpeg": SimpleNamespace(status_code=200, content=b"slide-1"),
+        "https://cdn.test/s2.jpeg": SimpleNamespace(status_code=200, content=b"slide-2"),
+        "https://cdn.test/s3.jpeg": SimpleNamespace(status_code=200, content=b"slide-3"),
+    })
+    assert seen["images"] == [b"slide-1", b"slide-2", b"slide-3"]
+
+
+def test_slides_are_capped(monkeypatch):
+    """Every slide is another ~250 KB into the vision call; a photo dump must not buy 35."""
+    urls = [f"https://cdn.test/s{i}.jpeg" for i in range(20)]
+    responses = {url: SimpleNamespace(status_code=200, content=f"slide-{i}".encode())
+                 for i, url in enumerate(urls)}
+    responses["https://www.tiktok.com/"] = SimpleNamespace(status_code=200, text=_page_html(urls))
+    seen = _run_photo_pass(monkeypatch, PHOTO_METADATA, responses)
+    assert len(seen["images"]) == cloud_import_pipeline.PHOTO_SLIDES_MAX
+
+
+def test_a_shell_page_falls_back_to_the_cover(monkeypatch):
+    """TikTok serves the box a shell page for some posts; the yt-dlp cover is still one
+    real slide, which beats a text-only analysis."""
+    seen = _run_photo_pass(monkeypatch, PHOTO_METADATA, {
+        "https://www.tiktok.com/": SimpleNamespace(status_code=200, text="<html>login</html>"),
+        "https://cdn.test/x~tplv-photomode-image.jpeg":
+            SimpleNamespace(status_code=200, content=b"cover-bytes"),
+    })
+    assert seen["images"] == [b"cover-bytes"]
 
 
 def test_an_unreachable_photo_image_still_analyses(monkeypatch):
     """TikTok's signed photomode URLs 404 often; a miss falls back to caption-only rather
     than failing the video."""
-    seen = _run_photo_pass(
-        monkeypatch, PHOTO_METADATA, SimpleNamespace(status_code=404, content=b"nope"))
-    assert "image" not in seen
+    seen = _run_photo_pass(monkeypatch, PHOTO_METADATA, {})
+    assert "images" not in seen
 
 
 def test_a_real_video_fetches_no_image(monkeypatch):
     metadata = dict(PHOTO_METADATA, formats=[{"format_id": "0", "vcodec": "h264"}])
-    seen = _run_photo_pass(
-        monkeypatch, metadata, SimpleNamespace(status_code=200, content=b"jpeg-bytes"))
-    assert "image" not in seen
+    seen = _run_photo_pass(monkeypatch, metadata, {
+        "https://www.tiktok.com/": SimpleNamespace(
+            status_code=200, text=_page_html(["https://cdn.test/s1.jpeg"])),
+        "https://cdn.test/s1.jpeg": SimpleNamespace(status_code=200, content=b"slide-1"),
+    })
+    assert "images" not in seen
 
 
 def test_duplicate_delivery_does_not_call_provider():

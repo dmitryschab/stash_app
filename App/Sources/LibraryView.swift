@@ -1,129 +1,102 @@
 // LibraryView.swift
 //
-// The Library tab, Set List style: STASH header, category filter pills, a featured card for
-// the segment's latest save, list rows on the cream sheet, and the shared "needs a look"
+// The Library tab as a desk: STASH header, then one scroll over intent shelves — To watch,
+// To try, To buy, Moodboard, Reference — each shaped like its content (poster strips for the
+// watchable, rows for the doable, a wall for the lookable), plus the shared "needs a look"
 // pile. Import/pipeline lives behind the header's import button, Settings — account deletion,
 // data export, legal — behind its gear.
+//
+// The desk replaced the category pills after measuring the real 855-save library: two shelves
+// held ~480 saves while four pills pointed at fewer than 16 each, and the biggest shelf was
+// text-dense Tech while the mid shelves (film, home, style) were visual — one flat row list
+// fit none of them. Intent comes from `SaveIntent.classify`, derived on the fly from the
+// analysis; categories still exist underneath (rows keep their tints, `libraryShelves` still
+// scopes what this tab owns), they just stopped being the navigation.
 
 import SwiftUI
 import SwiftData
 import TikTokBrainKit
 
 struct LibraryView: View {
-    /// The shelves this library is responsible for, passed in because it depends on which
-    /// sections the pill is currently showing — Library takes back the ones switched off.
-    /// See `libraryShelves(visible:)`.
+    /// The category shelves this library is responsible for, passed in because it depends on
+    /// which sections the pill is currently showing — Library takes back the ones switched
+    /// off. See `libraryShelves(visible:)`.
     let shelves: [Category]
+    /// False when the Haul tab is on the pill and owns the buys — the same take-back rule,
+    /// one payload over. A buys-carrying save then files by its next intent instead.
+    let includeBuyShelf: Bool
 
     // Spelled out because `@Query private var videos` makes the synthesized memberwise
     // initializer private, and RootView is in another file.
-    init(shelves: [Category] = libraryShelves(visible: TabSlots.fallback)) {
+    init(shelves: [Category] = libraryShelves(visible: TabSlots.fallback),
+         includeBuyShelf: Bool = false) {
         self.shelves = shelves
+        self.includeBuyShelf = includeBuyShelf
     }
 
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
-    // Simulator smoke runs can open a specific segment: `-initialSegment other`.
-    // Recipes, music and coding are not shelves here any more — they have their own tabs.
-    @State private var segment: Category = {
-        switch UserDefaults.standard.string(forKey: "initialSegment") {
-        case "other": .other
-        default: .fitness
-        }
-    }()
-    @State private var selectedTopic: String?
     @State private var showSettings = false
-    /// True once the shelf on screen is the one *you* asked for — a tapped pill, or the
-    /// `-initialSegment` a smoke run opened with. Until then the biggest shelf wins.
-    @State private var pickedShelf = UserDefaults.standard.string(forKey: "initialSegment") != nil
     // Drives the incoming-share card; observed the same way RootView observes the sync pill.
     private var center = PipelineCenter.shared
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                StashScrollView(tab: .library) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        header
-                        pills.padding(.top, 14)
-                        if !topicChips.isEmpty {
-                            chips.padding(.top, 10)
-                        }
+            StashScrollView(tab: .library) {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
 
-                        if !center.pendingShares.isEmpty {
-                            IncomingShareCard(shares: center.pendingShares)
-                                .padding(.top, 14)
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        if let featured = filtered.first {
-                            NavigationLink { VideoDetailView(video: featured) } label: { featuredCard(featured) }
-                                .buttonStyle(.plain)
-                                .padding(.top, 14)
-                        }
-
-                        if filtered.isEmpty {
-                            emptyState.padding(.top, 48)
-                        } else {
-                            sectionedRows
-                        }
-
-                        needsLookSection
+                    if !center.pendingShares.isEmpty {
+                        IncomingShareCard(shares: center.pendingShares)
+                            .padding(.top, 14)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, stashTabBarClearance)
-                    .animation(.spring(duration: 0.45, bounce: 0.25), value: center.pendingShares)
-                }
-                .background(Color.stashBackground.ignoresSafeArea())
-                .toolbar(.hidden, for: .navigationBar)
-                .sheet(isPresented: $showSettings) { SettingsView() }
-                .overlay(alignment: .trailing) {
-                    let entries = timeRailEntries(for: sections)
-                    if entries.count >= 2 {
-                        TimeRail(entries: entries, proxy: proxy)
+
+                    if deskIsEmpty {
+                        emptyState.padding(.top, 48)
+                    } else {
+                        desk
                     }
+
+                    needsLookSection
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, stashTabBarClearance)
+                .animation(.spring(duration: 0.45, bounce: 0.25), value: center.pendingShares)
             }
-        }
-        .onChange(of: segment) { _, _ in selectedTopic = nil }
-        // Saves arrive after the first render (SwiftData query, then imports), so the
-        // biggest shelf is not known at init — follow it until you pick one yourself.
-        .onChange(of: orderedShelves.first) { _, top in
-            if !pickedShelf, let top { segment = top }
-        }
-        .onAppear { if !pickedShelf, let top = orderedShelves.first { segment = top } }
-        // Turning a section off in Settings hands its category back to Library, and turning one
-        // on takes it away — the shelf you were standing on can stop existing either way.
-        .onChange(of: shelves) { _, current in
-            if !current.contains(segment) { segment = orderedShelves.first ?? .other }
+            .background(Color.stashBackground.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $showSettings) { SettingsView() }
         }
     }
 
     // MARK: - Data
 
-    private var inSegment: [Video] {
-        videos.filter { !$0.needsLook && $0.category == segment }
-    }
-
-    /// Shelves in the order this library actually uses them, biggest first. A library that
-    /// is mostly coding opens on coding; empty shelves fall to the end but stay reachable.
-    private var orderedShelves: [Category] {
-        var counts: [Category: Int] = [:]
+    /// Every save on this tab's shelves, filed by intent. Classified on the fly — intent is
+    /// derived, so the rules can move without touching stored data.
+    private var desked: [SaveIntent: [Video]] {
+        let scope = Set(shelves)
+        var out: [SaveIntent: [Video]] = [:]
         for video in videos where !video.needsLook {
-            guard let category = video.category else { continue }
-            counts[category, default: 0] += 1
+            guard let category = video.category, scope.contains(category) else { continue }
+            let intent = SaveIntent.classify(category: category, topics: video.topics,
+                                             hasBuys: !video.buys.isEmpty,
+                                             includeBuy: includeBuyShelf)
+            out[intent, default: []].append(video)
         }
-        return shelves.enumerated()
-            .sorted { a, b in
-                let (countA, countB) = (counts[a.element, default: 0], counts[b.element, default: 0])
-                return countA == countB ? a.offset < b.offset : countA > countB
-            }
-            .map(\.element)
+        return out
     }
 
-    /// Segment narrowed by the selected topic chip (nil = all).
-    private var filtered: [Video] {
-        guard let topic = selectedTopic else { return inSegment }
-        return inSegment.filter { $0.topics.contains(topic) }
+    /// The buy shelf's unit is a pick, not a video, and it is cross-category on purpose —
+    /// exactly Haul's query, shown here only while Haul has no tab of its own.
+    private var buyPicks: [(video: Video, pick: BuyPick, index: Int)] {
+        guard includeBuyShelf else { return [] }
+        return videos.filter { !$0.needsLook }.flatMap { video in
+            video.buys.enumerated().map { (video, $1, $0) }
+        }
+    }
+
+    private var deskIsEmpty: Bool {
+        desked.isEmpty && buyPicks.isEmpty
     }
 
     /// In-flight shares are excluded: until the fast pass classifies them, the incoming card
@@ -134,25 +107,7 @@ struct LibraryView: View {
         return videos.filter { $0.needsLook && !inFlight.contains($0.videoID) }
     }
 
-    /// Top topics within the segment, by save count. Computed over the whole
-    /// segment (not the filtered list) so chips don't vanish once selected.
-    private var topicChips: [String] {
-        var counts: [String: Int] = [:]
-        for video in inSegment {
-            for topic in video.topics { counts[topic, default: 0] += 1 }
-        }
-        return counts
-            .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
-            .prefix(6)
-            .map(\.key)
-    }
-
-    /// Rows after the featured card, grouped into month runs.
-    private var sections: [MonthRun<Video>] {
-        monthRuns(Array(filtered.dropFirst())) { $0.bookmarkedAt }
-    }
-
-    // MARK: - Header + pills
+    // MARK: - Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -204,119 +159,107 @@ struct LibraryView: View {
         .padding(.top, 8)
     }
 
-    private var pills: some View {
+    // MARK: - The desk
+
+    /// Fixed order, not biggest-first: a desk sorts by urgency of use — things to act on
+    /// first, the archive last — and a stable order is what makes shelves findable by thumb.
+    @ViewBuilder
+    private var desk: some View {
+        if let watch = desked[.watch] { watchShelf(watch) }
+        if let doable = desked[.tryIt] { rowShelf(.tryIt, doable, badge: "try it") }
+        if !buyPicks.isEmpty { buyShelf(buyPicks) }
+        if let mood = desked[.mood] { moodShelf(mood) }
+        if let reference = desked[.reference] { rowShelf(.reference, reference) }
+    }
+
+    private func shelfHeader(_ title: String, count: Int, tint: Color,
+                             @ViewBuilder destination: @escaping () -> some View) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Micro(text: "\(title) · \(count)", size: 10, tracking: 2, color: tint)
+            Spacer()
+            NavigationLink { destination() } label: {
+                Micro(text: "all ›", size: 9, tracking: 1.4, color: .stashInk.opacity(0.45))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("All \(title.lowercased()) saves")
+        }
+        .padding(.top, 24)
+    }
+
+    /// The watchable, as a poster rail — the one shelf whose saves are chosen by look.
+    @ViewBuilder
+    private func watchShelf(_ shelf: [Video]) -> some View {
+        let intent = SaveIntent.watch
+        shelfHeader(intent.deskTitle, count: shelf.count, tint: intent.deskTint) {
+            IntentListView(title: intent.deskTitle, tint: intent.deskTint, videos: shelf)
+        }
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(orderedShelves, id: \.self) { category in
-                    Button {
-                        segment = category
-                        pickedShelf = true
-                    } label: {
-                        Micro(
-                            text: category.displayName,
-                            size: 11,
-                            tracking: 0.9,
-                            color: segment == category ? .stashOnAccent : .stashInk
-                        )
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background {
-                            if segment == category {
-                                Capsule().fill(category.color)
-                            } else {
-                                Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5)
-                            }
-                        }
+            HStack(spacing: 9) {
+                ForEach(shelf.prefix(12), id: \.videoID) { video in
+                    NavigationLink { VideoDetailView(video: video) } label: {
+                        PosterCard(video: video)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
+        .padding(.top, 8)
     }
 
-    // MARK: - Featured + rows
-
-    private func featuredCard(_ video: Video) -> some View {
+    /// The doable and the archive share one shape: compact rows, three deep, the rest behind
+    /// "all ›". `badge` marks the doable rows — the shelf that is a to-do list says so.
+    @ViewBuilder
+    private func rowShelf(_ intent: SaveIntent, _ shelf: [Video], badge: String? = nil) -> some View {
+        shelfHeader(intent.deskTitle, count: shelf.count, tint: intent.deskTint) {
+            IntentListView(title: intent.deskTitle, tint: intent.deskTint, videos: shelf)
+        }
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Micro(text: "Latest save", size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.65))
-                Spacer()
-                Micro(text: video.bookmarkedAt.formatted(.relative(presentation: .named)), size: 10, tracking: 2, color: .stashOnAccent.opacity(0.65))
-            }
-            Text(video.rowTitle)
-                .font(.archivo(24, .heavy))
-                .foregroundStyle(Color.stashOnAccent)
-                .multilineTextAlignment(.leading)
-                .padding(.top, 10)
-            Text(video.rowMeta)
-                .font(.archivo(14, .semibold))
-                .foregroundStyle(Color.stashOnAccent.opacity(0.8))
-                .padding(.top, 4)
-            HStack {
-                if let topic = video.topics.first {
-                    Micro(text: topic, size: 9.5, tracking: 1.4, color: .stashOnAccent)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
-                        .background(Capsule().strokeBorder(Color.stashOnAccent.opacity(0.5), lineWidth: 1.2))
+            ForEach(Array(shelf.prefix(3).enumerated()), id: \.element.videoID) { index, video in
+                if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
+                NavigationLink { VideoDetailView(video: video) } label: {
+                    LibraryRow(video: video, tint: intent.deskTint, badge: badge,
+                               badgeTint: intent.deskTint)
                 }
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color.stashOnAccent)
-                    .frame(width: 32, height: 32)
-                    .background(Circle().strokeBorder(Color.stashOnAccent.opacity(0.6), lineWidth: 1.5))
+                .buttonStyle(.plain)
             }
-            .padding(.top, 16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .stashArtCard(fill: segment.color, art: video.thumbnailURL)
+        .padding(.top, 2)
     }
 
-    /// Topic chip row: "all" + the segment's top topics.
-    private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                chip("all", isOn: selectedTopic == nil) { selectedTopic = nil }
-                ForEach(topicChips, id: \.self) { topic in
-                    chip(topic, isOn: selectedTopic == topic) {
-                        selectedTopic = selectedTopic == topic ? nil : topic
-                    }
-                }
+    /// Picks wearing prices: the stated one, or the checked one once the pick page has looked
+    /// it up (cache-only here — a shelf row never spends a lookup).
+    @ViewBuilder
+    private func buyShelf(_ picks: [(video: Video, pick: BuyPick, index: Int)]) -> some View {
+        let intent = SaveIntent.buy
+        shelfHeader(intent.deskTitle, count: picks.count, tint: intent.deskTint) {
+            BuyListView(picks: picks)
+        }
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(picks.prefix(3).enumerated()), id: \.offset) { index, item in
+                if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
+                BuyShelfRow(video: item.video, pick: item.pick, pickIndex: item.index)
             }
         }
+        .padding(.top, 2)
     }
 
-    private func chip(_ label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Micro(text: label, size: 9.5, tracking: 0.8, color: isOn ? .stashOnAccent : .stashInk.opacity(0.65))
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
-                .background {
-                    if isOn {
-                        Capsule().fill(Color.stashInk)
-                    } else {
-                        Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2)
-                    }
-                }
+    /// The lookable, two-up — a wall, not a list, because these saves are their pictures.
+    @ViewBuilder
+    private func moodShelf(_ shelf: [Video]) -> some View {
+        let intent = SaveIntent.mood
+        shelfHeader(intent.deskTitle, count: shelf.count, tint: intent.deskTint) {
+            IntentListView(title: intent.deskTitle, tint: intent.deskTint, videos: shelf)
         }
-        .buttonStyle(.plain)
-    }
-
-    /// Month-sectioned rows, lazily rendered — hundreds of rows per segment.
-    private var sectionedRows: some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(sections, id: \.id) { section in
-                Micro(text: section.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
-                    .padding(.top, 18)
-                    .padding(.bottom, 4)
-                    .id(section.id)
-                ForEach(section.items, id: \.videoID) { video in
-                    NavigationLink { VideoDetailView(video: video) } label: { LibraryRow(video: video) }
-                        .buttonStyle(.plain)
-                    Divider().overlay(Color.stashInk.opacity(0.12))
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)],
+                  spacing: 9) {
+            ForEach(shelf.prefix(4), id: \.videoID) { video in
+                NavigationLink { VideoDetailView(video: video) } label: {
+                    MoodTile(video: video)
                 }
+                .buttonStyle(.plain)
             }
         }
+        .padding(.top, 8)
     }
 
     @ViewBuilder
@@ -353,18 +296,298 @@ struct LibraryView: View {
         }
     }
 
-    /// Two different emptinesses: a library with nothing in it at all (the first run — say so
-    /// plainly and offer Import), versus one shelf that simply has no saves in it yet.
     private var emptyState: some View {
         StashEmptyState(
-            symbol: videos.isEmpty ? "tray" : segment.symbol,
-            tint: videos.isEmpty ? .stashInk.opacity(0.35) : segment.color,
-            title: videos.isEmpty ? "Your library is empty" : "Nothing in \(segment.displayName.lowercased()) yet",
+            symbol: "tray",
+            title: videos.isEmpty ? "Your library is empty" : "Nothing on the desk yet",
             message: videos.isEmpty
                 ? "Import your TikTok favorites and Stash sorts them onto these shelves."
-                : "Saves land on this shelf once they are analyzed as \(segment.displayName.lowercased()).",
+                : "Saves land here once they are analyzed.",
             offersImport: false   // the header's import button is already one tap away
         )
+    }
+}
+
+// MARK: - Intent display
+
+extension SaveIntent {
+    /// The shelf's spoken name — a purpose, not a taxonomy label.
+    var deskTitle: String {
+        switch self {
+        case .buy: "To buy"
+        case .watch: "To watch"
+        case .tryIt: "To try"
+        case .mood: "Moodboard"
+        case .reference: "Reference"
+        }
+    }
+
+    /// Borrowed jewel tones: an intent is not a category, but it reads through the same
+    /// palette — film's steel for the watchable, Haul's tan for the buyable.
+    var deskTint: Color {
+        switch self {
+        case .buy: .stashHaul
+        case .watch: .categoryFilm
+        case .tryIt: .categoryCoding
+        case .mood: .categoryStyle
+        case .reference: .stashInk.opacity(0.6)
+        }
+    }
+}
+
+// MARK: - Shelf cells
+
+/// A watchable save as a small poster: art under a scrim, first topic up top, title on the
+/// bottom. The art takes no touches, same rule as `stashArtCard`.
+private struct PosterCard: View {
+    let video: Video
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            FeaturedArt(url: video.thumbnailURL, tint: .categoryFilm)
+                .allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: 0) {
+                if let topic = video.topics.first {
+                    Micro(text: topic, size: 6.5, tracking: 1.2, color: .stashOnAccent.opacity(0.75))
+                }
+                Spacer(minLength: 0)
+                Text(video.rowTitle)
+                    .font(.archivo(10.5, .heavy))
+                    .foregroundStyle(Color.stashOnAccent)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 104, height: 140)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// A mood save as a wall tile — bigger art, smaller words.
+private struct MoodTile: View {
+    let video: Video
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            FeaturedArt(url: video.thumbnailURL, tint: .categoryStyle)
+                .allowsHitTesting(false)
+            Text(video.rowTitle)
+                .font(.archivo(11, .heavy))
+                .foregroundStyle(Color.stashOnAccent)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 118)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// One pick on the buy shelf: its own frame when one is extracted, the stated or checked
+/// price as the badge, and the pick page behind it.
+private struct BuyShelfRow: View {
+    let video: Video
+    let pick: BuyPick
+    let pickIndex: Int
+
+    private var price: String {
+        if !pick.price.isEmpty { return pick.price }
+        let country = Locale.current.region?.identifier ?? "DE"
+        return OfferStore.shared.cachedTopOffer(name: pick.name, country: country)?.price ?? ""
+    }
+
+    var body: some View {
+        NavigationLink { HaulDetailView(video: video, pick: pick, pickIndex: pickIndex) } label: {
+            HStack(spacing: 11) {
+                Thumbnail(url: PickFrameStore.shared.frame(videoID: video.videoID, pickIndex: pickIndex)
+                              ?? video.thumbnailURL,
+                          category: video.category, size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pick.name)
+                        .font(.archivo(14, .bold))
+                        .foregroundStyle(Color.stashInk)
+                        .lineLimit(1)
+                    Text([pick.kind, video.author.isEmpty ? "" : "@\(video.author)"]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.archivo(11.5))
+                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if !price.isEmpty {
+                    Micro(text: price, size: 8, tracking: 0.8, color: .stashHaul)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().strokeBorder(Color.stashHaul, lineWidth: 1.2))
+                } else {
+                    Image(systemName: "bag")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.stashHaul)
+                }
+            }
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(pick.name)")
+    }
+}
+
+// MARK: - Row
+
+/// A desk row: 52 pt art, two-line title (the p90 title in the real library is 46 characters
+/// and one line was clipping it), and a meta line that leads with the save's first topic in
+/// the shelf's tint — topics are the strongest signal in the data, 3.6 per save on every save.
+private struct LibraryRow: View {
+    let video: Video
+    var tint: Color = .stashInk
+    var badge: String? = nil
+    var badgeTint: Color = .stashInk
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Thumbnail(url: video.thumbnailURL, category: video.category, size: 52)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(video.rowTitle)
+                    .font(.archivo(14.5, .bold))
+                    .foregroundStyle(Color.stashInk)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                HStack(spacing: 4) {
+                    if let topic = video.topics.first {
+                        Micro(text: topic, size: 9, tracking: 1, color: tint)
+                    }
+                    Text(meta)
+                        .font(.archivo(11.5))
+                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            if let badge {
+                Micro(text: badge, size: 7.5, tracking: 1, color: badgeTint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().strokeBorder(badgeTint, lineWidth: 1.2))
+            } else if let link = video.soleMusicPick?.link {
+                Link(destination: link) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.categoryMusic)
+                }
+                .accessibilityLabel("Open in your music app")
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.stashInk.opacity(0.4))
+            }
+        }
+        .padding(.vertical, 9)
+    }
+
+    private var meta: String {
+        let base = video.rowMeta
+        guard let topic = video.topics.first else { return base }
+        // The topic already leads the line; rowMeta repeating it would read stuttered.
+        return base == topic ? (video.author.isEmpty ? "" : "@\(video.author)") : "· \(base)"
+    }
+}
+
+// MARK: - The "all ›" lists
+
+/// One intent shelf, whole: the month-run list the segments used to be, under the shelf's
+/// own name. Pushed, so the desk stays the tab's root.
+private struct IntentListView: View {
+    let title: String
+    let tint: Color
+    let videos: [Video]
+
+    private var sections: [MonthRun<Video>] {
+        monthRuns(videos) { $0.bookmarkedAt }
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        StashBackButton()
+                        Spacer()
+                        Micro(text: "\(videos.count) saves", size: 10, tracking: 1.4,
+                              color: .stashInk.opacity(0.5))
+                    }
+                    .padding(.top, 8)
+                    Text(title)
+                        .font(.archivo(28, .heavy))
+                        .foregroundStyle(tint)
+                        .padding(.top, 16)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(sections, id: \.id) { section in
+                            Micro(text: section.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
+                                .padding(.top, 18)
+                                .padding(.bottom, 4)
+                                .id(section.id)
+                            ForEach(section.items, id: \.videoID) { video in
+                                NavigationLink { VideoDetailView(video: video) } label: {
+                                    LibraryRow(video: video, tint: tint)
+                                }
+                                .buttonStyle(.plain)
+                                Divider().overlay(Color.stashInk.opacity(0.12))
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+            .background(Color.stashBackground.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .trailing) {
+                let entries = timeRailEntries(for: sections)
+                if entries.count >= 2 {
+                    TimeRail(entries: entries, proxy: proxy)
+                }
+            }
+        }
+    }
+}
+
+/// Every pick, priced where a price is known — the buy shelf, whole.
+private struct BuyListView: View {
+    let picks: [(video: Video, pick: BuyPick, index: Int)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    StashBackButton()
+                    Spacer()
+                    Micro(text: "\(picks.count) picks", size: 10, tracking: 1.4,
+                          color: .stashInk.opacity(0.5))
+                }
+                .padding(.top, 8)
+                Text("To buy")
+                    .font(.archivo(28, .heavy))
+                    .foregroundStyle(Color.stashHaul)
+                    .padding(.top, 16)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(picks.enumerated()), id: \.offset) { index, item in
+                        if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
+                        BuyShelfRow(video: item.video, pick: item.pick, pickIndex: item.index)
+                    }
+                }
+                .padding(.top, 6)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        }
+        .background(Color.stashBackground.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -412,43 +635,6 @@ extension View {
     }
 }
 
-// MARK: - Row
-
-/// Compact row: 36 pt thumb, tight padding — the Library carries hundreds of rows.
-private struct LibraryRow: View {
-    let video: Video
-
-    var body: some View {
-        HStack(spacing: 11) {
-            Thumbnail(url: video.thumbnailURL, category: video.category, size: 36)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(video.rowTitle)
-                    .font(.archivo(15, .bold))
-                    .foregroundStyle(Color.stashInk)
-                    .lineLimit(1)
-                Text(video.rowMeta)
-                    .font(.archivo(12))
-                    .foregroundStyle(Color.stashInk.opacity(0.55))
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            if let link = video.soleMusicPick?.link {
-                Link(destination: link) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color.categoryMusic)
-                }
-                .accessibilityLabel("Open in your music app")
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.stashInk.opacity(0.4))
-            }
-        }
-        .padding(.vertical, 9)
-    }
-}
-
 // MARK: - Incoming share
 
 /// The optimistic entry for a shared TikTok: on screen from the moment the app notices the
@@ -493,6 +679,6 @@ private struct IncomingShareCard: View {
 }
 
 #Preview {
-    LibraryView()
+    LibraryView(includeBuyShelf: true)
         .modelContainer(SampleData.previewContainer)
 }

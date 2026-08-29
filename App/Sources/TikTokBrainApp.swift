@@ -305,7 +305,8 @@ struct RootView: View {
                 case .cook: CookView()
                 case .music: MusicView()
                 case .haul: HaulView()
-                case .library: LibraryView(shelves: libraryShelves(visible: slots))
+                case .library: LibraryView(shelves: libraryShelves(visible: slots),
+                                           includeBuyShelf: !slots.contains(.haul))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -378,6 +379,7 @@ struct RootView: View {
         try? context.save()
         try? FileManager.default.removeItem(at: ThumbnailStore.directory)
         try? FileManager.default.removeItem(at: AlbumStore.cacheURL)
+        try? FileManager.default.removeItem(at: OfferStore.cacheURL)
         center.forgetCloudState()
     }
 }

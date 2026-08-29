@@ -391,9 +391,12 @@ props is worse than an empty one.
 # Appended to the prompt above on the vision path, never copied into it: none of this means
 # anything to a text-only call, where the picture is exactly what is missing.
 PHOTO_SYSTEM_PROMPT_ADDENDUM = """
-A TikTok photo post carries no speech and usually no caption: the attached image IS the whole
-post, and it outranks the rule above about missing information — never answer "Saved video"
-when there is an image. Read every word printed on it.
+A TikTok photo post carries no speech and usually no caption: the attached images ARE the
+whole post, and they outrank the rule above about missing information — never answer "Saved
+video" when there is an image. Read every word printed on them. When several images are
+attached they are the slides of one post, in order — a list post routinely spends its first
+slide on a cover or a joke and keeps the actual list on the later slides, so never judge the
+post from the first image alone.
 
 A grid, ranking or chart of album sleeves is category music, however few words it carries.
 Name each sleeve you recognise from its cover artwork — most carry no readable title, and a
@@ -429,40 +432,48 @@ def build_analysis_prompt(metadata: dict) -> str:
     if metadata.get("isPhotoPost"):
         # Without this the sound is the only line in the prompt, and the model reads a photo
         # post as a song recommendation — naming the backing track instead of the nine albums
-        # the picture is actually about. Said even when the picture could not be fetched,
+        # the picture is actually about. Said even when no picture could be fetched,
         # which is exactly when the prompt is otherwise just a song title.
-        parts.append(
-            "This is a photo post: the picture is the entire post and the sound above is only "
-            "the backing track, not a recommendation."
-            if metadata.get("image") else
-            "This is a photo post whose picture could not be fetched. The sound above is only "
-            "the backing track, not a recommendation — leave \"music\" empty.")
+        count = len(metadata.get("images") or [])
+        if count > 1:
+            parts.append(
+                f"This is a photo post of {count} slides, attached in order: the pictures are "
+                "the entire post and the sound above is only the backing track, not a "
+                "recommendation.")
+        elif count == 1:
+            parts.append(
+                "This is a photo post: the picture is the entire post and the sound above is "
+                "only the backing track, not a recommendation.")
+        else:
+            parts.append(
+                "This is a photo post whose picture could not be fetched. The sound above is "
+                "only the backing track, not a recommendation — leave \"music\" empty.")
     return "\n".join(parts) if parts else "(no metadata available)"
 
 
 def analyze_metadata(metadata: dict) -> dict:
-    """Analyze one video's metadata, or one photo post's picture, into the Analysis object.
+    """Analyze one video's metadata, or one photo post's pictures, into the Analysis object.
 
-    Everything with words goes to Bedrock, as it always has. A photo post — `metadata["image"]`,
-    raw JPEG bytes — goes to the vision model instead, because its releases exist as pixels and
-    nowhere else: no caption, no speech, and no video track for the OCR pass to sample.
+    Everything with words goes to Bedrock, as it always has. A photo post — `metadata["images"]`,
+    a list of raw JPEGs, one per slide in post order — goes to the vision model instead, because
+    its releases exist as pixels and nowhere else: no caption, no speech, and no video track for
+    the OCR pass to sample.
 
     A photo post with no vision key configured falls back to the text path rather than failing.
     The picture is then unread, which the prompt already knows how to say honestly, and one
     missing credential must not turn every photo post in an import into an error.
     """
     prompt = build_analysis_prompt(metadata)
-    image = metadata.get("image")
-    vision_key = _openrouter_key() if image else ""
-    if image and vision_key:
+    images = metadata.get("images") or []
+    vision_key = _openrouter_key() if images else ""
+    if images and vision_key:
         provider, url, model, token = "vision", OPENROUTER_URL, OPENROUTER_VISION_MODEL, vision_key
         max_tokens = VISION_MAX_OUTPUT_TOKENS
         system = f"{ANALYSIS_SYSTEM_PROMPT}\n\n{PHOTO_SYSTEM_PROMPT_ADDENDUM}"
-        content = [
-            {"type": "text", "text": prompt},
+        content = [{"type": "text", "text": prompt}] + [
             {"type": "image_url",
-             "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode()}},
-        ]
+             "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode()}}
+            for image in images]
     else:
         provider, url, model, token = "bedrock", BEDROCK_URL, BEDROCK_MODEL, _bedrock_token()
         # Was unset, which left the ceiling to the provider default. A recipe object pushes
