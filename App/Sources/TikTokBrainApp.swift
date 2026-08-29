@@ -193,6 +193,10 @@ struct RootView: View {
     /// Nobody finds hold-and-push on their own: a caption over the pill teaches it until the
     /// first time search opens.
     @AppStorage("searchGripHintDone") private var gripHintDone = false
+    /// Set when the welcome is dismissed. Separate from the UserDefaults flag `needsWelcome`
+    /// reads, because a plain `UserDefaults.set` does not invalidate a SwiftUI body — without
+    /// this the screen would still be there after Continue.
+    @State private var welcomeDismissed = false
 
     // Observes import progress so the sync pill shows on every tab, not just Import.
     private var center = PipelineCenter.shared
@@ -217,17 +221,32 @@ struct RootView: View {
     }
 
     /// The second gate. Signed in is not the same as paid for since 1.1: the app is free to
-    /// download and a €2.99/month subscription is what opens it.
+    /// download and a €2.99/month subscription is what opens it — after the first fifty
+    /// videos, which are free and are what `session.isOnTrial` is reading.
     ///
-    /// The splash in the middle branch matters more than it looks. `isEntitled` restores from
+    /// The trial is deliberately *not* folded into `isEntitled`. Nobody paid, and an app that
+    /// says "subscribed" to a trial user has to un-say it later; Settings shows a counter
+    /// instead, and this gate is the only place the two are treated alike.
+    ///
+    /// The splash in the last branch matters more than it looks. `isEntitled` restores from
     /// the Keychain, so a subscriber usually lands straight on `tabShell` — but a reinstall
     /// has no cached answer, and showing a checkout to somebody who already pays, for the
-    /// second it takes StoreKit to reply, is the worst frame this app could draw.
+    /// second it takes StoreKit and /v1/me to reply, is the worst frame this app could draw.
+    /// `quota == nil` is that same unknown for a trial user, so it waits too.
     private var paidShell: some View {
         Group {
-            if session.isEntitled {
-                tabShell
-            } else if subscription.hasSynced {
+            if session.isEntitled || session.isOnTrial {
+                if welcomeDismissed || !needsWelcome {
+                    tabShell
+                } else {
+                    WelcomeView {
+                        if let userID = session.userID {
+                            UserDefaults.standard.set(true, forKey: Self.welcomeKey(userID))
+                        }
+                        withAnimation(.easeOut(duration: 0.25)) { welcomeDismissed = true }
+                    }
+                }
+            } else if subscription.hasSynced && session.quota != nil {
                 PaywallView()
             } else {
                 splash
@@ -253,6 +272,28 @@ struct RootView: View {
         ProgressView()
             .tint(.stashInk)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Shown once, the first time an account reaches the shell: what the fifty free videos
+    /// are, and what happens after them. Keyed on the account rather than the install so a
+    /// second Apple ID on the same phone gets its own — and so a reinstall of an account
+    /// that has already seen it does not sit through it twice.
+    private static func welcomeKey(_ userID: String) -> String { "welcomed-\(userID)" }
+
+    private var needsWelcome: Bool {
+        guard let userID = session.userID else { return false }
+        // A demo account skips it: App Review is handed a seeded library and a working
+        // subscription page, and a trial screen in front of both is a screen about an offer
+        // that does not apply to them.
+        guard !session.isDemoAccount else { return false }
+        #if DEBUG
+        // A seeded smoke run has an invented account and no server, so every screenshot pass
+        // would otherwise start behind this. `-showWelcome` is how it gets captured on purpose.
+        if CommandLine.arguments.contains("-seedSample") || CommandLine.arguments.contains("-seedFile") {
+            return CommandLine.arguments.contains("-showWelcome")
+        }
+        #endif
+        return !UserDefaults.standard.bool(forKey: Self.welcomeKey(userID))
     }
 
     private var tabShell: some View {

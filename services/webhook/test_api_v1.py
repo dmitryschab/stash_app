@@ -15,7 +15,10 @@ from fastapi.testclient import TestClient
 import api_v1
 import stash_auth
 from app import app
-from cloud_import_models import INITIAL_LIMIT, MONTH_LIMIT
+from cloud_import_models import INITIAL_LIMIT, MONTH_LIMIT, TRIAL_LIMIT
+
+# Everything a fresh row can spend, across trial, lifetime and month buckets.
+EVERYTHING = TRIAL_LIMIT + INITIAL_LIMIT + MONTH_LIMIT
 from cloud_import_store import DynamoImportStore
 from conftest import ConditionalTable
 
@@ -38,7 +41,7 @@ def store(monkeypatch):
 
 
 def drain(store):
-    store.reserve_quota(INITIAL_LIMIT + MONTH_LIMIT)
+    store.reserve_quota(EVERYTHING)
 
 
 def fake_download(monkeypatch, *, succeeds=True):
@@ -69,7 +72,7 @@ def test_transcript_costs_no_quota_and_echoes_the_balance(store, monkeypatch):
         response = client.post("/v1/videos/transcript", json={"url": URL})
 
     assert response.status_code == 200
-    assert response.json()["quota"]["initialRemaining"] == INITIAL_LIMIT
+    assert response.json()["quota"]["trialRemaining"] == TRIAL_LIMIT
     assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
@@ -123,7 +126,7 @@ def test_download_streams_bytes_and_reports_quota_in_a_header(store, monkeypatch
     assert response.content == b"\x00" * 16
     # The body is mp4 bytes, so the quota rides along in a header instead — unmoved, because
     # the download is deep-pass work on a video the import already charged for.
-    assert json.loads(response.headers["x-stash-quota"])["initialRemaining"] == INITIAL_LIMIT
+    assert json.loads(response.headers["x-stash-quota"])["trialRemaining"] == TRIAL_LIMIT
     assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
@@ -403,14 +406,15 @@ def test_the_analyzer_costs_a_unit_and_reports_the_balance_in_a_header(store, mo
 
     assert response.status_code == 200
     # The body is a verbatim OpenAI-shape pass-through, so the quota rides in the header.
-    assert json.loads(response.headers["x-stash-quota"])["initialRemaining"] == INITIAL_LIMIT - 1
-    assert store.get_quota().initial_remaining == INITIAL_LIMIT - 1
+    # A new account is on the free trial, so that is the bucket the unit comes out of.
+    assert json.loads(response.headers["x-stash-quota"])["trialRemaining"] == TRIAL_LIMIT - 1
+    assert store.get_quota().trial_remaining == TRIAL_LIMIT - 1
 
 
 def test_the_analyzer_402s_once_its_last_unit_is_spent(store, monkeypatch):
     bedrock_reply(monkeypatch)
     body = {"messages": [{"role": "user", "content": "hi"}]}
-    store.reserve_quota(INITIAL_LIMIT + MONTH_LIMIT - 1)  # one unit left
+    store.reserve_quota(EVERYTHING - 1)  # one unit left
     with TestClient(app) as client:
         assert client.post("/v1/chat/completions", json=body).status_code == 200
         assert store.get_quota().month_remaining == 0

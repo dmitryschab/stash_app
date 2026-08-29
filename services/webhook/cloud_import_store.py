@@ -23,6 +23,7 @@ from cloud_import_aws import instance_role_session
 
 from cloud_import_models import (
     INITIAL_LIMIT,
+    TRIAL_LIMIT,
     MONTH_LIMIT,
     CreateImportRequest,
     ImportState,
@@ -550,25 +551,28 @@ class DynamoImportStore:
 
     # ------------------------------------------------------------------ quota
 
-    def _quota_values(self, item: dict[str, Any] | None) -> tuple[int, int, int]:
-        """Effective (initial, month, reset), rolling the month window forward in memory.
+    def _quota_values(self, item: dict[str, Any] | None) -> tuple[int, int, int, int]:
+        """Effective (trial, initial, month, reset), rolling the month window in memory.
 
         The roll is computed on read and persisted by the next write, so a user who does
-        not call for two months still sees a correct counter without a scheduled job.
+        not call for two months still sees a correct counter without a scheduled job. Only
+        the month bucket rolls: trial and initial are lifetime figures by definition.
         """
         now = datetime.now(timezone.utc)
         if not item:
-            return INITIAL_LIMIT, MONTH_LIMIT, _next_month_reset(now)
+            return TRIAL_LIMIT, INITIAL_LIMIT, MONTH_LIMIT, _next_month_reset(now)
+        trial = int(item.get("trialRemaining", TRIAL_LIMIT))
         initial = int(item.get("initialRemaining", INITIAL_LIMIT))
         month = int(item.get("monthRemaining", MONTH_LIMIT))
         reset = int(item.get("monthResetAt", 0))
         if int(now.timestamp()) >= reset:
-            return initial, MONTH_LIMIT, _next_month_reset(now)
-        return initial, month, reset
+            return trial, initial, MONTH_LIMIT, _next_month_reset(now)
+        return trial, initial, month, reset
 
     def get_quota(self) -> Quota:
-        initial, month, reset = self._quota_values(self._get(self._quota_key()))
-        return Quota(initialRemaining=initial, monthRemaining=month, monthResetAt=reset)
+        trial, initial, month, reset = self._quota_values(self._get(self._quota_key()))
+        return Quota(trialRemaining=trial, initialRemaining=initial,
+                     monthRemaining=month, monthResetAt=reset)
 
     def _write_quota(self, units: int) -> Quota | None:
         """Compare-and-set the quota row by `units` (negative spends, positive refunds).
@@ -579,36 +583,46 @@ class DynamoImportStore:
         key = self._quota_key()
         for _ in range(QUOTA_CAS_ATTEMPTS):
             item = self._get(key)
-            initial, month, reset = self._quota_values(item)
+            trial, initial, month, reset = self._quota_values(item)
             if units < 0:
-                from_initial = min(initial, -units)
-                from_month = -units - from_initial
+                # Trial first, then the lifetime allowance, then the month. A user is only
+                # ever in one of those states, so in practice a spend touches one bucket.
+                from_trial = min(trial, -units)
+                from_initial = min(initial, -units - from_trial)
+                from_month = -units - from_trial - from_initial
                 if from_month > month:
                     return None
+                new_trial = trial - from_trial
                 new_initial, new_month = initial - from_initial, month - from_month
             else:
-                # Refunds fill the month bucket first — the exact mirror of an initial-first
+                # Refunds fill the month bucket first — the exact mirror of a trial-first
                 # spend. Paying a month-bucket spend back into `initialRemaining` would look
                 # right today and mint budget on the 1st, because only the month bucket is
-                # reset: 100 units spent and refunded would come back as 150.
+                # reset: 100 units spent and refunded would come back as 150. The trial fills
+                # last for the same reason, one step further out: it never resets at all, so
+                # a refund landing there is budget that can never be re-earned.
                 to_month = min(units, MONTH_LIMIT - month)
                 new_month = month + to_month
-                new_initial = min(INITIAL_LIMIT, initial + units - to_month)
+                to_initial = min(units - to_month, INITIAL_LIMIT - initial)
+                new_initial = initial + to_initial
+                new_trial = min(TRIAL_LIMIT, trial + units - to_month - to_initial)
             now = _now()
             try:
                 if item is None:
                     self.table.put_item(
-                        Item={**key, "initialRemaining": new_initial, "monthRemaining": new_month,
-                              "monthResetAt": reset, "updatedAt": now},
+                        Item={**key, "trialRemaining": new_trial, "initialRemaining": new_initial,
+                              "monthRemaining": new_month, "monthResetAt": reset, "updatedAt": now},
                         ConditionExpression="attribute_not_exists(PK)",
                     )
                 else:
                     self.table.update_item(
                         Key=key,
-                        UpdateExpression="SET initialRemaining = :ni, monthRemaining = :nm, monthResetAt = :reset, updatedAt = :now",
-                        ConditionExpression="initialRemaining = :pi AND monthRemaining = :pm AND monthResetAt = :preset",
+                        UpdateExpression="SET trialRemaining = :nt, initialRemaining = :ni, monthRemaining = :nm, monthResetAt = :reset, updatedAt = :now",
+                        ConditionExpression="trialRemaining = :pt AND initialRemaining = :pi AND monthRemaining = :pm AND monthResetAt = :preset",
                         ExpressionAttributeValues={
-                            ":ni": new_initial, ":nm": new_month, ":reset": reset, ":now": now,
+                            ":nt": new_trial, ":ni": new_initial, ":nm": new_month,
+                            ":reset": reset, ":now": now,
+                            ":pt": int(item.get("trialRemaining", TRIAL_LIMIT)),
                             ":pi": int(item.get("initialRemaining", INITIAL_LIMIT)),
                             ":pm": int(item.get("monthRemaining", MONTH_LIMIT)),
                             ":preset": int(item.get("monthResetAt", 0)),
@@ -618,11 +632,12 @@ class DynamoImportStore:
                 if _is_conditional_failure(error):
                     continue
                 raise
-            return Quota(initialRemaining=new_initial, monthRemaining=new_month, monthResetAt=reset)
+            return Quota(trialRemaining=new_trial, initialRemaining=new_initial,
+                         monthRemaining=new_month, monthResetAt=reset)
         raise RuntimeError("quota contention: compare-and-set did not settle")
 
     def reserve_quota(self, units: int) -> Quota | None:
-        """Spend `units`, initial budget first. None means exhausted — the caller 402s."""
+        """Spend `units`, free trial first. None means exhausted — the caller 402s."""
         return self._write_quota(-units) if units > 0 else self.get_quota()
 
     def refund_quota(self, units: int) -> Quota:

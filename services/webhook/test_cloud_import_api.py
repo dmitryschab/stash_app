@@ -41,7 +41,10 @@ class FakeStore:
 
     # -- quota
     def get_quota(self):
-        return Quota(initialRemaining=self.initial, monthRemaining=self.month, monthResetAt=0)
+        # trialRemaining mirrors the initial bucket: this fake exists to drive the 402 path,
+        # and a stub that leaves a free trial behind never reaches it.
+        return Quota(trialRemaining=self.initial, initialRemaining=self.initial,
+                     monthRemaining=self.month, monthResetAt=0)
 
     def reserve_quota(self, units):
         from_initial = min(self.initial, units)
@@ -199,7 +202,8 @@ def test_only_an_empty_budget_returns_402_with_the_current_quota(dependencies):
     # "detail" and "quota" are siblings at the top level, not nested under "detail".
     assert response.json() == {
         "detail": "quota exhausted",
-        "quota": {"initialRemaining": 0, "monthRemaining": 0, "monthResetAt": 0,
+        "quota": {"trialRemaining": 0, "trialLimit": 50,
+                  "initialRemaining": 0, "monthRemaining": 0, "monthResetAt": 0,
                   "initialLimit": INITIAL_LIMIT, "monthLimit": MONTH_LIMIT},
     }
     assert queue.messages == []  # nothing was enqueued, so nothing gets processed

@@ -108,6 +108,12 @@ class CreateImportRequest(ContractModel):
 INITIAL_LIMIT = 500
 MONTH_LIMIT = 100
 
+# What a brand-new account gets before it is asked for money: fifty videos, once, never
+# refilled. It sits in front of the two paid buckets and is spent first, so a subscriber who
+# arrives with an untouched trial simply burns it before their allowance — the alternative is
+# the store having to know about entitlement, which is the auth layer's job and not this one's.
+TRIAL_LIMIT = 50
+
 
 class Quota(ContractModel):
     """The per-user import budget, echoed on every quota-consuming response so the
@@ -118,6 +124,11 @@ class Quota(ContractModel):
     month_reset_at: int = Field(alias="monthResetAt")
     initial_limit: int = Field(alias="initialLimit", default=INITIAL_LIMIT)
     month_limit: int = Field(alias="monthLimit", default=MONTH_LIMIT)
+    # The free trial. Defaulted so a row written before trials existed reads as "never
+    # started one" rather than "already used it up" — those accounts predate the paywall
+    # and are entitled outright anyway (stash_subscription.PAID_ERA_ENDS).
+    trial_remaining: int = Field(alias="trialRemaining", default=TRIAL_LIMIT)
+    trial_limit: int = Field(alias="trialLimit", default=TRIAL_LIMIT)
 
 
 class CreateImportResponse(ContractModel):

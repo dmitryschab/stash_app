@@ -285,11 +285,19 @@ def entitled_store(user_id: str = Depends(current_user)) -> DynamoImportStore:
     a metered route holds *is* the entitled store, so there is no version of that route that
     compiles without the check having run. Since 1.1 the app is free to download, and this is
     the whole of what stops a stranger signing in and spending our money.
+
+    There are two ways through: a subscription (or demo, or a grandfathered purchase), and an
+    unspent free trial. The trial is read from the quota row rather than the user record so
+    that spending it, refunding it and reporting it all go through the one compare-and-set
+    path that already exists — a second counter kept somewhere else is a second counter to
+    get wrong.
     """
-    user = _get_user(shared_table(), user_id)
-    if not stash_subscription.is_entitled(user):
-        raise SubscriptionRequired()
-    return DynamoImportStore(table=shared_table(), user_id=user_id)
+    store = DynamoImportStore(table=shared_table(), user_id=user_id)
+    if stash_subscription.is_entitled(_get_user(shared_table(), user_id)):
+        return store
+    if store.get_quota().trial_remaining > 0:
+        return store
+    raise SubscriptionRequired()
 
 
 class SubscriptionRequired(HTTPException):
@@ -329,7 +337,7 @@ def peek_quota(store: DynamoImportStore):
     race, which is not worth a lock on a single-box beta.
     """
     quota = store.get_quota()
-    if quota.initial_remaining <= 0 and quota.month_remaining <= 0:
+    if quota.trial_remaining <= 0 and quota.initial_remaining <= 0 and quota.month_remaining <= 0:
         raise quota_exhausted(quota)
     return quota
 

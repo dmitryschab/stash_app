@@ -597,8 +597,7 @@ struct SettingsView: View {
         Section("Subscription") {
             Button { showPaywall = true } label: {
                 LabeledContent("Stash Pro") {
-                    Text(session.isEntitled ? "Subscribed" : "Not subscribed")
-                        .foregroundStyle(.secondary)
+                    Text(subscriptionStatus).foregroundStyle(.secondary)
                 }
             }
             .tint(.primary)
@@ -606,6 +605,14 @@ struct SettingsView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// Three states, not two: paid, on the free trial, and neither. A trial user told
+    /// "Not subscribed" learns nothing about the fifty videos they are in the middle of.
+    private var subscriptionStatus: String {
+        if session.isEntitled { return "Subscribed" }
+        if let quota = session.quota, quota.isOnTrial { return "\(quota.trialRemaining) free left" }
+        return "Not subscribed"
     }
 
     // MARK: - Tab bar
@@ -700,10 +707,17 @@ struct SettingsView: View {
 
     private func quotaSection(_ quota: Quota) -> some View {
         Section("Budget") {
+            // Only while it is the bucket being spent. A subscriber has no trial left and does
+            // not need a row of zeroes explaining an offer that is over.
+            if quota.isOnTrial {
+                LabeledContent("Free trial", value: "\(quota.trialRemaining) of \(quota.trialLimit) left")
+            }
             LabeledContent("Initial import", value: "\(quota.initialRemaining) of \(quota.initialLimit) left")
             LabeledContent("This month", value: "\(quota.monthRemaining) of \(quota.monthLimit) left")
             LabeledContent("Resets", value: quota.monthResetDate.formatted(date: .abbreviated, time: .omitted))
-            Text("The initial budget is spent first. Importing a video, fetching its transcript and reading its on-screen text each cost one unit.")
+            Text(quota.isOnTrial
+                 ? "The free trial is spent first, then the initial budget. Importing a video, fetching its transcript and reading its on-screen text each cost one unit."
+                 : "The initial budget is spent first. Importing a video, fetching its transcript and reading its on-screen text each cost one unit.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

@@ -68,6 +68,14 @@ final class StashSession {
     /// Advisory on this side. The server re-checks on every metered route, so nothing is
     /// unlocked by lying to this property — the app just gets 402s instead of a paywall.
     private(set) var isEntitled = false
+
+    /// The account is running on its free fifty and has some left. Read from the quota the
+    /// server reports, never cached in the Keychain — unlike `isEntitled` this one is spent
+    /// by using the app, so a stale copy is a copy that is wrong within a session.
+    ///
+    /// `quota == nil` means "not asked yet", which reads as false here. Callers that must not
+    /// act on an unknown check `quota != nil` as well (see `RootView.paidShell`).
+    var isOnTrial: Bool { quota?.isOnTrial ?? false }
     var lastAuthError: String?
 
     var isSignedIn: Bool { if case .signedIn = state { return true }; return false }

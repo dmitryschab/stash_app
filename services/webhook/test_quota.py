@@ -1,4 +1,5 @@
-"""Quota: initial budget first, then the calendar month, and never more than exists.
+"""Quota: free trial first, then the initial budget, then the calendar month, and never
+more than exists.
 
 Plus the counter beside it: the deep pass spends no quota, so a per-UTC-day cap is what
 bounds it instead.
@@ -9,7 +10,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from cloud_import_models import INITIAL_LIMIT, MONTH_LIMIT
+from cloud_import_models import INITIAL_LIMIT, MONTH_LIMIT, TRIAL_LIMIT
+
+# What a brand-new row can spend in total, across all three buckets.
+EVERYTHING = TRIAL_LIMIT + INITIAL_LIMIT + MONTH_LIMIT
 from cloud_import_store import QUOTA_CAS_ATTEMPTS, DynamoImportStore, _next_month_reset
 from conftest import ConditionalTable
 
@@ -23,8 +27,10 @@ def store(table=None):
 
 def test_a_fresh_account_starts_at_the_documented_limits():
     quota = store().get_quota()
-    assert (quota.initial_remaining, quota.month_remaining) == (INITIAL_LIMIT, MONTH_LIMIT)
-    assert (quota.initial_limit, quota.month_limit) == (INITIAL_LIMIT, MONTH_LIMIT)
+    assert (quota.trial_remaining, quota.initial_remaining, quota.month_remaining) \
+        == (TRIAL_LIMIT, INITIAL_LIMIT, MONTH_LIMIT)
+    assert (quota.trial_limit, quota.initial_limit, quota.month_limit) \
+        == (TRIAL_LIMIT, INITIAL_LIMIT, MONTH_LIMIT)
     assert quota.month_reset_at > int(time.time())
 
 
@@ -34,38 +40,45 @@ def test_reading_quota_does_not_create_or_spend_anything():
     assert QUOTA_KEY not in table.items
 
 
-def test_initial_budget_drains_before_the_monthly_one():
+def test_the_trial_drains_first_then_the_initial_budget_then_the_month():
     subject = store()
-    first = subject.reserve_quota(400)
-    assert (first.initial_remaining, first.month_remaining) == (INITIAL_LIMIT - 400, MONTH_LIMIT)
+    # A brand-new account is spending the free trial, and nothing else, until it runs out.
+    trial = subject.reserve_quota(TRIAL_LIMIT - 10)
+    assert (trial.trial_remaining, trial.initial_remaining) == (10, INITIAL_LIMIT)
 
-    # Spills across the boundary: the last 100 initial units, then 50 monthly ones.
-    second = subject.reserve_quota(150)
+    # Spills out of the trial into the lifetime allowance.
+    first = subject.reserve_quota(400)
+    assert (first.trial_remaining, first.initial_remaining) == (0, INITIAL_LIMIT - 390)
+    assert first.month_remaining == MONTH_LIMIT
+
+    # And across the next boundary: the last of the initial budget, then monthly units.
+    second = subject.reserve_quota(INITIAL_LIMIT - 390 + 50)
     assert (second.initial_remaining, second.month_remaining) == (0, MONTH_LIMIT - 50)
     assert subject.get_quota().month_remaining == MONTH_LIMIT - 50
 
 
 def test_a_request_larger_than_the_remaining_budget_is_refused_whole():
     subject = store()
-    subject.reserve_quota(INITIAL_LIMIT + MONTH_LIMIT - 5)
+    subject.reserve_quota(EVERYTHING - 5)
     assert subject.reserve_quota(6) is None
     assert subject.get_quota().month_remaining == 5  # nothing was taken on the way out
 
 
 def test_exhausted_quota_reserves_nothing():
     subject = store()
-    subject.reserve_quota(INITIAL_LIMIT + MONTH_LIMIT)
+    subject.reserve_quota(EVERYTHING)
     assert subject.reserve_quota(1) is None
     quota = subject.get_quota()
-    assert (quota.initial_remaining, quota.month_remaining) == (0, 0)
+    assert (quota.trial_remaining, quota.initial_remaining, quota.month_remaining) == (0, 0, 0)
 
 
 def test_refund_restores_the_budget_it_came_from_and_cannot_inflate_it():
     subject = store()
     subject.reserve_quota(10)
-    assert subject.refund_quota(10).initial_remaining == INITIAL_LIMIT
-    assert subject.refund_quota(50).initial_remaining == INITIAL_LIMIT
-    assert subject.get_quota().month_remaining == MONTH_LIMIT
+    assert subject.refund_quota(10).trial_remaining == TRIAL_LIMIT
+    assert subject.refund_quota(50).trial_remaining == TRIAL_LIMIT
+    quota = subject.get_quota()
+    assert (quota.initial_remaining, quota.month_remaining) == (INITIAL_LIMIT, MONTH_LIMIT)
 
 
 def test_a_refund_of_month_units_does_not_survive_the_month_reset():
@@ -75,22 +88,24 @@ def test_a_refund_of_month_units_does_not_survive_the_month_reset():
     """
     table = ConditionalTable()
     subject = store(table)
-    subject.reserve_quota(INITIAL_LIMIT)
+    subject.reserve_quota(TRIAL_LIMIT + INITIAL_LIMIT)
     spent = subject.reserve_quota(50)
     assert (spent.initial_remaining, spent.month_remaining) == (0, MONTH_LIMIT - 50)
 
     refunded = subject.refund_quota(50)
-    assert (refunded.initial_remaining, refunded.month_remaining) == (0, MONTH_LIMIT)
+    assert (refunded.trial_remaining, refunded.initial_remaining) == (0, 0)
+    assert refunded.month_remaining == MONTH_LIMIT
 
     table.items[QUOTA_KEY]["monthResetAt"] = int(time.time()) - 1
     after_reset = subject.get_quota()
+    assert after_reset.trial_remaining == 0  # a spent trial is never re-earned
     assert after_reset.initial_remaining + after_reset.month_remaining == MONTH_LIMIT
 
 
 def test_month_window_resets_and_the_roll_persists():
     table = ConditionalTable()
     subject = store(table)
-    subject.reserve_quota(INITIAL_LIMIT + 50)
+    subject.reserve_quota(TRIAL_LIMIT + INITIAL_LIMIT + 50)
     table.items[QUOTA_KEY]["monthResetAt"] = int(time.time()) - 1
 
     rolled = subject.get_quota()
@@ -119,7 +134,7 @@ def test_concurrent_reservations_cannot_both_spend_the_last_unit():
     """
     table = ConditionalTable()
     loser, winner = store(table), store(table)
-    loser.reserve_quota(INITIAL_LIMIT + MONTH_LIMIT - 1)
+    loser.reserve_quota(EVERYTHING - 1)
     assert loser.get_quota().month_remaining == 1
 
     stale = table.get_item(Key={"PK": QUOTA_KEY[0], "SK": QUOTA_KEY[1]})["Item"]
@@ -151,7 +166,8 @@ def test_the_retry_budget_covers_the_clients_own_concurrency():
 
     assert losses < QUOTA_CAS_ATTEMPTS
     assert subject.reserve_quota(1) is not None
-    assert int(table.items[QUOTA_KEY]["initialRemaining"]) == INITIAL_LIMIT - 2
+    # Both units came out of the trial, which is the bucket a new account spends from.
+    assert int(table.items[QUOTA_KEY]["trialRemaining"]) == TRIAL_LIMIT - 2
 
 
 def test_the_deep_pass_cap_counts_up_and_then_refuses():

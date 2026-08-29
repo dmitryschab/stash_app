@@ -27,18 +27,41 @@ public struct Quota: Codable, Equatable, Sendable {
     public var monthResetAt: Int
     public var initialLimit: Int
     public var monthLimit: Int
+    /// The free trial, spent before either paid bucket. Defaulted on decode so a response
+    /// from a server older than trials reads as "none left" rather than failing — an account
+    /// talking to that server is entitled some other way or it would not have got this far.
+    public var trialRemaining: Int
+    public var trialLimit: Int
 
     public init(initialRemaining: Int, monthRemaining: Int, monthResetAt: Int,
-                initialLimit: Int, monthLimit: Int) {
+                initialLimit: Int, monthLimit: Int,
+                trialRemaining: Int = 0, trialLimit: Int = 0) {
         self.initialRemaining = initialRemaining
         self.monthRemaining = monthRemaining
         self.monthResetAt = monthResetAt
         self.initialLimit = initialLimit
         self.monthLimit = monthLimit
+        self.trialRemaining = trialRemaining
+        self.trialLimit = trialLimit
     }
 
-    /// Videos this user can still submit right now, across both budgets.
-    public var remaining: Int { initialRemaining + monthRemaining }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        initialRemaining = try values.decode(Int.self, forKey: .initialRemaining)
+        monthRemaining = try values.decode(Int.self, forKey: .monthRemaining)
+        monthResetAt = try values.decode(Int.self, forKey: .monthResetAt)
+        initialLimit = try values.decode(Int.self, forKey: .initialLimit)
+        monthLimit = try values.decode(Int.self, forKey: .monthLimit)
+        trialRemaining = try values.decodeIfPresent(Int.self, forKey: .trialRemaining) ?? 0
+        trialLimit = try values.decodeIfPresent(Int.self, forKey: .trialLimit) ?? 0
+    }
+
+    /// Videos this user can still submit right now, across all three budgets.
+    public var remaining: Int { trialRemaining + initialRemaining + monthRemaining }
+
+    /// True while the free trial is the thing paying for this account's work. The app shows
+    /// a counter for this state, never an entitlement — nobody has paid.
+    public var isOnTrial: Bool { trialRemaining > 0 }
 
     public var monthResetDate: Date { Date(timeIntervalSince1970: TimeInterval(monthResetAt)) }
 }

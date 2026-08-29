@@ -62,3 +62,40 @@ final class BuyPickTests: XCTestCase {
         XCTAssertNil(Shop.amazon.searchURL(for: "   ", region: "DE"))
     }
 }
+
+/// The quota contract, which is now three buckets rather than two.
+final class TrialQuotaTests: XCTestCase {
+    private func quota(_ json: String) throws -> Quota {
+        try JSONDecoder().decode(Quota.self, from: Data(json.utf8))
+    }
+
+    func testTrialIsReadAndCountsTowardWhatIsLeft() throws {
+        let decoded = try quota("""
+        {"initialRemaining":500,"monthRemaining":100,"monthResetAt":0,
+         "initialLimit":500,"monthLimit":100,"trialRemaining":37,"trialLimit":50}
+        """)
+        XCTAssertEqual(decoded.trialRemaining, 37)
+        XCTAssertTrue(decoded.isOnTrial)
+        XCTAssertEqual(decoded.remaining, 637)
+    }
+
+    func testASpentTrialIsNotATrial() throws {
+        let decoded = try quota("""
+        {"initialRemaining":500,"monthRemaining":100,"monthResetAt":0,
+         "initialLimit":500,"monthLimit":100,"trialRemaining":0,"trialLimit":50}
+        """)
+        XCTAssertFalse(decoded.isOnTrial)
+    }
+
+    /// A server older than trials sends neither key. Decoding must survive it, and the answer
+    /// has to be "no trial" — an account on that server is entitled some other way.
+    func testAQuotaWithoutTrialKeysStillDecodes() throws {
+        let decoded = try quota("""
+        {"initialRemaining":500,"monthRemaining":100,"monthResetAt":0,
+         "initialLimit":500,"monthLimit":100}
+        """)
+        XCTAssertEqual(decoded.trialRemaining, 0)
+        XCTAssertFalse(decoded.isOnTrial)
+        XCTAssertEqual(decoded.remaining, 600)
+    }
+}

@@ -92,6 +92,16 @@ def grant(table, sub=USER_A, **fields):
                       ExpressionAttributeValues={f":{k}": v for k, v in fields.items()})
 
 
+def spend_trial(table, sub=USER_A):
+    """Burn the free trial without importing fifty videos. Every "a non-subscriber is
+    refused" test needs this now: the trial is the other way through `entitled_store`, so
+    without it the assertion under test is never the thing being exercised."""
+    user_id = stash_auth.user_id_for(sub)
+    table.put_item(Item={"PK": f"INSTALL#{user_id}", "SK": "QUOTA", "trialRemaining": 0,
+                         "initialRemaining": 500, "monthRemaining": 100,
+                         "monthResetAt": int(time.time()) + 86_400, "updatedAt": int(time.time())})
+
+
 def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -318,7 +328,8 @@ def test_sign_in_returns_a_usable_session_and_quota(table, apple):
         me = client.get("/v1/me", headers=auth(body["token"]))
     assert body["quota"] == {"initialRemaining": 500, "monthRemaining": 100,
                              "monthResetAt": body["quota"]["monthResetAt"],
-                             "initialLimit": 500, "monthLimit": 100}
+                             "initialLimit": 500, "monthLimit": 100,
+                             "trialRemaining": 50, "trialLimit": 50}
     assert body["expiresAt"] > int(time.time())
     assert me.status_code == 200 and me.json()["userID"] == body["userID"]
 
@@ -558,11 +569,23 @@ def test_export_only_covers_the_calling_user(table, apple):
 # Every one of them asserts about money leaving the building.
 
 
-def test_a_new_account_cannot_spend_anything(table, apple):
-    """The whole point: signing in is free, spending is not."""
+def test_a_new_account_spends_its_free_trial_first(table, apple):
+    """Signing in is free and so are the first fifty videos. `entitled` stays False — the
+    trial is budget, not an entitlement, and the app shows a counter rather than pretending
+    somebody paid."""
     with TestClient(app) as client:
         body = session(client, apple, table, USER_A, entitled=False)
         assert body["entitled"] is False
+        assert body["quota"]["trialRemaining"] == 50
+        allowed = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
+    assert allowed.status_code == 202
+
+
+def test_a_new_account_is_refused_once_the_trial_is_gone(table, apple):
+    """The whole point: signing in is free, spending past the trial is not."""
+    with TestClient(app) as client:
+        body = session(client, apple, table, USER_A, entitled=False)
+        spend_trial(table)
         refused = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
     assert refused.status_code == 402
     # Distinct from an exhausted quota: the client shows a paywall for one and a counter
@@ -583,6 +606,7 @@ def test_a_lapsed_subscription_closes_them_again(table, apple):
     with TestClient(app) as client:
         body = session(client, apple, table, USER_A, entitled=False)
         grant(table, USER_A, subscriptionExpiresAt=int(time.time()) - 1)
+        spend_trial(table)
         refused = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
         assert client.get("/v1/me", headers=auth(body["token"])).json()["entitled"] is False
     assert refused.status_code == 402
@@ -596,6 +620,7 @@ def test_a_lapsed_subscriber_can_still_collect_work_already_paid_for(table, appl
         import_id = client.post("/v1/imports", headers=auth(body["token"]),
                                 json=payload()).json()["importID"]
         grant(table, USER_A, lifetime=False, subscriptionExpiresAt=0)
+        spend_trial(table)
         status = client.get(f"/v1/imports/{import_id}", headers=auth(body["token"]))
         results = client.get(f"/v1/imports/{import_id}/results", headers=auth(body["token"]))
         blocked = client.post("/v1/imports", headers=auth(body["token"]),
@@ -656,6 +681,7 @@ def test_the_paid_era_closes(table, apple, monkeypatch):
     with TestClient(app) as client:
         body = session(client, apple, table, USER_A, entitled=False)
         monkeypatch.setattr(stash_subscription, "PAID_ERA_ENDS", 1)
+        spend_trial(table)
         refused = client.post("/v1/imports", headers=auth(body["token"]), json=payload())
     assert refused.status_code == 402
     assert refused.json()["detail"] == "subscription required"
