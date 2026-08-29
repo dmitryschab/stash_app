@@ -13,7 +13,8 @@ import time
 
 # Everything a caller may attach with extra=. Kept explicit so a typo in a call site
 # silently drops one field instead of dumping the whole LogRecord into the line.
-REQUEST_FIELDS = ("method", "path", "status", "durationMs", "userID", "messageID")
+REQUEST_FIELDS = ("method", "path", "status", "durationMs", "userID", "messageID",
+                  "errors")
 
 
 class JsonFormatter(logging.Formatter):

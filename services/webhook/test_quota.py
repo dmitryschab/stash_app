@@ -206,6 +206,38 @@ def test_two_deep_pass_calls_cannot_both_take_the_last_one():
     assert int(table.items[DEEP_PASS_KEY]["usedToday"]) == 2
 
 
+def test_a_topped_up_row_is_not_clawed_back_by_a_refund():
+    """An operator top-up puts initialRemaining above INITIAL_LIMIT. The refund path used to
+    compute negative headroom there, so the first refund subtracted the whole top-up."""
+    table = ConditionalTable()
+    table.items[QUOTA_KEY] = {"PK": QUOTA_KEY[0], "SK": QUOTA_KEY[1], "trialRemaining": 0,
+                              "initialRemaining": 1000, "monthRemaining": MONTH_LIMIT,
+                              "monthResetAt": int(time.time()) + 86_400}
+    subject = store(table)
+
+    subject.reserve_quota(6)
+    after = subject.refund_quota(6)
+
+    assert after.initial_remaining == 1000  # spent from initial, handed straight back
+    assert after.initial_limit == 1000      # the app renders "1000 of 1000", not "of 500"
+
+
+def test_a_row_written_before_the_trial_bucket_existed_can_still_spend():
+    """The shape every account already had on 2026-08-28: no trialRemaining attribute at all.
+    Pinning it by equality made the compare-and-set unsatisfiable, so every POST /v1/imports
+    burned all eight attempts and 500'd."""
+    table = ConditionalTable()
+    table.items[QUOTA_KEY] = {"PK": QUOTA_KEY[0], "SK": QUOTA_KEY[1],
+                              "initialRemaining": 494, "monthRemaining": MONTH_LIMIT,
+                              "monthResetAt": int(time.time()) + 86_400}
+
+    after = store(table).reserve_quota(6)
+
+    assert after.trial_remaining == TRIAL_LIMIT - 6  # the trial drains first, as always
+    assert after.initial_remaining == 494
+    assert int(table.items[QUOTA_KEY]["trialRemaining"]) == TRIAL_LIMIT - 6
+
+
 def test_contention_that_never_settles_is_loud_not_silent():
     """A compare-and-set that keeps losing must raise, never quietly report success."""
     table = ConditionalTable()

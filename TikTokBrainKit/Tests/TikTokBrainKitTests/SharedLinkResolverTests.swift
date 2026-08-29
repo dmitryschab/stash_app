@@ -23,6 +23,19 @@ final class SharedLinkResolverTests: XCTestCase {
         XCTAssertNil(batch.rejectionMessage)
     }
 
+    /// Two links, one video. Sharing the same TikTok twice — or once through vm.tiktok.com and
+    /// once through the /t/ form — used to submit the id twice, which the box 422s as a whole
+    /// import. Because a failed submission requeues its links, that was a trap the inbox could
+    /// never climb out of: every retry added another copy.
+    func testTheSameVideoSharedTwiceIsSubmittedOnce() async {
+        let links = [link("short"), link("other")]
+        let batch = await SharedLinkResolver.resolve(links) { _ in self.bookmark("7") }
+
+        XCTAssertEqual(batch.bookmarks.map(\.id), ["7"])
+        XCTAssertEqual(batch.requeue, [], "a duplicate is resolved, not held for another attempt")
+        XCTAssertEqual(batch.rejected, [])
+    }
+
     /// The failure that matters: a link the network could not reach is held, not lost. The
     /// inbox file has already been deleted by the time this runs, so a dropped link is gone.
     func testAnUnreachableLinkIsHeldForAnotherAttempt() async {

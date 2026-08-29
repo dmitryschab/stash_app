@@ -551,28 +551,38 @@ class DynamoImportStore:
 
     # ------------------------------------------------------------------ quota
 
-    def _quota_values(self, item: dict[str, Any] | None) -> tuple[int, int, int, int]:
-        """Effective (trial, initial, month, reset), rolling the month window in memory.
+    def _quota_values(self, item: dict[str, Any] | None) -> tuple[int, int, int, int, int]:
+        """Effective (trial, initial, month, reset, ceiling), rolling the month window in memory.
 
         The roll is computed on read and persisted by the next write, so a user who does
         not call for two months still sees a correct counter without a scheduled job. Only
         the month bucket rolls: trial and initial are lifetime figures by definition.
+
+        `ceiling` is the row's own initial allowance. It is stored rather than taken from
+        INITIAL_LIMIT so an account can be topped up past the standard budget by hand
+        (update-item on initialLimit + initialRemaining) without the refund path treating
+        the surplus as overflow and the app rendering "1000 of 500 left". Absent on every
+        row written before this, which is what the default covers.
         """
         now = datetime.now(timezone.utc)
         if not item:
-            return TRIAL_LIMIT, INITIAL_LIMIT, MONTH_LIMIT, _next_month_reset(now)
+            return TRIAL_LIMIT, INITIAL_LIMIT, MONTH_LIMIT, _next_month_reset(now), INITIAL_LIMIT
         trial = int(item.get("trialRemaining", TRIAL_LIMIT))
         initial = int(item.get("initialRemaining", INITIAL_LIMIT))
         month = int(item.get("monthRemaining", MONTH_LIMIT))
         reset = int(item.get("monthResetAt", 0))
+        ceiling = max(int(item.get("initialLimit", INITIAL_LIMIT)), initial)
         if int(now.timestamp()) >= reset:
-            return trial, initial, MONTH_LIMIT, _next_month_reset(now)
-        return trial, initial, month, reset
+            return trial, initial, MONTH_LIMIT, _next_month_reset(now), ceiling
+        return trial, initial, month, reset, ceiling
+
+    @staticmethod
+    def _quota(trial: int, initial: int, month: int, reset: int, ceiling: int) -> Quota:
+        return Quota(trialRemaining=trial, initialRemaining=initial,
+                     monthRemaining=month, monthResetAt=reset, initialLimit=ceiling)
 
     def get_quota(self) -> Quota:
-        trial, initial, month, reset = self._quota_values(self._get(self._quota_key()))
-        return Quota(trialRemaining=trial, initialRemaining=initial,
-                     monthRemaining=month, monthResetAt=reset)
+        return self._quota(*self._quota_values(self._get(self._quota_key())))
 
     def _write_quota(self, units: int) -> Quota | None:
         """Compare-and-set the quota row by `units` (negative spends, positive refunds).
@@ -583,7 +593,7 @@ class DynamoImportStore:
         key = self._quota_key()
         for _ in range(QUOTA_CAS_ATTEMPTS):
             item = self._get(key)
-            trial, initial, month, reset = self._quota_values(item)
+            trial, initial, month, reset, ceiling = self._quota_values(item)
             if units < 0:
                 # Trial first, then the lifetime allowance, then the month. A user is only
                 # ever in one of those states, so in practice a spend touches one bucket.
@@ -601,9 +611,11 @@ class DynamoImportStore:
                 # reset: 100 units spent and refunded would come back as 150. The trial fills
                 # last for the same reason, one step further out: it never resets at all, so
                 # a refund landing there is budget that can never be re-earned.
-                to_month = min(units, MONTH_LIMIT - month)
+                # Headroom is measured against the row's own ceiling and floored at zero: a
+                # refund must never be able to compute a negative and subtract it.
+                to_month = max(0, min(units, MONTH_LIMIT - month))
                 new_month = month + to_month
-                to_initial = min(units - to_month, INITIAL_LIMIT - initial)
+                to_initial = max(0, min(units - to_month, ceiling - initial))
                 new_initial = initial + to_initial
                 new_trial = min(TRIAL_LIMIT, trial + units - to_month - to_initial)
             now = _now()
@@ -611,29 +623,41 @@ class DynamoImportStore:
                 if item is None:
                     self.table.put_item(
                         Item={**key, "trialRemaining": new_trial, "initialRemaining": new_initial,
-                              "monthRemaining": new_month, "monthResetAt": reset, "updatedAt": now},
+                              "monthRemaining": new_month, "monthResetAt": reset,
+                              "initialLimit": ceiling, "updatedAt": now},
                         ConditionExpression="attribute_not_exists(PK)",
                     )
                 else:
+                    # Pin what the row actually stores, not what it defaults to. A bucket added
+                    # after a row was written (trialRemaining) is *absent*, and "absent = 50"
+                    # is false in DynamoDB however the read defaulted it — so an equality pin
+                    # failed on every one of the eight attempts and every import 500'd on the
+                    # contention guard below. attribute_not_exists is still a race-safe pin:
+                    # any writer SETs all five at once, so a row that gained the attribute
+                    # under us loses the condition exactly as an equality mismatch would.
+                    pins, pinned = [], {}
+                    for name in ("trialRemaining", "initialRemaining", "monthRemaining",
+                                 "monthResetAt", "initialLimit"):
+                        stored = item.get(name)
+                        if stored is None:
+                            pins.append(f"attribute_not_exists({name})")
+                        else:
+                            pins.append(f"{name} = :p_{name}")
+                            pinned[f":p_{name}"] = int(stored)
                     self.table.update_item(
                         Key=key,
-                        UpdateExpression="SET trialRemaining = :nt, initialRemaining = :ni, monthRemaining = :nm, monthResetAt = :reset, updatedAt = :now",
-                        ConditionExpression="trialRemaining = :pt AND initialRemaining = :pi AND monthRemaining = :pm AND monthResetAt = :preset",
+                        UpdateExpression="SET trialRemaining = :nt, initialRemaining = :ni, monthRemaining = :nm, monthResetAt = :reset, initialLimit = :ceiling, updatedAt = :now",
+                        ConditionExpression=" AND ".join(pins),
                         ExpressionAttributeValues={
                             ":nt": new_trial, ":ni": new_initial, ":nm": new_month,
-                            ":reset": reset, ":now": now,
-                            ":pt": int(item.get("trialRemaining", TRIAL_LIMIT)),
-                            ":pi": int(item.get("initialRemaining", INITIAL_LIMIT)),
-                            ":pm": int(item.get("monthRemaining", MONTH_LIMIT)),
-                            ":preset": int(item.get("monthResetAt", 0)),
+                            ":reset": reset, ":ceiling": ceiling, ":now": now, **pinned,
                         },
                     )
             except Exception as error:
                 if _is_conditional_failure(error):
                     continue
                 raise
-            return Quota(trialRemaining=new_trial, initialRemaining=new_initial,
-                         monthRemaining=new_month, monthResetAt=reset)
+            return self._quota(new_trial, new_initial, new_month, reset, ceiling)
         raise RuntimeError("quota contention: compare-and-set did not settle")
 
     def reserve_quota(self, units: int) -> Quota | None:

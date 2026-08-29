@@ -17,6 +17,8 @@ import os
 import time
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 import stash_logging
@@ -58,6 +60,26 @@ app.include_router(embeddings_router)
 async def quota_exhausted_handler(request: Request, exc: stash_auth.QuotaExhausted):
     """402 with "detail" and "quota" as top-level siblings, per the API contract."""
     return JSONResponse(status_code=402, content=exc.body())
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_failed_handler(request: Request, exc: RequestValidationError):
+    """Same 422 body FastAPI would send, plus a server-side line saying which field failed.
+
+    Without this a rejected payload is a bare "status": 422 in the access log and the only
+    copy of the reason is on the phone that sent it — which is a debugging dead end when the
+    client is a shipped iOS build. Logs the field path and message, never the value: a
+    bookmark URL is user content and has no business in the journal.
+    """
+    log.warning("request rejected", extra={
+        "method": request.method,
+        "path": request.url.path,
+        "userID": getattr(request.state, "user_id", None),
+        "errors": [{"loc": ".".join(str(part) for part in error.get("loc", ())),
+                    "msg": error.get("msg"), "type": error.get("type")}
+                   for error in exc.errors()[:10]],
+    })
+    return JSONResponse(status_code=422, content=jsonable_encoder({"detail": exc.errors()}))
 
 
 @app.middleware("http")

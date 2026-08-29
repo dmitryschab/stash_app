@@ -41,9 +41,16 @@ public enum SharedLinkResolver {
         using resolve: (URL) async throws -> Bookmark
     ) async -> SharedLinkBatch {
         var batch = SharedLinkBatch()
+        // First occurrence wins, on video id rather than on URL: two different short links can
+        // resolve to one video, and a submission that failed writes every one of its links back
+        // to the inbox. Without this the inbox could only grow — the box rejects a whole import
+        // that repeats a videoID, which requeues the links, which repeats the videoID again.
+        var seen = Set<String>()
         for link in links {
             do {
-                batch.bookmarks.append(try await resolve(link))
+                let bookmark = try await resolve(link)
+                guard seen.insert(bookmark.id).inserted else { continue }
+                batch.bookmarks.append(bookmark)
             } catch let failure as TikTokLink.Failure where !failure.isRetryable {
                 batch.rejected.append(failure)
             } catch {
