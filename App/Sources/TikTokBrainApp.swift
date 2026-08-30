@@ -73,7 +73,7 @@ enum StashTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .today: "Today"
+        case .today: "Recents"
         case .code: "Code"
         case .cook: "Cook"
         case .music: "Music"
@@ -84,7 +84,7 @@ enum StashTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .today: "sun.max"
+        case .today: "clock.arrow.circlepath"
         case .code: "chevron.left.forwardslash.chevron.right"
         case .cook: "fork.knife"
         case .music: "music.note"
@@ -96,7 +96,7 @@ enum StashTab: String, CaseIterable, Identifiable {
     /// One line for the Settings picker, so turning a section off is an informed choice.
     var blurb: String {
         switch self {
-        case .today: "The day's saves, newest first."
+        case .today: "Your latest saves, threads and all."
         case .code: "Coding saves, links first."
         case .cook: "Recipes as a photo wall."
         case .music: "Records and recommendation lists."
@@ -300,7 +300,7 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             Group {
                 switch tab {
-                case .today: TodayView()
+                case .today: RecentsView()
                 case .code: CodeView()
                 case .cook: CookView()
                 case .music: MusicView()
