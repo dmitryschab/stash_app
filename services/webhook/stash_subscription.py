@@ -78,8 +78,9 @@ def _epoch_seconds(milliseconds: Any) -> int:
         return 0
 
 
-def read_subscription(jws: str) -> int:
-    """Seconds-since-epoch this subscription lapses, or 0 if it grants nothing.
+def read_subscription(jws: str) -> tuple[int, str | None]:
+    """Seconds-since-epoch this subscription lapses (0 if it grants nothing), and the
+    originalTransactionId the caller must bind to the account before honouring it.
 
     Zero covers every "no" in one value: wrong product, refunded, already expired. The caller
     stores it and compares against now, so a lapsed blob is not an error — it is an expiry in
@@ -87,15 +88,22 @@ def read_subscription(jws: str) -> int:
     """
     payload, _ = _decode(jws, "verify_and_decode_signed_transaction")
     if getattr(payload, "productId", None) != PRODUCT_ID:
-        return 0
+        return 0, None
     # A refund or a family-sharing revocation ends the entitlement regardless of the period.
     if getattr(payload, "revocationDate", None):
-        return 0
-    return _epoch_seconds(getattr(payload, "expiresDate", None))
+        return 0, None
+    return (_epoch_seconds(getattr(payload, "expiresDate", None)),
+            _transaction_id(payload, "originalTransactionId"))
 
 
-def read_paid_owner(jws: str) -> bool:
-    """True if this AppTransaction says the account bought the app back when it cost money.
+def _transaction_id(payload: Any, field: str) -> str | None:
+    raw = getattr(payload, field, None)
+    return str(raw) if raw else None
+
+
+def read_paid_owner(jws: str) -> tuple[bool, str | None]:
+    """True if this AppTransaction says the account bought the app back when it cost money,
+    plus the appTransactionId to bind (None on the iOS versions that do not carry one).
 
     Only in production. Sandbox and TestFlight report an `originalApplicationVersion` of
     "1.0", which parses to 1 and would hand every App Review tester a free lifetime pass —
@@ -103,15 +111,16 @@ def read_paid_owner(jws: str) -> bool:
     """
     payload, environment = _decode(jws, "verify_and_decode_app_transaction")
     if environment is not Environment.PRODUCTION:
-        return False
+        return False, None
     if getattr(payload, "receiptType", None) is not Environment.PRODUCTION:
-        return False
+        return False, None
     raw = getattr(payload, "originalApplicationVersion", None)
     try:
         # iOS puts CFBundleVersion here — a build number, so "24", not "1.0".
-        return int(str(raw).split(".")[0]) <= LAST_PAID_BUILD
+        paid = int(str(raw).split(".")[0]) <= LAST_PAID_BUILD
     except (TypeError, ValueError):
-        return False
+        return False, None
+    return paid, _transaction_id(payload, "appTransactionId")
 
 
 def entitlement(*, signed_transaction: str | None, signed_app_transaction: str | None) -> dict:
@@ -119,10 +128,19 @@ def entitlement(*, signed_transaction: str | None, signed_app_transaction: str |
 
     Neither blob is required: a fresh subscriber has no AppTransaction worth having, and a
     grandfathered owner has no subscription at all.
+
+    `transactionIDs` are the Apple ids behind whatever this grants. A blob is Apple-signed but
+    not account-bound, so without binding one subscriber's JWS would entitle every account
+    that replays it; the caller writes each id under the posting account and refuses the
+    grant if another account already holds it.
     """
-    expires_at = read_subscription(signed_transaction) if signed_transaction else 0
-    lifetime = read_paid_owner(signed_app_transaction) if signed_app_transaction else False
-    return {"subscriptionExpiresAt": expires_at, "lifetime": lifetime}
+    expires_at, subscription_id = (read_subscription(signed_transaction)
+                                   if signed_transaction else (0, None))
+    lifetime, app_transaction_id = (read_paid_owner(signed_app_transaction)
+                                    if signed_app_transaction else (False, None))
+    ids = [i for grants, i in ((expires_at > 0, subscription_id), (lifetime, app_transaction_id))
+           if grants and i]
+    return {"subscriptionExpiresAt": expires_at, "lifetime": lifetime, "transactionIDs": ids}
 
 
 def is_entitled(user: dict[str, Any] | None) -> bool:

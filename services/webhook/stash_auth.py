@@ -572,6 +572,12 @@ def put_subscription(body: SubscriptionRequest, user_id: str = Depends(current_u
         log.warning("subscription verification failed for %s: %s", user_id, error)
         raise HTTPException(status_code=400, detail="could not verify that receipt")
 
+    for transaction_id in fields["transactionIDs"]:
+        if not _bind_transaction(table, transaction_id, user_id):
+            log.warning("receipt %s already bound to another account, refused for %s",
+                        transaction_id, user_id)
+            raise HTTPException(status_code=403, detail="receipt belongs to another account")
+
     # `lifetime` is sticky: an owner of the paid 1.0 who later reinstalls onto a device whose
     # AppTransaction we cannot read must not lose what they bought.
     expression = "SET subscriptionExpiresAt = :expires"
@@ -586,6 +592,24 @@ def put_subscription(body: SubscriptionRequest, user_id: str = Depends(current_u
     return {"entitled": stash_subscription.is_entitled(user),
             "subscriptionExpiresAt": fields["subscriptionExpiresAt"],
             "lifetime": bool((user or {}).get("lifetime"))}
+
+
+def _bind_transaction(table, transaction_id: str, user_id: str) -> bool:
+    """First account to post an Apple transaction owns it; every later account is refused.
+
+    One row per Apple id, written once. userID is the uuid5 of the Apple sub, so the same
+    person deleting and re-creating their account lands on the same id and keeps the binding.
+    """
+    try:
+        table.put_item(Item={"PK": f"TXN#{transaction_id}", "SK": "META", "userID": user_id,
+                             "createdAt": int(time.time())},
+                       ConditionExpression="attribute_not_exists(PK)")
+        return True
+    except Exception as error:
+        if not _is_conditional_failure(error):
+            raise
+    owner = table.get_item(Key={"PK": f"TXN#{transaction_id}", "SK": "META"}).get("Item") or {}
+    return owner.get("userID") == user_id
 
 
 @router.delete("/me", status_code=204)

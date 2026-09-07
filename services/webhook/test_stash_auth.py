@@ -659,6 +659,24 @@ def test_an_unverifiable_receipt_is_refused_and_grants_nothing(table, apple):
     assert posted.status_code == 400
 
 
+def test_a_receipt_entitles_only_the_first_account_that_posts_it(table, apple, monkeypatch):
+    """One subscriber's JWS is Apple-signed for the app, not for the account. Replayed from
+    a second account it must be refused, or one €5 purchase unlocks the whole internet."""
+    monkeypatch.setattr(stash_subscription, "entitlement", lambda **_: {
+        "subscriptionExpiresAt": int(time.time()) + 3600, "lifetime": True,
+        "transactionIDs": ["2000000123456789"]})
+    with TestClient(app) as client:
+        a = session(client, apple, table, USER_A, entitled=False)
+        b = session(client, apple, table, USER_B, entitled=False)
+        blob = {"signedTransaction": "x.y.z"}
+        first = client.post("/v1/me/subscription", headers=auth(a["token"]), json=blob)
+        again = client.post("/v1/me/subscription", headers=auth(a["token"]), json=blob)
+        replay = client.post("/v1/me/subscription", headers=auth(b["token"]), json=blob)
+        assert client.get("/v1/me", headers=auth(a["token"])).json()["entitled"] is True
+        assert client.get("/v1/me", headers=auth(b["token"])).json()["entitled"] is False
+    assert (first.status_code, again.status_code, replay.status_code) == (200, 200, 403)
+
+
 def test_the_entitlement_predicate_holds():
     import stash_subscription
     assert stash_subscription.selftest()
