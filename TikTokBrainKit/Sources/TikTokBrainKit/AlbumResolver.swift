@@ -181,8 +181,85 @@ public struct AlbumResolver {
         return URL(string: urlString.replacingOccurrences(of: "100x100", with: "\(size)x\(size)"))
     }
 
-    /// The album's track names in play order.
+    /// A ~30 second preview clip of a pick — what the play buttons audition before you go
+    /// searching a streaming service for it. iTunes first, Deezer for what the purchasable store
+    /// lost (the same gap as the sleeves). Nil when neither has a confident match.
+    ///
+    /// Asked at tap time and never cached: Deezer's preview URLs are signed and expire.
+    public func previewURL(for pick: MusicPick) async throws -> URL? {
+        let title = pick.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title.range(of: "original sound", options: .caseInsensitive) == nil
+        else { return nil }
+        let term = "\(title) \(pick.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var components = URLComponents(string: "https://itunes.apple.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "term", value: term),
+            URLQueryItem(name: "media", value: "music"),
+            URLQueryItem(name: "entity", value: "song"),
+            URLQueryItem(name: "limit", value: "10"),
+        ]
+        guard let url = components?.url else { return nil }
+        let (data, _) = try await session.data(from: url)
+        let songs = try JSONDecoder().decode(Response.self, from: data).results.filter { $0.previewUrl != nil }
+        if let index = Self.match(pick, title: title, in: songs.map {
+            ($0.trackName ?? "", $0.collectionName ?? "", $0.artistName ?? "")
+        }) {
+            return songs[index].previewUrl.flatMap(URL.init(string:))
+        }
+        return try? await deezerPreviewURL(for: pick, title: title, term: term)
+    }
+
+    /// Bare term, unlike `deezerAlbum`: the field-scoped `track:"…"` query returned nothing for
+    /// tracks the bare search finds (checked 2026-09-13), and the gate does the scoping instead.
+    private func deezerPreviewURL(for pick: MusicPick, title: String, term: String) async throws -> URL? {
+        var components = URLComponents(string: "https://api.deezer.com/search/track")
+        components?.queryItems = [URLQueryItem(name: "q", value: term), URLQueryItem(name: "limit", value: "10")]
+        guard let url = components?.url else { return nil }
+        let (data, _) = try await session.data(from: url)
+        let tracks = try JSONDecoder().decode(DeezerTracks.self, from: data).data.filter { $0.preview?.isEmpty == false }
+        return Self.match(pick, title: title, in: tracks.map {
+            ($0.title, $0.album?.title ?? "", $0.artist?.name ?? "")
+        }).flatMap { tracks[$0].preview.flatMap(URL.init(string:)) }
+    }
+
+    /// The first song that is this pick. `kind` is a preference, not a constraint (see
+    /// `MusicPickResolver.link(for:)`): an album pick takes a song off that album, a track pick
+    /// the song itself, and each falls back to the other before giving up.
+    static func match(_ pick: MusicPick, title: String,
+                      in songs: [(track: String, album: String, artist: String)]) -> Int? {
+        func accepts(_ returned: String, _ artist: String) -> Bool {
+            MatchConfidence.accepts(askedTitle: title, askedArtist: pick.artist,
+                                    returnedTitle: returned, returnedArtist: artist)
+        }
+        let byTrack = songs.firstIndex { accepts($0.track, $0.artist) }
+        let byAlbum = songs.firstIndex { accepts($0.album, $0.artist) }
+        return pick.kind == .album ? byAlbum ?? byTrack : byTrack ?? byAlbum
+    }
+
+    private struct DeezerTracks: Decodable {
+        let data: [Track]
+        struct Track: Decodable {
+            let title: String
+            let preview: String?
+            let album: Named?
+            let artist: Named?
+        }
+        struct Named: Decodable {
+            let title: String?
+            let name: String?
+        }
+    }
+
+    /// The album's track names in play order. A negative id is a Deezer-sourced ref (see
+    /// `deezerAlbum`), so its tracklist comes from Deezer, which returns it already in order.
     public func tracklist(collectionID: Int) async throws -> [String] {
+        if collectionID < 0 {
+            guard let url = URL(string: "https://api.deezer.com/album/\(-collectionID)/tracks?limit=200")
+            else { return [] }
+            let (data, _) = try await session.data(from: url)
+            return try JSONDecoder().decode(DeezerTracks.self, from: data).data.map(\.title)
+        }
         var components = URLComponents(string: "https://itunes.apple.com/lookup")
         components?.queryItems = [
             URLQueryItem(name: "id", value: String(collectionID)),
@@ -212,6 +289,7 @@ public struct AlbumResolver {
             let trackCount: Int?
             let trackNumber: Int?
             let discNumber: Int?
+            let previewUrl: String?
         }
     }
 }

@@ -9,6 +9,7 @@
 
 import SwiftUI
 import SwiftData
+import AVFoundation
 import TikTokBrainKit
 
 // MARK: - Album grouping
@@ -254,11 +255,14 @@ final class AlbumStore {
         list.picks.indices.map { pickRefs[Self.pickKey(list.id, $0)].flatMap { sleeves[$0.collectionID] } }
     }
 
-    /// A negative id is a Deezer-sourced ref — artwork only, with no iTunes catalogue entry to
-    /// look a tracklist up in. Asking anyway returns nothing and leaves the album page saying
-    /// "Fetching the tracklist…" forever, so it is not asked.
+    /// The album one pick of a list resolved to; nil when nothing matched confidently, or not yet.
+    func ref(for list: MusicList, at index: Int) -> AlbumRef? {
+        pickRefs[Self.pickKey(list.id, index)]
+    }
+
+    /// Either catalogue: a negative id is a Deezer-sourced ref, and the resolver asks Deezer.
     func loadTracklist(_ collectionID: Int) async {
-        guard collectionID > 0, tracklists[collectionID] == nil,
+        guard tracklists[collectionID] == nil,
               let names = try? await resolver.tracklist(collectionID: collectionID),
               !names.isEmpty else { return }
         tracklists[collectionID] = names
@@ -322,6 +326,7 @@ struct MusicView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .task(id: musicSaves.count) { await store.resolve(musicSaves) }
+        .onDisappear { PreviewPlayer.shared.stop() }
     }
 
     private var chips: some View {
@@ -378,12 +383,22 @@ struct MusicView: View {
                     SleeveTile(item: item, artwork: sleeve(for: item), strip: strip(for: item))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(item.title), \(item.artist), \(item.clipsLabel)")
+                // Outside the link, so the tap auditions rather than opens. Albums only: a list
+                // is several releases, and its page has a button per pick.
+                .overlay(alignment: .topTrailing) {
+                    if case .album(let album) = item {
+                        PreviewButton(key: item.id, pick: MusicPick(
+                            kind: .track, title: album.saves.first?.trackName ?? album.title,
+                            artist: album.artist))
+                            .padding(4)
+                    }
+                }
                 .rotationEffect(.degrees(s.angle))
                 .offset(y: s.dy)
                 // A save the fast pass just filed as music springs into the wall rather
                 // than blinking in — the arrival the incoming card was promising.
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
-                .accessibilityLabel("\(item.title), \(item.artist), \(item.clipsLabel)")
             }
         }
         .animation(.easeOut(duration: 0.3), value: sorting)
@@ -616,6 +631,7 @@ struct AlbumDetailView: View {
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear { PreviewPlayer.shared.stop() }
         .task {
             if let collectionID = album.collectionID {
                 await store.loadTracklist(collectionID)
@@ -717,9 +733,7 @@ struct AlbumDetailView: View {
 
     @ViewBuilder
     private var tracklistSection: some View {
-        // Positive only: a Deezer-sourced album carries a negative id and no tracklist, and an
-        // eternal "Fetching the tracklist…" reads as broken rather than as absent.
-        if let collectionID = album.collectionID, collectionID > 0 {
+        if let collectionID = album.collectionID {
             VStack(alignment: .leading, spacing: 4) {
                 Micro(text: "Tracklist" + (album.trackCount.map { " · \($0)" } ?? ""),
                       size: 10, tracking: 2, color: .stashInk.opacity(0.45))
@@ -751,14 +765,21 @@ struct AlbumDetailView: View {
     private func trackRow(number: Int, name: String, isLast: Bool) -> some View {
         let save = savedClip(number: number, name: name)
         return HStack(spacing: 12) {
-            Text("\(number)")
-                .font(.archivo(12, .black))
-                .foregroundStyle(save != nil ? Color.categoryRecipe : Color.stashInk)
-                .frame(width: 20, alignment: .leading)
-            Text(name)
-                .font(.archivo(13.5, save != nil ? .bold : .semibold))
-                .foregroundStyle(Color.stashInk)
-                .lineLimit(1)
+            // Every track, saved or not, at full strength: the unsaved ones are exactly the ones
+            // worth auditioning before going to look for them.
+            PreviewButton(key: "\(album.id)#\(number)",
+                          pick: MusicPick(kind: .track, title: name, artist: album.artist), size: 24)
+            HStack(spacing: 12) {
+                Text("\(number)")
+                    .font(.archivo(12, .black))
+                    .foregroundStyle(save != nil ? Color.categoryRecipe : Color.stashInk)
+                    .frame(width: 20, alignment: .leading)
+                Text(name)
+                    .font(.archivo(13.5, save != nil ? .bold : .semibold))
+                    .foregroundStyle(Color.stashInk)
+                    .lineLimit(1)
+            }
+            .opacity(save != nil ? 1 : 0.45)
             Spacer(minLength: 0)
             if let save {
                 Link(destination: save.video.url) {
@@ -770,8 +791,7 @@ struct AlbumDetailView: View {
                 .accessibilityLabel("Open the clip for \(name)")
             }
         }
-        .padding(.vertical, 9)
-        .opacity(save != nil ? 1 : 0.45)
+        .padding(.vertical, 2)
         .overlay(alignment: .bottom) {
             if !isLast { Divider().overlay(Color.stashInk.opacity(0.12)) }
         }
@@ -831,6 +851,8 @@ struct MusicListDetailView: View {
     @Environment(\.openURL) private var openURL
     let list: MusicList
     let store: AlbumStore
+    /// Indexes of the album picks opened into their tracklists.
+    @State private var expanded: Set<Int> = []
 
     private var sleeves: [URL?] { store.sleeves(for: list) }
 
@@ -853,6 +875,7 @@ struct MusicListDetailView: View {
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear { PreviewPlayer.shared.stop() }
     }
 
     private var topBar: some View {
@@ -898,27 +921,64 @@ struct MusicListDetailView: View {
         .padding(.top, 22)
     }
 
-    @ViewBuilder
     private func row(index: Int, pick: MusicPick, sleeve: URL?) -> some View {
-        let body = HStack(spacing: 11) {
-            Text("\(index + 1)")
-                .font(.archivo(12, .black))
-                .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.45))
-                .frame(width: 18, alignment: .leading)
-            pickArt(sleeve)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(pick.title)
-                    .font(.archivo(13.5, .bold))
-                    .foregroundStyle(Color.stashInk)
-                    .lineLimit(2)
-                Micro(text: subtitle(for: pick), size: 9, tracking: 1.2,
-                      color: .stashInk.opacity(0.5))
-                    .lineLimit(1)
+        // Opens only when it resolved as an album. An empty trackName is how a ref says so, and
+        // it holds even when the model labelled the pick "track" — which it does for albums.
+        let album = store.ref(for: list, at: index).flatMap { $0.trackName.isEmpty ? $0 : nil }
+        let isOpen = expanded.contains(index)
+        return VStack(spacing: 0) {
+            HStack(spacing: 11) {
+                Text("\(index + 1)")
+                    .font(.archivo(12, .black))
+                    .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.45))
+                    .frame(width: 18, alignment: .leading)
+                // The sleeve is the preview button: hear it before deciding to go looking for it.
+                pickArt(sleeve)
+                    .overlay { PreviewButton(key: "\(list.id)#\(index)", pick: pick, size: 26) }
+                // A pick with no confident catalogue match still gets you somewhere: Spotify search on
+                // the name the video showed. Better than a dead row, and honest about being a search.
+                Button { openURL(pick.link ?? spotifySearch(for: pick)) } label: {
+                    HStack(spacing: 11) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pick.title)
+                                .font(.archivo(13.5, .bold))
+                                .foregroundStyle(Color.stashInk)
+                                .lineLimit(2)
+                            Micro(text: subtitle(for: pick), size: 9, tracking: 1.2,
+                                  color: .stashInk.opacity(0.5))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: pick.link != nil ? "arrow.up.right" : "magnifyingglass")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.stashInk.opacity(pick.link != nil ? 1 : 0.4))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(pick.link != nil
+                                    ? "Open \(pick.title)"
+                                    : "Search Spotify for \(pick.title)")
+                if album != nil {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            if isOpen { expanded.remove(index) } else { expanded.insert(index) }
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color.stashInk)
+                            .rotationEffect(.degrees(isOpen ? 180 : 0))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel((isOpen ? "Hide" : "Show") + " the tracks of \(pick.title)")
+                }
             }
-            Spacer(minLength: 0)
-            Image(systemName: pick.link != nil ? "arrow.up.right" : "magnifyingglass")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Color.stashInk.opacity(pick.link != nil ? 1 : 0.4))
+            if isOpen, let album {
+                tracks(of: album, pickIndex: index)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -926,14 +986,39 @@ struct MusicListDetailView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.stashInk.opacity(pick.link != nil ? 1 : 0.3), lineWidth: 1.5)
         )
+    }
 
-        // A pick with no confident catalogue match still gets you somewhere: Spotify search on
-        // the name the video showed. Better than a dead row, and honest about being a search.
-        Button { openURL(pick.link ?? spotifySearch(for: pick)) } label: { body }
-            .buttonStyle(.plain)
-            .accessibilityLabel(pick.link != nil
-                                ? "Open \(pick.title)"
-                                : "Search Spotify for \(pick.title)")
+    /// An opened album pick's tracklist, a preview on every track, its ▶ column under the sleeve's.
+    /// The artist is the catalogue's, so each lookup asks for exactly the record the row shows.
+    private func tracks(of album: AlbumRef, pickIndex: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let names = store.tracklists[album.collectionID] {
+                ForEach(Array(names.enumerated()), id: \.offset) { number, name in
+                    HStack(spacing: 10) {
+                        PreviewButton(key: "\(list.id)#\(pickIndex)#\(number)",
+                                      pick: MusicPick(kind: .track, title: name, artist: album.artist),
+                                      size: 22)
+                        Text("\(number + 1)")
+                            .font(.archivo(11, .black))
+                            .foregroundStyle(Color.stashInk.opacity(0.45))
+                            .frame(width: 18, alignment: .leading)
+                        Text(name)
+                            .font(.archivo(13, .semibold))
+                            .foregroundStyle(Color.stashInk)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                }
+            } else {
+                Text("Fetching the tracklist…")
+                    .font(.archivo(12.5))
+                    .foregroundStyle(Color.stashInk.opacity(0.45))
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(.leading, 31)
+        .padding(.top, 8)
+        .task { await store.loadTracklist(album.collectionID) }
     }
 
     /// The strip's sleeve at row size — or a quiet square where iTunes had no match.
@@ -975,6 +1060,109 @@ struct MusicListDetailView: View {
             .padding(.vertical, 15)
             .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
         }
+    }
+}
+
+// MARK: - Audition
+
+/// One ~30 second catalogue preview at a time, app-wide: starting another stops the first.
+/// ponytail: a lookup per tap (~300 ms), nothing cached or preloaded. Cache iTunes URLs in
+/// `AlbumStore` if that wait ever shows — never Deezer's, which are signed and expire.
+@MainActor @Observable
+final class PreviewPlayer {
+    static let shared = PreviewPlayer()
+
+    /// The key of the preview loading or playing; nil when silent.
+    private(set) var current: String?
+    private(set) var isLoading = false
+    /// Keys neither catalogue had a preview for, so their button stops offering one.
+    private(set) var missing: Set<String> = []
+
+    private let player = AVPlayer()
+    private let resolver = AlbumResolver()
+    private var generation = 0
+
+    private init() {
+        NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, note.object as? AVPlayerItem === self.player.currentItem else { return }
+                self.stop()
+            }
+        }
+    }
+
+    func toggle(_ key: String, pick: MusicPick) {
+        guard current != key else { return stop() }
+        stop()
+        current = key
+        isLoading = true
+        let generation = generation
+        Task {
+            var found: URL?
+            var answered = true
+            do { found = try await resolver.previewURL(for: pick) } catch { answered = false }
+            guard generation == self.generation else { return }   // a later tap owns the player
+            isLoading = false
+            guard let found else {
+                // Only a real "no preview" retires the button; a dropped connection can retry.
+                if answered { missing.insert(key) }
+                current = nil
+                return
+            }
+            // Playback, so a button someone pressed is heard with the ring switch on silent.
+            try? AVAudioSession.sharedInstance().setCategory(.playback)
+            try? AVAudioSession.sharedInstance().setActive(true)
+            player.replaceCurrentItem(with: AVPlayerItem(url: found))
+            player.play()
+        }
+    }
+
+    func stop() {
+        generation += 1
+        let wasPlaying = player.currentItem != nil
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        current = nil
+        isLoading = false
+        // Hand the audio back to whatever the preview interrupted.
+        if wasPlaying {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+}
+
+/// Play/stop for one pick's preview: a spinner while the catalogues are asked, a crossed-out
+/// speaker once neither had anything to play.
+struct PreviewButton: View {
+    let key: String
+    let pick: MusicPick
+    var size: CGFloat = 34
+
+    var body: some View {
+        let player = PreviewPlayer.shared
+        let isCurrent = player.current == key
+        let isMissing = player.missing.contains(key)
+        Button { player.toggle(key, pick: pick) } label: {
+            Group {
+                if isCurrent && player.isLoading {
+                    ProgressView().controlSize(.mini).tint(.white)
+                } else {
+                    Image(systemName: isMissing ? "speaker.slash.fill" : isCurrent ? "stop.fill" : "play.fill")
+                        .font(.system(size: size * 0.36, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: size, height: size)
+            .background(Circle().fill(Color.black.opacity(isMissing ? 0.3 : 0.6)))
+            .padding(5)                     // the wall's 34 pt disc gets a 44 pt target
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isMissing)
+        .accessibilityLabel(isMissing ? "No preview for \(pick.title)"
+                            : isCurrent ? "Stop preview" : "Preview \(pick.title)")
     }
 }
 
