@@ -69,6 +69,25 @@ final class AlbumResolverTests: XCTestCase {
     }
 
     /// The same gate as iTunes. A sleeve for the wrong record is worse than no sleeve.
+    /// The play buttons audition a pick before you go searching for it. An album pick takes a song
+    /// off that album; an iTunes miss falls through to Deezer, and the same album by another act
+    /// is refused — a preview of the wrong record is worse than none.
+    func testPreviewFallsBackToDeezerAndRefusesTheWrongAct() async throws {
+        stubByHost(itunes: #"{"resultCount": 0, "results": []}"#, deezer: #"""
+        {"data": [
+            {"title": "The Money Store", "preview": "https://cdnt-preview.dzcdn.net/wrong.mp3",
+             "album": {"title": "The Money Store"}, "artist": {"name": "Some Cover Band"}},
+            {"title": "Get Got", "preview": "https://cdnt-preview.dzcdn.net/right.mp3",
+             "album": {"title": "The Money Store"}, "artist": {"name": "Death Grips"}}
+        ]}
+        """#)
+
+        let url = try await AlbumResolver(session: makeSession())
+            .previewURL(for: MusicPick(kind: .album, title: "The Money Store", artist: "Death Grips"))
+
+        XCTAssertEqual(url?.absoluteString, "https://cdnt-preview.dzcdn.net/right.mp3")
+    }
+
     func testDeezerFallbackStillRefusesAWrongRecord() async throws {
         stubByHost(itunes: #"{"resultCount": 0, "results": []}"#, deezer: Self.deezerHit)
 
@@ -202,6 +221,18 @@ final class AlbumResolverTests: XCTestCase {
         let names = try await AlbumResolver(session: makeSession()).tracklist(collectionID: 1440838039)
 
         XCTAssertEqual(names, ["Let It Happen", "Nangs", "Eventually"])
+    }
+
+    /// Most of a real recommendation list only resolves through Deezer, so a negative id has to
+    /// open into a tracklist too, not just a sleeve.
+    func testNegativeIDReadsTheTracklistFromDeezer() async throws {
+        stubByHost(itunes: #"{"resultCount": 0, "results": []}"#, deezer: #"""
+        {"data": [{"title": "Get Got"}, {"title": "The Fever (Aye Aye)"}]}
+        """#)
+
+        let names = try await AlbumResolver(session: makeSession()).tracklist(collectionID: -1678780)
+
+        XCTAssertEqual(names, ["Get Got", "The Fever (Aye Aye)"])
     }
 
     func testOriginalSoundSkipsNetwork() async throws {
