@@ -354,3 +354,16 @@ def test_provider_4xx_is_still_terminal():
     assert result == HandleResult(deleted=True, retryable=False)
     assert store.failed == [(False, "provider_403")]
     assert queue.deleted == ["receipt-1"]
+
+
+def test_an_instagram_reel_keeps_its_shortcode_and_caption_hashtags(monkeypatch):
+    """Instagram ids are shortcodes, not digits, and its metadata carries no `tags`."""
+    metadata = {"id": "DBL2NCuMkAo", "description": "pasta night #recipe #dinner",
+                "uploader": "cook", "formats": [{"vcodec": "h264"}]}
+    monkeypatch.setattr(cloud_import_pipeline.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=json.dumps(metadata), stderr=""))
+    result = cloud_import_pipeline.FastPassPipeline(
+        analyzer=lambda _: {"category": "recipe"}
+    ).process("https://www.instagram.com/reel/DBL2NCuMkAo/")
+    assert result.video_id == "DBL2NCuMkAo"
+    assert result.hashtags == ["recipe", "dinner"]

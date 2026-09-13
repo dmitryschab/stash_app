@@ -28,7 +28,7 @@ public enum TikTokLink {
         public var errorDescription: String? {
             switch self {
             case .notTikTok:
-                "That link isn't a TikTok video — Stash can only save TikToks."
+                "That link isn't a TikTok or an Instagram reel — Stash can only save those."
             case .unresolved:
                 "Couldn't open that TikTok link. It may be private, deleted or region-locked."
             case .unreachable:
@@ -53,14 +53,35 @@ public enum TikTokLink {
         return host == hostSuffix || host.hasSuffix("." + hostSuffix)
     }
 
+    public static func isInstagram(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "instagram.com" || host == "www.instagram.com"
+    }
+
+    public static func isSupported(_ url: URL) -> Bool { isTikTok(url) || isInstagram(url) }
+
+    /// The platform's official embed player for a saved video.
+    public static func embedURL(for url: URL, videoID: String) -> URL? {
+        isInstagram(url)
+            ? URL(string: "https://www.instagram.com/reel/\(videoID)/embed/")
+            : URL(string: "https://www.tiktok.com/embed/v2/\(videoID)")
+    }
+
     /// The numeric id in a canonical `/@author/video/<id>` path, else nil. Photo posts use
     /// `/photo/<id>`, which the pipeline handles identically, so both spellings are read.
+    /// An Instagram reel's id is the shortcode in `/reel/<code>/`. A `/p/<code>/` post can be a
+    /// carousel, which the box's extractor returns as a playlist, so it is deliberately not read.
     public static func videoID(in url: URL) -> String? {
+        let instagram = isInstagram(url)
+        let markers: Set<Substring> = instagram ? ["reel", "reels"] : ["video", "photo"]
         let parts = url.path.split(separator: "/")
-        guard let marker = parts.firstIndex(where: { $0 == "video" || $0 == "photo" }),
+        guard let marker = parts.firstIndex(where: { markers.contains($0) }),
               parts.index(after: marker) < parts.endIndex else { return nil }
         let candidate = String(parts[parts.index(after: marker)])
-        guard !candidate.isEmpty, candidate.allSatisfy(\.isNumber) else { return nil }
+        let wellFormed = instagram
+            ? candidate.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+            : candidate.allSatisfy(\.isNumber)
+        guard !candidate.isEmpty, wellFormed else { return nil }
         return candidate
     }
 
@@ -72,7 +93,7 @@ public enum TikTokLink {
             types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         for match in detector.matches(in: text, range: range) {
-            if let url = match.url, isTikTok(url) { return url }
+            if let url = match.url, isSupported(url) { return url }
         }
         return nil
     }
@@ -89,7 +110,7 @@ public enum TikTokLink {
         session: URLSession = .shared,
         now: Date = Date()
     ) async throws -> Bookmark {
-        guard isTikTok(url) else { throw Failure.notTikTok(url.absoluteString) }
+        guard isSupported(url) else { throw Failure.notTikTok(url.absoluteString) }
         if let id = videoID(in: url) {
             return Bookmark(id: id, url: canonical(url), date: now)
         }
@@ -104,7 +125,7 @@ public enum TikTokLink {
         } catch {
             throw Failure.unreachable(url.absoluteString)
         }
-        guard let final, isTikTok(final), let id = videoID(in: final) else {
+        guard let final, isSupported(final), let id = videoID(in: final) else {
             throw Failure.unresolved(url.absoluteString)
         }
         return Bookmark(id: id, url: canonical(final), date: now)
@@ -118,6 +139,11 @@ public enum TikTokLink {
         components.fragment = nil
         components.scheme = "https"
         components.host = "www.tiktok.com"
+        // The box allowlists only the bare `/reel/<code>/` path for Instagram.
+        if isInstagram(url), let id = videoID(in: url) {
+            components.host = "www.instagram.com"
+            components.path = "/reel/\(id)/"
+        }
         components.port = nil
         components.user = nil
         components.password = nil

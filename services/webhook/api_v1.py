@@ -562,7 +562,12 @@ def chat_completions(body: dict, store: DynamoImportStore = Depends(entitled_sto
 def tiktok_download(video_id: str, store: DynamoImportStore = Depends(entitled_store)):
     """mp4 bytes for the app's visual-text OCR backfill, which samples frames and deletes
     the file immediately. No persistent offline copy is served or kept anywhere."""
-    if not re.fullmatch(r"\d{5,25}", video_id):
+    if re.fullmatch(r"\d{5,25}", video_id):
+        source = f"https://www.tiktok.com/@/video/{video_id}"
+    elif re.fullmatch(r"[A-Za-z0-9_-]{5,64}", video_id):
+        # An Instagram reel shortcode. yt-dlp serves it as h264+aac mp4 without cookies.
+        source = f"https://www.instagram.com/reel/{video_id}/"
+    else:
         raise HTTPException(status_code=400, detail="bad video id")
     charge_deep_pass(store)
     quota = store.get_quota()
@@ -573,8 +578,7 @@ def tiktok_download(video_id: str, store: DynamoImportStore = Depends(entitled_s
     try:
         out = os.path.join(temp_dir, f"{video_id}.mp4")
         dl = subprocess.run(
-            [YTDLP, "-q", "--no-warnings", "-f", "mp4", "-o", out,
-             f"https://www.tiktok.com/@/video/{video_id}"],
+            [YTDLP, "-q", "--no-warnings", "-f", "mp4", "-o", out, source],
             capture_output=True, timeout=180)
         if dl.returncode != 0 or not os.path.exists(out):
             # A photo post has no video track at all, so yt-dlp reports the mp4 format as

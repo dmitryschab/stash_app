@@ -22,15 +22,21 @@ ALLOWED_TIKTOK_HOSTS = {
     "www.tiktokv.com",
     "tiktokv.com",
 }
+ALLOWED_INSTAGRAM_HOSTS = {"www.instagram.com", "instagram.com"}
 CANONICAL_VIDEO_PATH = re.compile(r"^(?:/@[^/]+)?/(?:share/)?video/(\d+)(?:/)?$")
+# Reels only: a /p/<code>/ post can be a carousel, which yt-dlp returns as a playlist.
+INSTAGRAM_REEL_PATH = re.compile(r"^/reels?/([A-Za-z0-9_-]{5,64})/?$")
+# A TikTok id is digits, an Instagram shortcode is base64url. Which one a row must carry is
+# decided by its URL, in BookmarkInput.matching_canonical_id.
+VIDEO_ID = re.compile(r"\d+|[A-Za-z0-9_-]{5,64}")
 
 
 def validate_tiktok_url(url: str) -> str:
     """Validate a TikTok URL before it is handed to a network-facing worker."""
     parsed = urlsplit(url)
     hostname = (parsed.hostname or "").lower().rstrip(".")
-    if parsed.scheme != "https" or hostname not in ALLOWED_TIKTOK_HOSTS:
-        raise ValueError("URL must use an allowlisted TikTok HTTPS host")
+    if parsed.scheme != "https" or hostname not in ALLOWED_TIKTOK_HOSTS | ALLOWED_INSTAGRAM_HOSTS:
+        raise ValueError("URL must use an allowlisted TikTok or Instagram HTTPS host")
     if parsed.username or parsed.password or parsed.port:
         raise ValueError("TikTok URL must not contain credentials or a custom port")
     if not parsed.path or parsed.path == "/":
@@ -69,9 +75,9 @@ class BookmarkInput(ContractModel):
 
     @field_validator("video_id")
     @classmethod
-    def numeric_video_id(cls, value: str) -> str:
-        if not value.isdigit():
-            raise ValueError("videoID must be numeric")
+    def well_formed_video_id(cls, value: str) -> str:
+        if not VIDEO_ID.fullmatch(value):
+            raise ValueError("videoID must be a TikTok id or an Instagram shortcode")
         return value
 
     @field_validator("url")
@@ -82,6 +88,13 @@ class BookmarkInput(ContractModel):
     @model_validator(mode="after")
     def matching_canonical_id(self) -> BookmarkInput:
         parsed = urlsplit(self.url)
+        if (parsed.hostname or "").lower().rstrip(".") in ALLOWED_INSTAGRAM_HOSTS:
+            reel = INSTAGRAM_REEL_PATH.fullmatch(parsed.path)
+            if not reel or reel.group(1) != self.video_id:
+                raise ValueError("videoID does not match the Instagram reel URL")
+            return self
+        if not self.video_id.isdigit():
+            raise ValueError("videoID must be numeric")
         match = CANONICAL_VIDEO_PATH.fullmatch(parsed.path)
         if match and match.group(1) != self.video_id:
             raise ValueError("videoID does not match the canonical TikTok URL")

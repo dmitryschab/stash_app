@@ -176,3 +176,25 @@ def test_buys_are_bounded_and_name_checked():
     })
     assert len(result.buys) == MAX_BUY_PICKS
     assert all(b.name.strip() for b in result.buys)
+
+
+def test_accepts_instagram_reel_url():
+    item = BookmarkInput(
+        videoID="DBL2NCuMkAo",
+        url="https://www.instagram.com/reel/DBL2NCuMkAo/",
+        bookmarkedAt=datetime.now(timezone.utc),
+    )
+    assert item.videoID == "DBL2NCuMkAo"
+
+
+@pytest.mark.parametrize(
+    "video_id,url",
+    [
+        ("DBL2NCuMkAo", "https://www.instagram.com/reel/OtherCode11/"),
+        ("DBL2NCuMkAo", "https://www.instagram.com/p/DBL2NCuMkAo/"),
+        ("DBL2NCuMkAo", "https://www.tiktok.com/@x/video/DBL2NCuMkAo"),
+    ],
+)
+def test_rejects_mismatched_instagram_rows(video_id, url):
+    with pytest.raises(ValidationError):
+        BookmarkInput(videoID=video_id, url=url, bookmarkedAt=datetime.now(timezone.utc))

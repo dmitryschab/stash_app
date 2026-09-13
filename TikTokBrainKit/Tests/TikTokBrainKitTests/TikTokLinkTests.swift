@@ -95,6 +95,38 @@ final class TikTokLinkTests: XCTestCase {
         XCTAssertTrue(TikTokLink.isTikTok(URL(string: "https://tiktok.com/@a/video/1")!))
     }
 
+    // MARK: - Instagram
+
+    func testInstagramReelResolvesToItsShortcodeWithoutARequest() async throws {
+        let session = makeSession()
+        let bookmark = try await TikTokLink.resolve(
+            URL(string: "https://instagram.com/reels/DBL2NCuMkAo/?igsh=MWx0c2Q")!,
+            session: session, now: shared)
+
+        XCTAssertEqual(bookmark.id, "DBL2NCuMkAo")
+        XCTAssertEqual(bookmark.url.absoluteString, "https://www.instagram.com/reel/DBL2NCuMkAo/")
+        XCTAssertNil(TikTokLinkURLProtocol.requestedUserAgent, "no request should have been made")
+    }
+
+    func testInstagramPostsAndLookalikesAreNotReels() {
+        XCTAssertNil(TikTokLink.videoID(in: URL(string: "https://www.instagram.com/p/DBL2NCuMkAo/")!))
+        XCTAssertFalse(TikTokLink.isSupported(URL(string: "https://instagram.com.evil.example/reel/DBL2NCuMkAo/")!))
+        XCTAssertEqual(
+            TikTokLink.firstLink(in: "look https://www.instagram.com/reel/DBL2NCuMkAo/?igsh=x"),
+            URL(string: "https://www.instagram.com/reel/DBL2NCuMkAo/?igsh=x"))
+    }
+
+    func testEmbedURLPicksThePlatformsPlayer() {
+        XCTAssertEqual(
+            TikTokLink.embedURL(for: URL(string: "https://www.instagram.com/reel/DBL2NCuMkAo/")!,
+                                videoID: "DBL2NCuMkAo")?.absoluteString,
+            "https://www.instagram.com/reel/DBL2NCuMkAo/embed/")
+        XCTAssertEqual(
+            TikTokLink.embedURL(for: URL(string: "https://www.tiktok.com/@a/video/7000000000000000001")!,
+                                videoID: "7000000000000000001")?.absoluteString,
+            "https://www.tiktok.com/embed/v2/7000000000000000001")
+    }
+
     // MARK: - Resolution
 
     func testResolveShortCircuitsWhenTheLinkAlreadyCarriesAnID() async throws {
@@ -142,10 +174,10 @@ final class TikTokLinkTests: XCTestCase {
         let session = makeSession()
         do {
             _ = try await TikTokLink.resolve(
-                URL(string: "https://www.instagram.com/reel/abc/")!, session: session, now: shared)
+                URL(string: "https://www.youtube.com/shorts/abc")!, session: session, now: shared)
             XCTFail("expected a notTikTok failure")
         } catch let failure as TikTokLink.Failure {
-            XCTAssertEqual(failure, .notTikTok("https://www.instagram.com/reel/abc/"))
+            XCTAssertEqual(failure, .notTikTok("https://www.youtube.com/shorts/abc"))
         } catch {
             XCTFail("unexpected error: \(error)")
         }

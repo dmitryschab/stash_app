@@ -444,3 +444,19 @@ def test_a_bedrock_failure_is_not_billable(store, monkeypatch):
         assert client.post("/v1/chat/completions",
                            json={"messages": [{"role": "user", "content": "hi"}]}).status_code == 500
     assert store.get_quota().initial_remaining == INITIAL_LIMIT
+
+
+def test_an_instagram_shortcode_downloads_the_reel(store, monkeypatch):
+    seen = []
+
+    def run(args, **_kwargs):
+        seen.append(args[-1])
+        with open(args[args.index("-o") + 1], "wb") as handle:
+            handle.write(b"\x00" * 16)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(api_v1.subprocess, "run", run)
+    with TestClient(app) as client:
+        assert client.get("/v1/tiktok/download/DBL2NCuMkAo").status_code == 200
+        assert client.get("/v1/tiktok/download/bad.id").status_code == 400
+    assert seen == ["https://www.instagram.com/reel/DBL2NCuMkAo/"]

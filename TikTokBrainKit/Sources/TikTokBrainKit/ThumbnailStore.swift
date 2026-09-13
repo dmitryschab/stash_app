@@ -102,7 +102,8 @@ public enum ThumbnailStore {
                               throttle: RequestThrottle) async -> URL? {
         if let stored, let local = await bytes(stored, id: id) { return local }
         await throttle.waitForTurn()
-        guard let fresh = await oEmbedCover(for: page) else { return nil }
+        let fresh = await (TikTokLink.isInstagram(page) ? instagramCover(for: page) : oEmbedCover(for: page))
+        guard let fresh else { return nil }
         return await bytes(fresh, id: id)
     }
 
@@ -118,6 +119,26 @@ public enum ThumbnailStore {
               (response as? HTTPURLResponse)?.statusCode == 200
         else { return nil }
         return coverURL(fromOEmbed: data)
+    }
+
+    /// Instagram has no auth-free oEmbed, but a reel's public embed page carries a freshly signed
+    /// cover as its `EmbeddedMediaImage`. Nil for a deleted or private reel and any parse failure.
+    static func instagramCover(for videoURL: URL, session: URLSession = .shared) async -> URL? {
+        guard let id = TikTokLink.videoID(in: videoURL),
+              let page = TikTokLink.embedURL(for: videoURL, videoID: id) else { return nil }
+        var request = URLRequest(url: page)
+        request.setValue(TikTokLink.desktopUserAgent, forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200
+        else { return nil }
+        return coverURL(fromInstagramEmbed: String(decoding: data, as: UTF8.self))
+    }
+
+    static func coverURL(fromInstagramEmbed html: String) -> URL? {
+        guard let tag = html.range(of: #"<img[^>]*class="EmbeddedMediaImage"[^>]*>"#, options: .regularExpression),
+              let src = html[tag].range(of: #"src="[^"]+""#, options: .regularExpression)
+        else { return nil }
+        return URL(string: html[src].dropFirst(5).dropLast().replacingOccurrences(of: "&amp;", with: "&"))
     }
 
     static func oEmbedEndpoint(for videoURL: URL) -> URL? {

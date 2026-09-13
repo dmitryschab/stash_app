@@ -11,10 +11,10 @@ import requests
 from pydantic import ValidationError
 
 from api_v1 import YTDLP, analyze_metadata
-from cloud_import_models import VideoResult
+from cloud_import_models import VIDEO_ID, VideoResult
 
 
-VIDEO_ID_RE = re.compile(r"/(?:video|photo)/(\d+)(?:/|$)")
+VIDEO_ID_RE = re.compile(r"/(?:video|photo)/(\d+)(?:/|$)|/reels?/([A-Za-z0-9_-]+)")
 _PHOTO_PATH_RE = re.compile(r"/photo/(\d+)")
 
 
@@ -154,19 +154,21 @@ class FastPassPipeline:
     def process(self, url: str, video_id: str | None = None) -> VideoResult:
         url = _canonical(url)
         match = VIDEO_ID_RE.search(url)
-        resolved_id = video_id or (match.group(1) if match else None)
+        resolved_id = video_id or ((match.group(1) or match.group(2)) if match else None)
         metadata = self._metadata(url)
         if not metadata:
             if not resolved_id:
                 raise PipelineError("video ID missing from unavailable metadata", False, "invalid_metadata")
             return VideoResult(videoID=resolved_id, unavailable=True, errorCode="unavailable")
         resolved_id = resolved_id or str(metadata.get("id") or "")
-        if not resolved_id.isdigit():
+        if not VIDEO_ID.fullmatch(resolved_id):
             raise PipelineError("video ID missing from metadata", False, "invalid_metadata")
 
+        caption = metadata.get("description") or ""
         payload = {
-            "caption": metadata.get("description") or "",
-            "hashtags": metadata.get("tags") or [],
+            "caption": caption,
+            # Instagram metadata carries no `tags`; its hashtags only exist in the caption.
+            "hashtags": metadata.get("tags") or re.findall(r"#(\w+)", caption),
             "author": metadata.get("uploader") or metadata.get("channel") or "",
             "thumbnailURL": metadata.get("thumbnail"),
             "duration": metadata.get("duration"),

@@ -20,6 +20,13 @@ final class ThumbnailStoreTests: XCTestCase {
     }
 
     /// A live video that oEmbed cannot describe answers with an error body, not a cover.
+    func testInstagramCoverIsReadFromTheEmbedPage() throws {
+        let html = #"<div><img class="EmbeddedMediaImage" alt="Instagram post shared by &#064;cook" src="https://scontent.cdninstagram.com/v/cover.jpg?stp=dst&amp;oe=6AAC7677" /></div>"#
+        let cover = try XCTUnwrap(ThumbnailStore.coverURL(fromInstagramEmbed: html))
+        XCTAssertEqual(cover.absoluteString, "https://scontent.cdninstagram.com/v/cover.jpg?stp=dst&oe=6AAC7677")
+        XCTAssertNil(ThumbnailStore.coverURL(fromInstagramEmbed: "<html>login</html>"))
+    }
+
     func testCoverURLIsNilForAnUnavailableVideo() {
         let json = #"{"status_code":10101,"status_msg":"Something went wrong"}"#
         XCTAssertNil(ThumbnailStore.coverURL(fromOEmbed: Data(json.utf8)))
