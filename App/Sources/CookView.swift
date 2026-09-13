@@ -335,16 +335,22 @@ private struct WallTile: View {
     let video: Video
 
     var body: some View {
-        AsyncImage(url: video.thumbnailURL) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
-            ZStack {
-                Color.categoryRecipe
-                Image(systemName: "fork.knife")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Color.stashOnAccent)
+        // Overlay on a clear colour: the image never gets a say in the tile's size. Letting a
+        // scaledToFill image be the layout subject let one landscape thumbnail widen its grid
+        // column and shove the whole row off screen.
+        Color.clear
+            .overlay {
+                AsyncImage(url: video.thumbnailURL) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    ZStack {
+                        Color.categoryRecipe
+                        Image(systemName: "fork.knife")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(Color.stashOnAccent)
+                    }
+                }
             }
-        }
         .frame(height: 104)
         .frame(maxWidth: .infinity)
         // `clipShape` clips the drawing, not the touch region: a scaledToFill image overflows
