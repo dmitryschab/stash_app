@@ -24,7 +24,9 @@ struct HaulDetailView: View {
     let pickIndex: Int
 
     private var offerStore: OfferStore { OfferStore.shared }
-    private var country: String { Locale.current.region?.identifier ?? "DE" }
+    @AppStorage(DeliveryAddress.addressKey) private var address = ""
+    @AppStorage(DeliveryAddress.countryKey) private var country = DeliveryAddress.phoneCountry
+    @State private var editingAddress = false
 
     var body: some View {
         ScrollView {
@@ -41,8 +43,9 @@ struct HaulDetailView: View {
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .task { await offerStore.resolve(name: pick.name, kind: pick.kind, country: country) }
+        .task(id: country) { await offerStore.resolve(name: pick.name, kind: pick.kind, country: country) }
         .task { await PickFrameStore.shared.ensureFrames(for: video) }
+        .sheet(isPresented: $editingAddress) { DeliveryAddressSheet() }
     }
 
     // MARK: - Chrome
@@ -129,8 +132,7 @@ struct HaulDetailView: View {
     @ViewBuilder
     private var offerSection: some View {
         HStack(alignment: .firstTextBaseline) {
-            Micro(text: "Where to buy · ships to \(country)", size: 10, tracking: 2,
-                  color: .stashHaul)
+            Micro(text: "Where to buy", size: 10, tracking: 2, color: .stashHaul)
             Spacer()
             if !pick.price.isEmpty {
                 Micro(text: "said in video · \(pick.price)", size: 9, tracking: 1.2,
@@ -138,6 +140,21 @@ struct HaulDetailView: View {
             }
         }
         .padding(.top, 22)
+
+        Button { editingAddress = true } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "mappin").font(.system(size: 10, weight: .bold))
+                Micro(text: address.isEmpty ? "Ships to \(countryName) · set address" : "Ships to \(address)",
+                      size: 9, tracking: 1.4, color: .stashInk.opacity(0.55))
+                    .lineLimit(1)
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(Color.stashInk.opacity(0.55))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 6)
+        .accessibilityLabel(address.isEmpty ? "Set delivery address" : "Delivery address \(address), change")
 
         switch offerStore.state(name: pick.name, country: country) {
         case .checking:
@@ -235,7 +252,7 @@ struct HaulDetailView: View {
             Micro(text: "Or search yourself", size: 9, tracking: 2, color: .stashInk.opacity(0.45))
             HStack(spacing: 8) {
                 ForEach(Shop.allCases, id: \.self) { shop in
-                    if let url = shop.searchURL(for: pick.name) {
+                    if let url = shop.searchURL(for: pick.name, region: country) {
                         Link(destination: url) {
                             InfoChip(text: shop.label, systemImage: "magnifyingglass")
                         }
@@ -244,6 +261,107 @@ struct HaulDetailView: View {
             }
         }
         .padding(.top, 26)
+    }
+}
+
+// MARK: - Delivery address
+
+/// Where hauls ship to: picked once on a pick page, remembered on this phone. Only the country
+/// code leaves the device (it keys the offer lookup); the street line is the reader's own label.
+/// Until one is picked, the phone's region stands in.
+enum DeliveryAddress {
+    static let addressKey = "haulDeliveryAddress"
+    static let countryKey = "haulDeliveryCountry"
+
+    static var phoneCountry: String { Locale.current.region?.identifier ?? "DE" }
+    static var country: String { UserDefaults.standard.string(forKey: countryKey) ?? phoneCountry }
+
+    /// Personal data: account deletion and a new account on this device both drop it.
+    static func forget() {
+        UserDefaults.standard.removeObject(forKey: addressKey)
+        UserDefaults.standard.removeObject(forKey: countryKey)
+    }
+
+    /// Two-letter ISO codes only — the offers route refuses anything else — by localized name.
+    static let countries: [(code: String, name: String)] = Locale.Region.isoRegions
+        .map(\.identifier)
+        .filter { $0.count == 2 && $0.allSatisfy(\.isLetter) }
+        .compactMap { code in Locale.current.localizedString(forRegionCode: code).map { (code, $0) } }
+        .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+}
+
+// ponytail: the country is picked by hand, not geocoded from the street line; geocode it if
+// people keep picking the wrong one.
+struct DeliveryAddressSheet: View {
+    @AppStorage(DeliveryAddress.addressKey) private var savedAddress = ""
+    @AppStorage(DeliveryAddress.countryKey) private var savedCountry = DeliveryAddress.phoneCountry
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var country = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Deliver to")
+                    .font(.archivo(28, .heavy))
+                    .foregroundStyle(Color.stashInk)
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.stashInk)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 18)
+
+            Micro(text: "Street and city", size: 9, tracking: 2).padding(.top, 14)
+            TextField("Street 1, City", text: $address)
+                .font(.archivo(15, .semibold))
+                .foregroundStyle(Color.stashInk)
+                .textContentType(.fullStreetAddress)
+                .submitLabel(.done)
+                .padding(.horizontal, 18)
+                .frame(height: 50)
+                .background(Color.stashSurface, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                .padding(.top, 8)
+
+            Micro(text: "Country", size: 9, tracking: 2).padding(.top, 16)
+            Picker("Country", selection: $country) {
+                ForEach(DeliveryAddress.countries, id: \.code) { Text($0.name).tag($0.code) }
+            }
+            .pickerStyle(.menu)
+            .tint(Color.stashInk)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 50)
+            .background(Color.stashSurface, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+            .padding(.top, 8)
+
+            Text("Shops and prices are checked for this country. The address stays on this phone.")
+                .font(.archivo(11.5))
+                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .padding(.top, 12)
+
+            Spacer(minLength: 20)
+            StashPrimaryButton(title: "Save") {
+                savedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+                savedCountry = country
+                dismiss()
+            }
+            .padding(.bottom, 12)
+        }
+        .padding(.horizontal, 20)
+        .background(Color.stashBackground.ignoresSafeArea())
+        .presentationDetents([.medium])
+        .onAppear {
+            address = savedAddress
+            country = savedCountry
+        }
     }
 }
 

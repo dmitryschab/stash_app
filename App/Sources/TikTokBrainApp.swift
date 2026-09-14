@@ -380,6 +380,7 @@ struct RootView: View {
         try? FileManager.default.removeItem(at: ThumbnailStore.directory)
         try? FileManager.default.removeItem(at: AlbumStore.cacheURL)
         try? FileManager.default.removeItem(at: OfferStore.cacheURL)
+        DeliveryAddress.forget()
         center.forgetCloudState()
     }
 }
