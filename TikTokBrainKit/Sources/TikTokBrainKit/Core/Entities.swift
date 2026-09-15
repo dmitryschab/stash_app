@@ -26,6 +26,9 @@ import SwiftData
     /// lightweight migration and an existing library opens unchanged — it simply has no picks
     /// until the analysis that fills them runs again.
     public var buysJSON: Data?
+    /// Local product choices, separate from replaceable analysis. Optional for existing stores;
+    /// deleting the video or clearing the account's library also removes these choices.
+    public var haulStatesJSON: Data? = nil
     public var stageStatesJSON: Data      // [String: StageState] encoded; keys: enrich, media, transcribe, ocr, analyze
     public var unavailable: Bool
     public var cloudAnalysisRevision: Int = 0

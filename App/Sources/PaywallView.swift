@@ -15,6 +15,7 @@
 // so sign-out and delete both live on this screen as well as in Settings.
 
 import SwiftUI
+import SwiftData
 import TikTokBrainKit
 
 struct PaywallView: View {
@@ -34,6 +35,7 @@ struct PaywallView: View {
 
     @State private var error: String?
     @State private var confirmingDelete = false
+    @Environment(\.modelContext) private var context
 
     var body: some View {
         ScrollView {
@@ -238,7 +240,16 @@ struct PaywallView: View {
 
     private func delete() {
         Task {
-            do { try await session.deleteAccount() } catch { self.error = error.localizedDescription }
+            do {
+                try await session.deleteAccount()
+                try context.delete(model: Video.self)
+                try context.save()
+                try? FileManager.default.removeItem(at: ThumbnailStore.directory)
+                try? FileManager.default.removeItem(at: AlbumStore.cacheURL)
+                try? FileManager.default.removeItem(at: OfferStore.cacheURL)
+                DeliveryAddress.forget()
+                PipelineCenter.shared.forgetCloudState()
+            } catch { self.error = error.localizedDescription }
         }
     }
 }
