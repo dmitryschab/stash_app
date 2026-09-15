@@ -5,7 +5,7 @@ import pytest
 
 import cloud_import_pipeline
 from cloud_import_models import VideoResult
-from cloud_import_worker import HandleResult, PipelineError, handle_message
+from cloud_import_worker import HandleResult, PipelineError, handle_message, run_forever
 
 
 class FakeQueue:
@@ -354,3 +354,35 @@ def test_provider_4xx_is_still_terminal():
     assert result == HandleResult(deleted=True, retryable=False)
     assert store.failed == [(False, "provider_403")]
     assert queue.deleted == ["receipt-1"]
+
+
+def test_run_forever_processes_a_batch_concurrently():
+    import threading, time
+    from threading import Event
+
+    class BatchQueue(FakeQueue):
+        def __init__(self):
+            super().__init__()
+            self.stop = Event()
+        def receive(self, max_messages=1, wait_time_seconds=20):
+            if self.stop.is_set():
+                return []
+            self.stop.set()
+            assert max_messages == 4
+            return [message(videoID=str(i), receiptHandle=f"r{i}") for i in range(4)]
+
+    seen, lock = set(), threading.Lock()
+    class SlowPipeline:
+        def process(self, url):
+            with lock:
+                seen.add(threading.get_ident())
+            time.sleep(0.2)
+            return VideoResult(videoID="1")
+
+    queue = BatchQueue()
+    started = time.monotonic()
+    run_forever(queue=queue, store_for=lambda _uid: FakeStore(), pipeline=SlowPipeline(),
+                stop_event=queue.stop, concurrency=4)
+    assert time.monotonic() - started < 0.6      # 4 × 0.2 s serially would be 0.8 s
+    assert len(seen) > 1
+    assert len(queue.deleted) == 4

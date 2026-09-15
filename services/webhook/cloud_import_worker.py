@@ -8,6 +8,8 @@ account's partition.
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Event
 
@@ -101,18 +103,25 @@ def handle_message(message: dict, store_for, pipeline, queue) -> HandleResult:
     return HandleResult(deleted=False, retryable=True)
 
 
-def run_forever(queue=None, store_for=None, pipeline=None, stop_event: Event | None = None) -> None:
+def run_forever(queue=None, store_for=None, pipeline=None, stop_event: Event | None = None,
+                concurrency: int | None = None) -> None:
     queue = queue or SQSImportQueue()
     # One table handle for the process, one store per message. Building a single store at
     # startup is what used to pin every job to one shared partition.
-    store_for = store_for or (lambda user_id: DynamoImportStore(table=shared_table(), user_id=user_id))
+    if store_for is None:
+        table = shared_table()   # built once here, before any thread can race the lazy init
+        store_for = lambda user_id: DynamoImportStore(table=table, user_id=user_id)
     pipeline = pipeline or FastPassPipeline()
     stop_event = stop_event or Event()
-    while not stop_event.is_set():
-        for message in queue.receive(max_messages=1, wait_time_seconds=20):
-            if stop_event.is_set():
-                break
-            handle_message(message, store_for, pipeline, queue)
+    # Each video is ~5-10 s of yt-dlp and one Bedrock call, all of it waiting on the network,
+    # so a handful of threads is a near-linear speedup. SQS hands out at most 10 per receive.
+    concurrency = max(1, min(concurrency or int(os.environ.get("IMPORT_WORKER_CONCURRENCY") or 4), 10))
+    # ponytail: the batch is a barrier — a slow video holds its siblings' slots until it lands.
+    # Refill per-slot with futures if that ever shows in the journal.
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        while not stop_event.is_set():
+            messages = queue.receive(max_messages=concurrency, wait_time_seconds=20)
+            list(pool.map(lambda message: handle_message(message, store_for, pipeline, queue), messages))
 
 
 if __name__ == "__main__":
