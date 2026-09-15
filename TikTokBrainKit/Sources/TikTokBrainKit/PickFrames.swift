@@ -59,27 +59,64 @@ public enum PickFrames {
             .filter { $0.count >= 2 }
     }
 
-    // MARK: - Frame storage
+    // MARK: - Picture storage
 
     /// Beside the covers on purpose: account sign-out and the thumbnail wipe already clear
-    /// that directory, and a pick frame is derived from the same video the cover is.
-    public static func frameURL(videoID: String, pickIndex: Int) -> URL {
-        ThumbnailStore.directory.appendingPathComponent("buy-\(videoID)-\(pickIndex).jpg")
+    /// that directory, and both pictures are derived from the same save the cover is.
+    /// `directory` is a parameter only so tests can point it at scratch.
+    public static func frameURL(videoID: String, pickIndex: Int,
+                                directory: URL = ThumbnailStore.directory) -> URL {
+        directory.appendingPathComponent("buy-\(videoID)-\(pickIndex).jpg")
+    }
+
+    /// The shop's catalog photo for the pick, fetched with its offers.
+    public static func productImageURL(videoID: String, pickIndex: Int,
+                                       directory: URL = ThumbnailStore.directory) -> URL {
+        directory.appendingPathComponent("buy-\(videoID)-\(pickIndex)-product.jpg")
     }
 
     /// The pick's stored frame, or nil when it has not been extracted (or never matched).
-    public static func cachedFrame(videoID: String, pickIndex: Int) -> URL? {
-        let local = frameURL(videoID: videoID, pickIndex: pickIndex)
-        return FileManager.default.fileExists(atPath: local.path) ? local : nil
+    public static func cachedFrame(videoID: String, pickIndex: Int,
+                                   directory: URL = ThumbnailStore.directory) -> URL? {
+        existing(frameURL(videoID: videoID, pickIndex: pickIndex, directory: directory))
     }
 
-    /// Downscales one sampled PNG into the pick's slot — same 640 px JPEG budget as a cover.
+    public static func cachedProductImage(videoID: String, pickIndex: Int,
+                                          directory: URL = ThumbnailStore.directory) -> URL? {
+        existing(productImageURL(videoID: videoID, pickIndex: pickIndex, directory: directory))
+    }
+
+    /// What a row draws for the pick: the catalog photo when the shop had one, else the video
+    /// frame, else nil (and the caller falls back to the cover).
+    public static func picture(videoID: String, pickIndex: Int,
+                               directory: URL = ThumbnailStore.directory) -> URL? {
+        cachedProductImage(videoID: videoID, pickIndex: pickIndex, directory: directory)
+            ?? cachedFrame(videoID: videoID, pickIndex: pickIndex, directory: directory)
+    }
+
+    /// Downscales one sampled PNG into the pick's frame slot — same 640 px JPEG budget as a cover.
     @discardableResult
-    public static func storeFrame(png: URL, videoID: String, pickIndex: Int) -> URL? {
-        guard let data = try? Data(contentsOf: png),
-              let jpeg = ThumbnailStore.downscaled(data) else { return nil }
-        let local = frameURL(videoID: videoID, pickIndex: pickIndex)
-        guard (try? jpeg.write(to: local, options: .atomic)) != nil else { return nil }
+    public static func storeFrame(png: URL, videoID: String, pickIndex: Int,
+                                  directory: URL = ThumbnailStore.directory) -> URL? {
+        guard let data = try? Data(contentsOf: png) else { return nil }
+        return store(data, at: frameURL(videoID: videoID, pickIndex: pickIndex, directory: directory))
+    }
+
+    /// Downscales downloaded image bytes into the pick's product slot. Bytes that are not an
+    /// image (a shop's captcha page, say) store nothing.
+    @discardableResult
+    public static func storeProductImage(_ data: Data, videoID: String, pickIndex: Int,
+                                         directory: URL = ThumbnailStore.directory) -> URL? {
+        store(data, at: productImageURL(videoID: videoID, pickIndex: pickIndex, directory: directory))
+    }
+
+    private static func store(_ data: Data, at local: URL) -> URL? {
+        guard let jpeg = ThumbnailStore.downscaled(data),
+              (try? jpeg.write(to: local, options: .atomic)) != nil else { return nil }
         return local
+    }
+
+    private static func existing(_ local: URL) -> URL? {
+        FileManager.default.fileExists(atPath: local.path) ? local : nil
     }
 }

@@ -1,6 +1,7 @@
 """Stash /v1 haul offers — where a pick can actually be bought, priced for the buyer's country.
 
   POST /v1/haul/offers  {name, kind, country} -> {offers: [...], checkedAt, cached}
+  One offer may carry imageURL: the shop page's og:image, the pick's catalog photo.
 
 Its own module and its own router, mounted in app.py, like embeddings_api before it.
 
@@ -34,6 +35,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from urllib.parse import urlparse
 
 import requests
@@ -213,6 +215,58 @@ def rank_offers(raw_offers: list[dict], storefront: str) -> list[dict]:
     return offers[:MAX_OFFERS]
 
 
+# ---------------------------------------------------------------- picture
+
+# The shop page's own product photo, read from its og:image tag. Fetched for at most this many
+# offers per uncached lookup, brand site first; Amazon is skipped because it answers a bot with
+# a captcha page and no og:image.
+PAGE_TRIES = 2
+PAGE_TIMEOUT = 10
+_PAGE_HEADERS = {"User-Agent": (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.4 Safari/605.1.15")}
+_META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
+_OG_IMAGE = re.compile(r"""\b(?:property|name)\s*=\s*["']og:image["']""", re.I)
+_CONTENT = re.compile(r"""\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+
+
+def _fetch_page(url: str) -> str:
+    """The first 200 KB of the page — og:image lives in <head>, and a shop page runs megabytes."""
+    response = requests.get(url, headers=_PAGE_HEADERS, timeout=PAGE_TIMEOUT, stream=True)
+    response.raise_for_status()
+    return response.raw.read(200_000, decode_content=True).decode("utf-8", "replace")
+
+
+def og_image(html: str) -> str | None:
+    """The page's og:image when it is an absolute http(s) URL, else None."""
+    for tag in _META_TAG.findall(html):
+        if not _OG_IMAGE.search(tag):
+            continue
+        match = _CONTENT.search(tag)
+        if not match:
+            continue
+        url = unescape(match.group(1) or match.group(2) or "").strip()
+        if urlparse(url).scheme in ("http", "https"):
+            return url
+    return None
+
+
+def attach_picture(offers: list[dict]) -> None:
+    """Put "imageURL" on the first offer whose page shows a product photo. Failures cost only
+    the picture: an unreachable shop still keeps its price."""
+    candidates = [entry for entry in offers if entry["kind"] != "amazon"]
+    candidates.sort(key=lambda entry: entry["kind"] != "brand")
+    for entry in candidates[:PAGE_TRIES]:
+        try:
+            image = og_image(_fetch_page(entry["url"]))
+        except Exception as error:
+            log.info("product page unread (%s): %s", entry["url"], error)
+            continue
+        if image:
+            entry["imageURL"] = image
+            return
+
+
 # ---------------------------------------------------------------- cache + cap
 
 def _cache_key(country: str, name: str) -> dict[str, str]:
@@ -330,6 +384,7 @@ def haul_offers(body: OfferRequest, store: DynamoImportStore = Depends(entitled_
         # failure must not become the day's answer.
         log.warning("offer lookup failed: %s", error)
         raise HTTPException(status_code=502, detail="offers unavailable")
+    attach_picture(offers)
 
     checked_at = datetime.now(timezone.utc).isoformat()
     # An empty answer is cached too: "nobody ships this here" is a day's worth of true, and

@@ -40,7 +40,14 @@ struct HaulDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { tabBarHidden.wrappedValue = true }
         .onDisappear { tabBarHidden.wrappedValue = false }
-        .task(id: country) { await offerStore.resolve(name: pick.name, kind: pick.kind, country: country) }
+        .task(id: country) {
+            await offerStore.resolve(name: pick.name, kind: pick.kind, country: country)
+            if case .offers(let offers, _) = offerStore.state(name: pick.name, country: country),
+               let image = offers.compactMap(\.imageURL).first {
+                await PickFrameStore.shared.storeProductImage(from: image, videoID: video.videoID,
+                                                              pickIndex: pickIndex)
+            }
+        }
         .task { await PickFrameStore.shared.ensureFrames(for: video) }
         .sheet(isPresented: $editingCountry) { DeliveryAddressSheet() }
     }
@@ -661,22 +668,36 @@ final class OfferStore {
 
 // MARK: - Pick frame store
 
-/// Extracts a per-pick picture out of the video itself. One download covers every pick the
-/// video carries: frames are re-sampled exactly the way the OCR pass samples them, read with
-/// the same Vision OCR, and each pick keeps the frame whose on-screen text names it
-/// (`PickFrames.frameIndex`). Costs one deep-pass unit per video, once — the frames persist
-/// beside the covers.
+/// Keeps a per-pick picture, two ways. The shop's catalog photo arrives with the pick's offers
+/// and is downloaded once (`storeProductImage`). Failing that, a frame is extracted out of the
+/// video itself: one download covers every pick the video carries, frames are re-sampled
+/// exactly the way the OCR pass samples them, read with the same Vision OCR, and each pick
+/// keeps the frame whose on-screen text names it (`PickFrames.frameIndex`). That costs one
+/// deep-pass unit per video, once. Both persist beside the covers; the photo wins.
 @MainActor @Observable
 final class PickFrameStore {
     static let shared = PickFrameStore()
 
     private var attempted: Set<String> = []   // session-only; a failed video retries next launch
-    /// Bumped when new frames land, so rows drawn from the filesystem re-read it.
+    private var attemptedImages: Set<String> = []
+    /// Bumped when new pictures land, so rows drawn from the filesystem re-read it.
     private(set) var revision = 0
 
     func frame(videoID: String, pickIndex: Int) -> URL? {
-        _ = revision   // register with Observation: a stored frame must repaint stale rows
-        return PickFrames.cachedFrame(videoID: videoID, pickIndex: pickIndex)
+        _ = revision   // register with Observation: a stored picture must repaint stale rows
+        return PickFrames.picture(videoID: videoID, pickIndex: pickIndex)
+    }
+
+    /// Downloads the shop's product photo into the pick's slot, once per pick per launch.
+    func storeProductImage(from remote: URL, videoID: String, pickIndex: Int) async {
+        let slot = "\(videoID)-\(pickIndex)"
+        guard PickFrames.cachedProductImage(videoID: videoID, pickIndex: pickIndex) == nil,
+              !attemptedImages.contains(slot) else { return }
+        attemptedImages.insert(slot)
+        guard let (data, _) = try? await URLSession.shared.data(from: remote),
+              PickFrames.storeProductImage(data, videoID: videoID, pickIndex: pickIndex) != nil
+        else { return }
+        revision += 1
     }
 
     func ensureFrames(for video: Video) async {
@@ -684,7 +705,7 @@ final class PickFrameStore {
         let picks = video.buys.enumerated().map { ($0.offset, $0.element.name) }
         guard StashSession.shared.isSignedIn, !picks.isEmpty,
               !attempted.contains(videoID), !video.unavailable,
-              picks.contains(where: { PickFrames.cachedFrame(videoID: videoID, pickIndex: $0.0) == nil })
+              picks.contains(where: { PickFrames.picture(videoID: videoID, pickIndex: $0.0) == nil })
         else { return }
         attempted.insert(videoID)
 
@@ -701,7 +722,7 @@ final class PickFrameStore {
                 let text = try await FrameReader().recognizeText(in: frames)
                 var count = 0
                 for (pickIndex, name) in picks {
-                    guard PickFrames.cachedFrame(videoID: videoID, pickIndex: pickIndex) == nil,
+                    guard PickFrames.picture(videoID: videoID, pickIndex: pickIndex) == nil,
                           let frameIndex = PickFrames.frameIndex(for: name, in: text),
                           frames.indices.contains(frameIndex),
                           PickFrames.storeFrame(png: frames[frameIndex], videoID: videoID,

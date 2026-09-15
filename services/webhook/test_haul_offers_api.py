@@ -54,6 +54,30 @@ def provider(monkeypatch):
     return state
 
 
+
+@pytest.fixture(autouse=True)
+def pages(monkeypatch):
+    """Stand in for the product-page fetch behind the picture: url -> html, or an exception.
+    Autouse, so no test ever reaches a real shop; an unknown page fails like an unreachable one."""
+    state = {"pages": {}, "fetched": []}
+
+    def fetch(url):
+        state["fetched"].append(url)
+        page = state["pages"].get(url)
+        if page is None:
+            raise RuntimeError("unreachable page")
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+    monkeypatch.setattr(haul_offers_api, "_fetch_page", fetch)
+    return state
+
+
+def og_page(image):
+    return f'<html><head><meta property="og:image" content="{image}"></head><body></body></html>'
+
+
 def refuse(monkeypatch):
     monkeypatch.setattr(haul_offers_api, "_search",
                         lambda *args: pytest.fail("the provider was called for a refused request"))
@@ -285,6 +309,79 @@ def test_a_failed_lookup_is_not_cached(store, provider):
         recovered = lookup(client).json()
 
     assert recovered["offers"][0]["merchant"] == "Amazon.de"
+
+
+
+# ------------------------------------------------------------------ picture
+
+BRAND = "https://www.logitech.com/products/mx-master-4"
+OTHER = "https://www.1a.lv/p/mx-master-4"
+AMAZON = "https://www.amazon.de/dp/B0ABC12345"
+
+
+def test_the_brand_pages_og_image_rides_on_its_offer(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [
+        offer("Amazon.de", AMAZON, 94.99), offer("Logitech", BRAND, 99.0, brand=True)]})
+    pages["pages"][BRAND] = og_page("https://cdn.logitech.com/mx-master-4.png")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    by_merchant = {entry["merchant"]: entry for entry in body["offers"]}
+    assert by_merchant["Logitech"]["imageURL"] == "https://cdn.logitech.com/mx-master-4.png"
+    assert "imageURL" not in by_merchant["Amazon.de"]
+    # Amazon answers bots with a captcha page, so it is never asked.
+    assert pages["fetched"] == [BRAND]
+
+
+def test_a_brand_page_without_a_picture_falls_through_to_the_next_shop(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [
+        offer("Logitech", BRAND, 99.0, brand=True), offer("1a.lv", OTHER, 96.9)]})
+    pages["pages"][BRAND] = "<html><head><title>Logitech</title></head></html>"
+    pages["pages"][OTHER] = og_page("https://img.1a.lv/mx.jpg")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    by_merchant = {entry["merchant"]: entry for entry in body["offers"]}
+    assert "imageURL" not in by_merchant["Logitech"]
+    assert by_merchant["1a.lv"]["imageURL"] == "https://img.1a.lv/mx.jpg"
+    assert pages["fetched"] == [BRAND, OTHER]
+
+
+def test_a_page_failure_costs_only_the_picture(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [offer("Logitech", BRAND, 99.0, brand=True)]})
+    pages["pages"][BRAND] = RuntimeError("connection reset")
+
+    with TestClient(app) as client:
+        response = lookup(client)
+
+    assert response.status_code == 200
+    assert [entry["merchant"] for entry in response.json()["offers"]] == ["Logitech"]
+    assert "imageURL" not in response.json()["offers"][0]
+
+
+def test_the_picture_is_cached_with_the_offers(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [offer("Logitech", BRAND, 99.0, brand=True)]})
+    pages["pages"][BRAND] = og_page("https://cdn.logitech.com/mx-master-4.png")
+
+    with TestClient(app) as client:
+        lookup(client)
+        second = lookup(client).json()
+
+    assert second["cached"] is True
+    assert second["offers"][0]["imageURL"] == "https://cdn.logitech.com/mx-master-4.png"
+    assert pages["fetched"] == [BRAND]
+
+
+def test_og_image_reads_either_attribute_order_and_unescapes():
+    html = """<head>
+      <meta content="https://x.example/a.jpg?w=1&amp;h=2" property='og:image' />
+      <meta property="og:image" content="https://x.example/b.jpg">
+    </head>"""
+    assert haul_offers_api.og_image(html) == "https://x.example/a.jpg?w=1&h=2"
+    assert haul_offers_api.og_image('<meta property="og:image" content="/relative.jpg">') is None
+    assert haul_offers_api.og_image("<head></head>") is None
 
 
 # ------------------------------------------------------------------ input

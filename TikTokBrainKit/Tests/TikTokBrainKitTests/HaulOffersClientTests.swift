@@ -29,6 +29,23 @@ struct HaulOffersClientTests {
         #expect(offers[0].url.host() == "www.amazon.de")
     }
 
+    @Test func anOfferMayCarryTheProductPicture() throws {
+        // The server reads the shop page's og:image for at most one offer; the rest have none,
+        // and an old cache file written before the field existed must still decode.
+        let payload = """
+        {"offers": [
+            {"merchant": "Amazon.de", "url": "https://www.amazon.de/dp/B0ABC12345",
+             "price": "€94.99", "amount": 94.99, "currency": "EUR", "kind": "amazon"},
+            {"merchant": "Logitech", "url": "https://www.logitech.com/products/mx-master-4",
+             "price": "€99.00", "amount": 99.0, "currency": "EUR", "kind": "brand",
+             "imageURL": "https://cdn.logitech.com/mx-master-4.png"}
+        ], "cached": false}
+        """
+        let offers = try HaulOffersClient.decodeOffers(Data(payload.utf8))
+        #expect(offers[0].imageURL == nil)
+        #expect(offers[1].imageURL == URL(string: "https://cdn.logitech.com/mx-master-4.png"))
+    }
+
     @Test func anUnknownKindReadsAsOther() throws {
         // A future server may rank new slots; an old app must keep showing the offer rather
         // than failing the whole screen over a word it has not learned.

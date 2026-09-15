@@ -32,15 +32,19 @@ public struct HaulOffer: Codable, Equatable, Sendable {
     public var amount: Double
     public var currency: String
     public var kind: Kind
+    /// The shop page's own product photo (its og:image), on at most one offer per answer.
+    /// Optional on the wire and in the cache file, so entries stored before it existed decode.
+    public var imageURL: URL?
 
     public init(merchant: String, url: URL, price: String, amount: Double,
-                currency: String = "", kind: Kind = .other) {
+                currency: String = "", kind: Kind = .other, imageURL: URL? = nil) {
         self.merchant = merchant
         self.url = url
         self.price = price
         self.amount = amount
         self.currency = currency
         self.kind = kind
+        self.imageURL = imageURL
     }
 }
 
