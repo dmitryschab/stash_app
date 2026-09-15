@@ -67,7 +67,7 @@ final class SharedLinkResolverTests: XCTestCase {
             throw TikTokLink.Failure.notTikTok(url.absoluteString)
         }
         XCTAssertEqual(batch.rejectionMessage,
-                       "That link isn't a TikTok video — Stash can only save TikToks.")
+                       "That link isn't a TikTok or an Instagram reel — Stash can only save those.")
     }
 
     /// An unrecognised error is not evidence the video is gone, so the link is held.

@@ -49,7 +49,7 @@ final class ShareViewController: UIViewController {
     private func sharedLink() async -> URL? {
         let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
         for provider in items.flatMap({ $0.attachments ?? [] }) {
-            if let url = await provider.url(), TikTokLink.isTikTok(url) { return url }
+            if let url = await provider.url(), TikTokLink.isSupported(url) { return url }
             if let text = await provider.text(), let url = TikTokLink.firstLink(in: text) { return url }
         }
         return nil

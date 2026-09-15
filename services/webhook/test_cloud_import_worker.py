@@ -386,3 +386,15 @@ def test_run_forever_processes_a_batch_concurrently():
     assert time.monotonic() - started < 0.6      # 4 × 0.2 s serially would be 0.8 s
     assert len(seen) > 1
     assert len(queue.deleted) == 4
+
+def test_an_instagram_reel_keeps_its_shortcode_and_caption_hashtags(monkeypatch):
+    """Instagram ids are shortcodes, not digits, and its metadata carries no `tags`."""
+    metadata = {"id": "DBL2NCuMkAo", "description": "pasta night #recipe #dinner",
+                "uploader": "cook", "formats": [{"vcodec": "h264"}]}
+    monkeypatch.setattr(cloud_import_pipeline.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=json.dumps(metadata), stderr=""))
+    result = cloud_import_pipeline.FastPassPipeline(
+        analyzer=lambda _: {"category": "recipe"}
+    ).process("https://www.instagram.com/reel/DBL2NCuMkAo/")
+    assert result.video_id == "DBL2NCuMkAo"
+    assert result.hashtags == ["recipe", "dinner"]

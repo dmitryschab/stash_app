@@ -73,7 +73,7 @@ struct WatchSection: View {
                 startPoint: .top, endPoint: .bottom
             )
             VStack(alignment: .leading, spacing: 0) {
-                Micro(text: video.author.isEmpty ? "TikTok" : "@\(video.author)",
+                Micro(text: video.author.isEmpty ? platform : "@\(video.author)",
                       size: 9, tracking: 1.6, color: cream.opacity(0.85))
                 Spacer(minLength: 0)
                 if let line = firstLine {
@@ -103,9 +103,11 @@ struct WatchSection: View {
         .onLongPressGesture { openURL(video.url) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Play video")
-        .accessibilityHint("Long press to open in TikTok")
+        .accessibilityHint("Long press to open in \(platform)")
         .accessibilityAddTraits(.isButton)
     }
+
+    private var platform: String { TikTokLink.isInstagram(video.url) ? "Instagram" : "TikTok" }
 
     /// The first sentence the creator says — or the caption when there is no transcript.
     // ponytail: first terminator wins, so "Mr. Smith says…" cuts early; good enough for a recall line.
@@ -122,8 +124,9 @@ struct WatchSection: View {
     // MARK: - Playback
 
     private var embed: some View {
-        TikTokEmbedView(videoID: video.videoID)
-            .frame(height: 480)
+        EmbedView(url: TikTokLink.embedURL(for: video.url, videoID: video.videoID))
+            // ponytail: measured once — Instagram's embed lays out at 980 px and scales to ~520 pt on a phone card.
+            .frame(height: TikTokLink.isInstagram(video.url) ? 540 : 480)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -149,9 +152,9 @@ struct WatchSection: View {
     }
 }
 
-/// TikTok's official embed player for one video.
-private struct TikTokEmbedView: UIViewRepresentable {
-    let videoID: String
+/// The platform's official embed player for one video.
+private struct EmbedView: UIViewRepresentable {
+    let url: URL?
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -160,7 +163,7 @@ private struct TikTokEmbedView: UIViewRepresentable {
         web.isOpaque = false
         web.backgroundColor = .clear
         web.scrollView.isScrollEnabled = false
-        if let url = URL(string: "https://www.tiktok.com/embed/v2/\(videoID)") {
+        if let url {
             web.load(URLRequest(url: url))
         }
         return web
