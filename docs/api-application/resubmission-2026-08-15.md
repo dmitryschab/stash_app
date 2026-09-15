@@ -6,6 +6,37 @@ The 2026-07-11 submission was **rejected**. This file is the resubmission: the d
 paste-ready portal text, and the checklist that has to be green before pressing Submit.
 `data-portability-application.md` is left as the historical record of what was submitted.
 
+## Revision — 2026-09-01
+
+Four corrections, all verified against live sources today. **Where this block conflicts with anything
+below, this block wins** — the sections further down were written when 1.0 was still unshipped.
+
+1. **The app is live and the pricing changed.** 1.2 is `READY_FOR_SALE` and visible in LV/NL/DE/US/GB
+   (checked via `itunes.apple.com/lookup`), **free** with a Stash Pro subscription at EUR 2.99/month.
+   Every "€5 upfront", "paid app" and "TestFlight join URL" below is superseded. The EU trader-status
+   block that hid the listing in EU storefronts on 28 Aug has cleared.
+2. **The scope is `portability.activity.ongoing`, not `portability.all.ongoing`.** Favourites live
+   under Activity — `docs/api-application/sample-tiktok-export.json` has them at
+   `Activity > Favorite Videos > FavoriteVideoList`. The old claim that `all` was the narrowest scope
+   reaching them was wrong, and asking for `all` weakens the application.
+3. **No portability scope has ever been granted.** The Data Portability API *is* attached as a product
+   alongside Login Kit and Webhooks, but every scope reads "Need to apply" and the app's only live
+   scope is `user.info.basic`. So this is a *first* portability request, not a resubmission of one.
+   The portal also states: **"The Data Portability API requires Login Kit approval in addition to this
+   application… both approvals are needed before you can make data requests."** Two approvals, two
+   tracks, and the Login Kit one is what needs the demo video.
+
+   The portal grants ongoing access as a pair — the scope row is literally
+   `portability.activity.single,portability.activity.ongoing`.
+
+5. **Step 2 of the application requires a PDF of high-fidelity UX mocks** covering four named screens:
+   TikTok Connection page, Connecting to TikTok, Confirmation of connection, Final output / result.
+   PDF only, max 5MB. This does not exist yet and is the immediate blocker on submitting.
+4. **The API covers EEA/UK TikTok users only.** Auto-sync will never work for buyers outside that
+   region; they stay on manual export + the share extension. The App Store copy has to say so, and
+   the application now commits us to distinguishing EEA/UK users at sign-in — **that gate is not
+   built yet**.
+
 ---
 
 ## The rejection, verbatim
@@ -95,9 +126,10 @@ conflate them; the previous submission's assets were built for one and judged ag
 
 ### Use case
 
-> Stash is a paid consumer iOS application, sold on the App Store to members of the public in the EEA
-> and the UK. It is not an internal business tool, not a personal project, and it does not display our
-> own TikTok content anywhere.
+> Stash is a consumer iOS application published on the App Store worldwide — Apple ID 6789977520,
+> https://apps.apple.com/app/id6789977520 — first released 26 August 2026. It is free to download,
+> with an optional subscription (Stash Pro, EUR 2.99 per month). It is not an internal business tool,
+> not a personal project, and it does not display our own TikTok content anywhere.
 >
 > Each user signs in to Stash with their own Apple ID and connects their own TikTok account. Stash
 > retrieves that user's Favourite Videos through the Data Portability API and turns them into a
@@ -110,34 +142,44 @@ conflate them; the previous submission's assets were built for one and judged ag
 > aggregated across users, never published, and never used to display any account's posts on a
 > website or to any third party. There is no shared feed and no public surface for TikTok content.
 >
+> Stash is sold worldwide. The Data Portability integration will be offered only to users we identify
+> as being in the EEA or the UK from their App Store storefront at sign-in; everyone else imports
+> their data manually from TikTok's own export.
+>
 > This serves the portability purpose of the DMA directly: continuous access to, and useful control
 > over, data a user generated on TikTok, in a form TikTok's own app does not provide.
 
-### Scope justification — `portability.all.ongoing`
+### Scope justification — `portability.activity.ongoing`
 
-> Favourite Videos are exposed only inside the "Likes and Favourites" section of the full data
-> archive, so the `all` scope is the narrowest one that reaches them. We extract only the Favourite
-> Videos entries and discard every other category in memory, before anything is written to storage.
+> Favourite Videos are delivered inside the **Activity** category of the export — in the archive they
+> appear at `Activity > Favorite Videos > FavoriteVideoList`, each entry a date and a video link.
+> Activity is therefore the narrowest scope that reaches them, and we do not request
+> `portability.all.*`. Within the Activity export we read only the Favorite Videos entries and
+> discard every other category in memory before anything is written to storage.
+>
 > `ongoing` keeps each user's library in sync with their new saves without forcing them to
-> re-authorise. If TikTok exposes Favourite Videos under a narrower scope, we will switch to it.
+> re-authorise. Each request returns the full Activity dataset rather than a delta, so we diff it
+> against what the user already holds and create nothing twice.
 
 ### App-review explanation (portal caps this at 1000 characters)
 
-> Stash is a consumer iOS app available to members of the public in the EEA/UK. It is not for
-> internal or personal use.
+> Stash is a consumer iOS app on the App Store worldwide (Apple ID 6789977520), released 26 Aug 2026.
+> Free download, optional Stash Pro subscription, EUR 2.99/month. It is not for internal or personal use.
 >
 > Each user connects their own TikTok account and sees only their own Favourites, turned into a
-> searchable library of recipe cards, track lists and how-to summaries. No user ever sees another
-> user's data. We display no TikTok content publicly and none of our own posts anywhere.
+> searchable library of recipe cards, track lists and how-to summaries. No user sees another user's
+> data. We display no TikTok content publicly, and none of our own posts anywhere.
 >
-> From the archive we read only the Favourite Videos entries; messages, watch history, profile,
-> wallet and all other categories are discarded in memory before any write, and the archive file is
-> deleted immediately after extraction.
+> We request only portability.activity.ongoing. From the Activity export we read only the Favorite
+> Videos entries; every other category is discarded in memory before any write, and the archive
+> deleted immediately after extraction. Offered only to users we identify as EEA/UK.
 >
-> Sub-processors: AWS (hosting, and Bedrock for summarisation, eu-central-1) and Groq, Inc. (US,
-> speech-to-text on the video's audio only — no identity data). Both are named in our privacy policy.
+> Sub-processors: AWS (hosting eu-north-1, Bedrock summarisation eu-central-1) and Groq (US,
+> speech-to-text on audio only), both named in our privacy policy.
 >
-> Users can export their library and delete their account and all server-side data from inside the app.
+> Users can export their library and delete their account and all data in-app.
+
+987 characters, verified against the portal's 1000-character cap.
 
 ### App description (portal caps this at 120 characters)
 

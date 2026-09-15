@@ -190,6 +190,7 @@ struct RootView: View {
     /// open state; `-openSearch` lets a smoke run land in it.
     @State private var searchOpen = CommandLine.arguments.contains("-openSearch")
     @State private var query = ""
+    @State private var tabBarHidden = false
     /// Nobody finds hold-and-push on their own: a caption over the pill teaches it until the
     /// first time search opens.
     @AppStorage("searchGripHintDone") private var gripHintDone = false
@@ -311,6 +312,7 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.tabReselect, reselect)
+            .environment(\.stashTabBarHidden, $tabBarHidden)
 
             // Over the tab, under the pill: the tab keeps its scroll position for when search closes.
             if searchOpen {
@@ -318,6 +320,7 @@ struct RootView: View {
                     .transition(.opacity)
             }
 
+            if !tabBarHidden {
             VStack(spacing: 8) {
                 if center.isImporting, let progress = center.progress, progress.total > 0 {
                     ImportSyncPill(text: "Syncing \(progress.done) of \(progress.total)")
@@ -338,6 +341,7 @@ struct RootView: View {
                 }
                 StashTabBar(slots: slots, selection: $tab, reselect: $reselect,
                             searchOpen: $searchOpen, query: $query)
+            }
             }
         }
         // Switching a section off in Settings while standing on it would otherwise leave the
@@ -380,6 +384,7 @@ struct RootView: View {
         try? FileManager.default.removeItem(at: ThumbnailStore.directory)
         try? FileManager.default.removeItem(at: AlbumStore.cacheURL)
         try? FileManager.default.removeItem(at: OfferStore.cacheURL)
+        DeliveryAddress.forget()
         center.forgetCloudState()
     }
 }

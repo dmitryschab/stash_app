@@ -1,21 +1,10 @@
 // HaulDetailView.swift
 //
-// The pick page: one thing a video tried to sell, opened from any pick row. Set List detail
-// anatomy — back chevron + kind pill, big Archivo name, the save's art — and then the section
-// the whole screen exists for: WHERE TO BUY, up to three live offers from shops that deliver
-// to the reader's country, amazon storefront pinned first, tap opens the product page itself.
-// The ranking comes off the box already ordered (haul_offers_api.py); this screen renders it
-// and never re-sorts.
-//
-// Two stores feed it, both fill-in-later in the AlbumStore mold:
-// - `OfferStore` asks POST /v1/haul/offers once per product+country per day, keeps a disk
-//   snapshot so re-opens are instant and offline shows the last answer.
-// - `PickFrameStore` gives multi-product videos per-pick pictures: it re-samples the video's
-//   frames (the same download the OCR pass uses), matches each pick's name against the
-//   on-screen text (`PickFrames`), and stores that frame as the pick's own thumbnail. A video
-//   that never names its products on screen keeps the cover — honest, not broken.
+// A product from a saved video, with personal shopping state and country-specific offers.
+// Artwork comes from the original video; store prices remain separate from mentioned prices.
 
 import SwiftUI
+import SwiftData
 import TikTokBrainKit
 
 struct HaulDetailView: View {
@@ -23,142 +12,311 @@ struct HaulDetailView: View {
     let pick: BuyPick
     let pickIndex: Int
 
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.stashTabBarHidden) private var tabBarHidden
+    @AppStorage(DeliveryAddress.countryKey) private var country = DeliveryAddress.phoneCountry
+    @State private var editingCountry = false
+    @State private var saveError: String?
+
     private var offerStore: OfferStore { OfferStore.shared }
-    private var country: String { Locale.current.region?.identifier ?? "DE" }
+    private var shoppingState: HaulPickState? { video.haulState(for: pick) }
+    private var isRefreshing: Bool { offerStore.isRefreshing(name: pick.name, country: country) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
-                header
-                sourceCard
-                if let link = pick.link { videoLinkRow(link) }
+                productHeader
+                shoppingActions
                 offerSection
-                searchRow
+                searchMenu
+                sourceCard
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .task { await offerStore.resolve(name: pick.name, kind: pick.kind, country: country) }
+        .onAppear { tabBarHidden.wrappedValue = true }
+        .onDisappear { tabBarHidden.wrappedValue = false }
+        .task(id: country) { await offerStore.resolve(name: pick.name, kind: pick.kind, country: country) }
         .task { await PickFrameStore.shared.ensureFrames(for: video) }
+        .sheet(isPresented: $editingCountry) { DeliveryAddressSheet() }
     }
 
-    // MARK: - Chrome
+    // MARK: - Product
 
     private var topBar: some View {
-        HStack {
-            StashBackButton()
-            Spacer()
-            if !pick.kind.isEmpty {
-                Micro(text: pick.kind, size: 10, tracking: 1.8, color: .stashOnAccent)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7)
-                    .background(Color.stashHaul, in: Capsule())
+        HStack(spacing: 12) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 44, height: 44)
+                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.2))
+                    // Without this the glyph is the only target: the circle is a background,
+                    // which never takes a touch.
+                    .contentShape(Circle())
             }
+            .accessibilityLabel("Back")
+            Spacer(minLength: 0)
+            Text(HaulCategory.category(for: pick).label.uppercased())
+                .font(.archivo(11, .bold))
+                .foregroundStyle(Color.stashHaul)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(Capsule().strokeBorder(Color.stashHaul, lineWidth: 1.2))
+            Spacer(minLength: 0)
+            Menu {
+                if let link = pick.link {
+                    Link("Open the link from the video", destination: link)
+                }
+                Link("Open original video", destination: video.url)
+                ShareLink(item: pick.link ?? video.url) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                Button { retryOffers() } label: {
+                    Label("Refresh prices", systemImage: "arrow.clockwise")
+                }
+                .disabled(isRefreshing)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.2))
+                    .contentShape(Circle())
+            }
+            .accessibilityLabel("Product options")
         }
+        .foregroundStyle(Color.stashInk)
+        .buttonStyle(.plain)
         .padding(.top, 8)
     }
 
-    private var header: some View {
+    private var productHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
+            HaulProductArtwork(video: video, pickIndex: pickIndex)
+                .frame(height: 210)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .accessibilityLabel("Image from the saved video")
+                .padding(.top, 14)
+            Text("From the saved video")
+                .font(.archivo(11))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .frame(maxWidth: .infinity)
+                .padding(.top, 6)
             Text(pick.name)
-                .font(.archivo(26, .heavy))
+                .font(.archivo(28, .heavy))
                 .foregroundStyle(Color.stashInk)
-                .padding(.top, 16)
-            Text(byline)
-                .font(.archivo(12.5, .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.5))
-                .padding(.top, 8)
-        }
-    }
-
-    private var byline: String {
-        var parts: [String] = []
-        if !video.author.isEmpty { parts.append("@\(video.author)") }
-        parts.append("saved \(video.bookmarkedAt.formatted(.relative(presentation: .named)))")
-        return parts.joined(separator: " · ")
-    }
-
-    /// The save this pick came out of, wearing the pick's own frame once one is extracted.
-    private var sourceCard: some View {
-        NavigationLink { VideoDetailView(video: video) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                if !video.caption.isEmpty || !video.rowTitle.isEmpty {
-                    Text(video.caption.isEmpty ? video.rowTitle : "\u{201C}\(video.caption)\u{201D}")
-                        .font(.archivo(13, .semibold))
-                        .foregroundStyle(Color.stashOnAccent.opacity(0.85))
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-                }
-                HStack {
-                    Micro(text: "From this save", size: 9.5, tracking: 1.6,
-                          color: .stashOnAccent.opacity(0.75))
-                    Spacer()
-                    Micro(text: "Watch ›", size: 9.5, tracking: 1.6, color: .stashOnAccent)
-                }
-                .padding(.top, 26)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 12)
+                .accessibilityAddTraits(.isHeader)
+            if !pick.kind.isEmpty {
+                Text(pick.kind.prefix(1).uppercased() + pick.kind.dropFirst())
+                    .font(.archivo(16))
+                    .foregroundStyle(Color.stashInk.opacity(0.7))
+                    .padding(.top, 4)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .stashArtCard(fill: .stashHaul, art: artURL)
         }
-        .buttonStyle(.plain)
+    }
+
+    private var shoppingActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    wantButton
+                    Rectangle().fill(Color.stashInk.opacity(0.18)).frame(width: 1, height: 24)
+                    boughtButton
+                }
+                VStack(spacing: 8) {
+                    wantButton
+                    boughtButton
+                }
+            }
+            if let saveError {
+                Text(saveError)
+                    .font(.archivo(13))
+                    .foregroundStyle(Color.categoryRecipe)
+                    .accessibilityLabel(saveError)
+            }
+        }
         .padding(.top, 14)
     }
 
-    private var artURL: URL? {
-        PickFrameStore.shared.frame(videoID: video.videoID, pickIndex: pickIndex)
-            ?? video.thumbnailURL
+    private var wantButton: some View {
+        Button { setShoppingState(shoppingState == .want ? nil : .want) } label: {
+            Label("Want", systemImage: shoppingState == .want ? "bookmark.fill" : "bookmark")
+                .font(.archivo(14, .semibold))
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 14)
+                .background(shoppingState == .want ? Color.stashHaul.opacity(0.12) : .clear, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.stashHaul, lineWidth: 1.3))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.stashInk)
+        .accessibilityValue(shoppingState == .want ? "Selected" : "Not selected")
+        .accessibilityHint("Save this product to your wanted items")
     }
 
-    private func videoLinkRow(_ link: URL) -> some View {
-        Link(destination: link) {
+    private var boughtButton: some View {
+        Button { setShoppingState(shoppingState == .bought ? nil : .bought) } label: {
             HStack(spacing: 7) {
-                Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .bold))
-                Text("Open the link from the video")
-                    .font(.archivo(13, .semibold))
+                if shoppingState == .bought { Image(systemName: "checkmark.circle.fill") }
+                Text(shoppingState == .bought ? "Bought" : "Mark as bought")
             }
-            .foregroundStyle(Color.stashHaul)
+            .font(.archivo(14, .semibold))
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .padding(.horizontal, 10)
         }
-        .padding(.top, 16)
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.stashInk)
+        .accessibilityValue(shoppingState == .bought ? "Selected" : "Not selected")
+        .accessibilityHint(shoppingState == .bought ? "Remove the bought status" : "Mark this product as bought")
+    }
+
+    private func setShoppingState(_ state: HaulPickState?) {
+        let previous = shoppingState
+        video.setHaulState(state, for: pick)
+        do {
+            try modelContext.save()
+            saveError = nil
+        } catch {
+            video.setHaulState(previous, for: pick)
+            saveError = "Couldn’t save this change. Please try again."
+        }
     }
 
     // MARK: - Offers
 
+    private var countryName: String {
+        Locale.current.localizedString(forRegionCode: country) ?? country
+    }
+
+    private var countryButton: some View {
+        Button { editingCountry = true } label: {
+            HStack(spacing: 7) {
+                Text(countryName)
+                    .font(.archivo(13, .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.stashInk)
+        .accessibilityLabel("Shopping country: \(countryName)")
+        .accessibilityHint("Change country to find local stores and prices")
+    }
+
     @ViewBuilder
     private var offerSection: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Micro(text: "Where to buy · ships to \(country)", size: 10, tracking: 2,
-                  color: .stashHaul)
-            Spacer()
-            if !pick.price.isEmpty {
-                Micro(text: "said in video · \(pick.price)", size: 9, tracking: 1.2,
-                      color: .stashInk.opacity(0.45))
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12) {
+                offerHeading.fixedSize()
+                Spacer(minLength: 0)
+                countryButton.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                offerHeading
+                countryButton
             }
         }
-        .padding(.top, 22)
+        .padding(.top, 12)
 
         switch offerStore.state(name: pick.name, country: country) {
         case .checking:
             VStack(spacing: 10) {
-                ForEach(0..<3, id: \.self) { _ in ShimmerBlock().frame(height: 34) }
+                ForEach(0..<2, id: \.self) { _ in ShimmerBlock().frame(height: 48) }
             }
-            .padding(.top, 10)
-            Micro(text: "Checking amazon and the rest…", size: 8.5, tracking: 1.6,
-                  color: .stashInk.opacity(0.4))
+            .padding(.top, 6)
+            Text("Checking stores in \(countryName)…")
+                .font(.archivo(12))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
                 .padding(.top, 8)
+            mentionedPrice
         case .offers(let offers, let checkedAt) where !offers.isEmpty:
             offerCard(offers)
-            Micro(text: "prices checked \(checkedAt.formatted(.relative(presentation: .named)))",
-                  size: 8.5, tracking: 1.6, color: .stashInk.opacity(0.4))
+            Text(priceNote(checkedAt: checkedAt))
+                .font(.archivo(11))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
-        case .offers:
-            miss(title: "No shop found that ships this to \(countryName)",
-                 message: "Nothing that delivers there showed a price for it. The searches below still work.")
+            refreshStatus
+            if let first = offers.first {
+                Link(destination: first.url) {
+                    HStack(spacing: 8) {
+                        Text("View at \(first.merchant)")
+                        Image(systemName: "arrow.up.right")
+                    }
+                    .font(.archivo(15, .bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Color.stashOnInk)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(Color.stashInk, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 12)
+            }
+        case .offers(_, let checkedAt):
+            miss(title: "No offers found in \(countryName)",
+                 message: "Try the store searches below or choose another country.")
+            Text(priceNote(checkedAt: checkedAt))
+                .font(.archivo(11))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .padding(.top, 8)
+            retryButton
         case .unavailable:
-            miss(title: "Couldn't check prices right now",
-                 message: "They'll be checked again next time this page opens.")
+            miss(title: "Couldn’t check prices right now",
+                 message: "You can still search stores or open the original link.")
+            mentionedPrice
+            retryButton
+        }
+    }
+
+    private var offerHeading: some View {
+        Text("Where to buy")
+            .font(.archivo(20, .heavy))
+            .foregroundStyle(Color.stashInk)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var mentionedPrice: some View {
+        Group {
+            if !pick.price.isEmpty {
+                Text("Mentioned in video: \(pick.price)")
+                    .font(.archivo(12))
+                    .foregroundStyle(Color.stashInk.opacity(0.6))
+                    .padding(.top, 8)
+            }
+        }
+    }
+
+    private func priceNote(checkedAt: Date) -> String {
+        let checked = "Checked \(checkedAt.formatted(.relative(presentation: .named)))"
+        return pick.price.isEmpty ? checked : "\(checked) · Mentioned in video: \(pick.price)"
+    }
+
+    @ViewBuilder
+    private var refreshStatus: some View {
+        if isRefreshing {
+            Text("Refreshing prices…")
+                .font(.archivo(11))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .padding(.top, 5)
+        } else if offerStore.refreshFailed(name: pick.name, country: country) {
+            Text("Couldn’t refresh prices. The last offers are still available.")
+                .font(.archivo(12))
+                .foregroundStyle(Color.stashInk.opacity(0.7))
+                .padding(.top, 8)
+            retryButton
         }
     }
 
@@ -167,83 +325,248 @@ struct HaulDetailView: View {
             ForEach(Array(offers.enumerated()), id: \.offset) { index, offer in
                 if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
                 Link(destination: offer.url) {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(offer.merchant)
-                                .font(.archivo(15, .bold))
-                                .foregroundStyle(Color.stashInk)
-                                .lineLimit(1)
-                            Micro(text: shopLine(offer), size: 8, tracking: 1.2,
-                                  color: .stashInk.opacity(0.45))
-                                .lineLimit(1)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            merchantMark(offer)
+                            merchantName(offer)
+                            Spacer(minLength: 4)
+                            offerPrice(offer).fixedSize()
                         }
-                        Spacer(minLength: 8)
-                        Text(offer.price)
-                            .font(.archivo(15, .semibold))
-                            .foregroundStyle(Color.stashHaul)
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.stashHaul.opacity(0.85))
+                        HStack(alignment: .top, spacing: 12) {
+                            merchantMark(offer)
+                            VStack(alignment: .leading, spacing: 8) {
+                                merchantName(offer)
+                                offerPrice(offer)
+                            }
+                            Spacer(minLength: 0)
+                        }
                     }
-                    .padding(.vertical, 11)
+                    .frame(minHeight: 44)
+                    .padding(.vertical, 12)
                     .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Buy at \(offer.merchant) for \(offer.price)")
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("View at \(offer.merchant), \(offer.price), \(shopLine(offer))")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .stashOutlineCard(padding: 14)
-        .padding(.top, 10)
+        .padding(.horizontal, 14)
+        .background(Color.stashSurface.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.stashHaul, lineWidth: 1.2))
+        .padding(.top, 3)
     }
 
-    /// The row's second line: the shop's host, plus what the slot means when it isn't obvious
-    /// from the name — Amazon rows link straight to the product page, brand rows say whose
-    /// store it is.
+    private func merchantMark(_ offer: HaulOffer) -> some View {
+        Text(String(offer.merchant.prefix(1)).uppercased())
+            .font(.archivo(19, .heavy))
+            .foregroundStyle(Color.stashInk)
+            .frame(width: 34, height: 38)
+            .background(Color.stashSurface, in: RoundedRectangle(cornerRadius: 9))
+            .accessibilityHidden(true)
+    }
+
+    private func merchantName(_ offer: HaulOffer) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(offer.merchant)
+                .font(.archivo(14, .bold))
+                .foregroundStyle(Color.stashInk)
+            Text(shopLine(offer))
+                .font(.archivo(11))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func offerPrice(_ offer: HaulOffer) -> some View {
+        HStack(spacing: 12) {
+            Text(offer.price)
+                .font(.archivo(16, .bold))
+            Image(systemName: "arrow.up.right.square")
+                .font(.system(size: 16, weight: .medium))
+        }
+        .foregroundStyle(Color.stashInk)
+    }
+
     private func shopLine(_ offer: HaulOffer) -> String {
         let host = (offer.url.host() ?? "").replacingOccurrences(of: "www.", with: "")
-        switch offer.kind {
-        case .amazon: return "\(host) · product page"
-        case .brand: return "\(host) · brand store"
-        case .other: return host
-        }
+        return offer.kind == .brand ? "Brand store · \(host)" : host
     }
 
     private func miss(title: String, message: String) -> some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.archivo(13, .bold))
+                .font(.archivo(15, .bold))
                 .foregroundStyle(Color.stashInk)
-                .multilineTextAlignment(.center)
             Text(message)
-                .font(.archivo(11.5))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
-                .multilineTextAlignment(.center)
+                .font(.archivo(13))
+                .foregroundStyle(Color.stashInk.opacity(0.65))
                 .lineSpacing(3)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.stashSurface, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.top, 6)
     }
 
-    private var countryName: String {
-        Locale.current.localizedString(forRegionCode: country) ?? country
+    private var retryButton: some View {
+        Button { retryOffers() } label: {
+            Label(isRefreshing ? "Checking prices…" : "Try again", systemImage: "arrow.clockwise")
+                .font(.archivo(13, .semibold))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.stashHaul)
+        .disabled(isRefreshing)
     }
 
-    /// The keyless escape hatch, always present and never the headline: the same two search
-    /// links every pick had before this screen existed.
-    private var searchRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Micro(text: "Or search yourself", size: 9, tracking: 2, color: .stashInk.opacity(0.45))
-            HStack(spacing: 8) {
-                ForEach(Shop.allCases, id: \.self) { shop in
-                    if let url = shop.searchURL(for: pick.name) {
-                        Link(destination: url) {
-                            InfoChip(text: shop.label, systemImage: "magnifyingglass")
+    private func retryOffers() {
+        Task { await offerStore.resolve(name: pick.name, kind: pick.kind, country: country, force: true) }
+    }
+
+    private var searchMenu: some View {
+        Menu {
+            ForEach(Shop.allCases, id: \.self) { shop in
+                if let url = shop.searchURL(for: pick.name, region: country) {
+                    Link(destination: url) { Label("Search \(shop.label)", systemImage: "magnifyingglass") }
+                }
+            }
+            if let link = pick.link {
+                Link("Open the link from the video", destination: link)
+            }
+        } label: {
+            Text("Search other stores")
+                .font(.archivo(13, .semibold))
+                .foregroundStyle(Color.stashInk)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .padding(.top, 4)
+    }
+
+    // MARK: - Source
+
+    private var sourceCard: some View {
+        NavigationLink { VideoDetailView(video: video) } label: {
+            HStack(spacing: 10) {
+                Thumbnail(url: video.thumbnailURL, category: video.category, size: 48)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(video.author.isEmpty ? "From your saved video" : "From @\(video.author)")
+                        .font(.archivo(12, .bold))
+                    Text(video.rowTitle)
+                        .font(.archivo(11))
+                        .foregroundStyle(Color.stashInk.opacity(0.65))
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                ViewThatFits(in: .horizontal) {
+                    Label("Watch", systemImage: "play.circle")
+                        .font(.archivo(12, .semibold))
+                        .fixedSize()
+                    Image(systemName: "play.circle")
+                        .font(.system(size: 26, weight: .regular))
+                }
+                .frame(minWidth: 44, minHeight: 44)
+            }
+            .foregroundStyle(Color.stashInk)
+            .padding(10)
+            .background(Color.stashSurface.opacity(0.4), in: RoundedRectangle(cornerRadius: 15))
+            .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Color.stashInk.opacity(0.15), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Watch \(video.rowTitle)\(video.author.isEmpty ? "" : " by @\(video.author)")")
+        .padding(.top, 8)
+    }
+}
+
+// MARK: - Shopping country
+
+/// The country keys stay compatible with existing offer lookups and account cleanup.
+/// The legacy street-address key is retained only so it can be removed.
+enum DeliveryAddress {
+    static let addressKey = "haulDeliveryAddress"
+    static let countryKey = "haulDeliveryCountry"
+
+    static var phoneCountry: String { Locale.current.region?.identifier ?? "DE" }
+    static var country: String { UserDefaults.standard.string(forKey: countryKey) ?? phoneCountry }
+
+    static func forget() {
+        UserDefaults.standard.removeObject(forKey: addressKey)
+        UserDefaults.standard.removeObject(forKey: countryKey)
+    }
+
+    static let countries: [(code: String, name: String)] = Locale.Region.isoRegions
+        .map(\.identifier)
+        .filter { $0.count == 2 && $0.allSatisfy(\.isLetter) }
+        .compactMap { code in Locale.current.localizedString(forRegionCode: code).map { (code, $0) } }
+        .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+}
+
+struct DeliveryAddressSheet: View {
+    @AppStorage(DeliveryAddress.countryKey) private var savedCountry = DeliveryAddress.phoneCountry
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    private var countries: [(code: String, name: String)] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return DeliveryAddress.countries }
+        return DeliveryAddress.countries.filter {
+            $0.name.localizedStandardContains(query) || $0.code.localizedStandardContains(query)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(countries, id: \.code) { country in
+                        Button {
+                            savedCountry = country.code
+                            UserDefaults.standard.removeObject(forKey: DeliveryAddress.addressKey)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(country.name)
+                                    .font(.archivo(15, .semibold))
+                                Spacer(minLength: 0)
+                                if savedCountry == country.code {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 14, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(Color.stashInk)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityValue(savedCountry == country.code ? "Selected" : "")
+                        .listRowBackground(Color.stashSurface)
                     }
+                } header: {
+                    Text("Find stores and prices for your country")
+                        .font(.archivo(12))
+                        .textCase(nil)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.stashBackground)
+            .overlay {
+                if countries.isEmpty {
+                    ContentUnavailableView.search(text: search)
+                }
+            }
+            .searchable(text: $search, prompt: "Search countries")
+            .navigationTitle("Shopping country")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Color.stashInk)
                 }
             }
         }
-        .padding(.top, 26)
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -269,7 +592,7 @@ final class OfferStore {
     }
 
     private(set) var entries: [String: Entry] = [:]
-    private var failed: Set<String> = []     // session-only; retries next launch
+    private var failed: Set<String> = []     // session-only; an explicit retry clears it
     private var inflight: Set<String> = []
     private static let maxAge: TimeInterval = 24 * 60 * 60
 
@@ -305,12 +628,21 @@ final class OfferStore {
         return failed.contains(key) ? .unavailable : .checking
     }
 
-    func resolve(name: String, kind: String, country: String) async {
+    func isRefreshing(name: String, country: String) -> Bool {
+        inflight.contains(Self.key(name: name, country: country))
+    }
+
+    func refreshFailed(name: String, country: String) -> Bool {
+        failed.contains(Self.key(name: name, country: country))
+    }
+
+    func resolve(name: String, kind: String, country: String, force: Bool = false) async {
         let key = Self.key(name: name, country: country)
-        if let entry = entries[key], Date().timeIntervalSince(entry.fetchedAt) < Self.maxAge {
+        if !force, let entry = entries[key], Date().timeIntervalSince(entry.fetchedAt) < Self.maxAge {
             return
         }
         guard !inflight.contains(key) else { return }
+        failed.remove(key)
         inflight.insert(key)
         defer { inflight.remove(key) }
         do {
@@ -322,7 +654,7 @@ final class OfferStore {
         } catch {
             // A stale answer, when one exists, outranks an error screen; only a pick with no
             // answer at all shows the miss state.
-            if entries[key] == nil { failed.insert(key) }
+            failed.insert(key)
         }
     }
 }

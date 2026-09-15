@@ -397,8 +397,7 @@ private struct BuyShelfRow: View {
 
     private var price: String {
         if !pick.price.isEmpty { return pick.price }
-        let country = Locale.current.region?.identifier ?? "DE"
-        return OfferStore.shared.cachedTopOffer(name: pick.name, country: country)?.price ?? ""
+        return OfferStore.shared.cachedTopOffer(name: pick.name, country: DeliveryAddress.country)?.price ?? ""
     }
 
     var body: some View {
