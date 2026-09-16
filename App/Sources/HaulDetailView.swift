@@ -47,6 +47,9 @@ struct HaulDetailView: View {
                 await PickFrameStore.shared.storeProductImage(from: image, videoID: video.videoID,
                                                               pickIndex: pickIndex)
             }
+            // The prices may have failed; the picture must not fail with them.
+            await PickFrameStore.shared.ensureProductImage(for: pick, videoID: video.videoID,
+                                                           pickIndex: pickIndex)
         }
         .task { await PickFrameStore.shared.ensureFrames(for: video) }
         .sheet(isPresented: $editingCountry) { DeliveryAddressSheet() }
@@ -62,8 +65,10 @@ struct HaulDetailView: View {
                     .frame(width: 44, height: 44)
                     .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.2))
                     // Without this the glyph is the only target: the circle is a background,
-                    // which never takes a touch.
-                    .contentShape(Circle())
+                    // which never takes a touch. A rectangle rather than the circle it draws,
+                    // because a thumb aimed at the ring lands on the corner as often as inside
+                    // it, and a miss on the only way off the page reads as a dead button.
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Back")
             Spacer(minLength: 0)
@@ -91,7 +96,7 @@ struct HaulDetailView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .frame(width: 44, height: 44)
                     .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.2))
-                    .contentShape(Circle())
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Product options")
         }
@@ -100,14 +105,23 @@ struct HaulDetailView: View {
         .padding(.top, 8)
     }
 
+    /// What the picture actually is, said plainly: the seller's own photo when one arrived,
+    /// the video's frame when it did not. Claiming the wrong one is how a page stops being
+    /// believed — and `revision` is read so the line changes the moment a photo lands.
+    private var artworkSource: String {
+        _ = PickFrameStore.shared.revision
+        return PickFrames.cachedProductImage(videoID: video.videoID, pickIndex: pickIndex) != nil
+            ? "From the shop" : "From the saved video"
+    }
+
     private var productHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
             HaulProductArtwork(video: video, pickIndex: pickIndex)
                 .frame(height: 210)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .accessibilityLabel("Image from the saved video")
+                .accessibilityLabel(artworkSource)
                 .padding(.top, 14)
-            Text("From the saved video")
+            Text(artworkSource)
                 .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.6))
                 .frame(maxWidth: .infinity)
@@ -680,6 +694,7 @@ final class PickFrameStore {
 
     private var attempted: Set<String> = []   // session-only; a failed video retries next launch
     private var attemptedImages: Set<String> = []
+    private var attemptedPhotos: Set<String> = []
     /// Bumped when new pictures land, so rows drawn from the filesystem re-read it.
     private(set) var revision = 0
 
@@ -698,6 +713,19 @@ final class PickFrameStore {
               PickFrames.storeProductImage(data, videoID: videoID, pickIndex: pickIndex) != nil
         else { return }
         revision += 1
+    }
+
+    /// Asks the box for the pick's catalog photo when the offers did not carry one — a picture
+    /// of the thing from whoever sells it, which is what the page should show even on a day the
+    /// price search is down. Once per pick per launch; a pick nobody photographs keeps its frame.
+    func ensureProductImage(for pick: BuyPick, videoID: String, pickIndex: Int) async {
+        guard StashSession.shared.isSignedIn,
+              PickFrames.cachedProductImage(videoID: videoID, pickIndex: pickIndex) == nil,
+              !attemptedPhotos.contains("\(videoID)-\(pickIndex)") else { return }
+        attemptedPhotos.insert("\(videoID)-\(pickIndex)")
+        guard let remote = try? await HaulOffersClient(config: PipelineCenter.currentConfig())
+            .photo(name: pick.name, kind: pick.kind, link: pick.link) else { return }
+        await storeProductImage(from: remote, videoID: videoID, pickIndex: pickIndex)
     }
 
     func ensureFrames(for video: Video) async {

@@ -68,4 +68,15 @@ struct HaulOffersClientTests {
             try HaulOffersClient.decodeOffers(Data("shops are closed".utf8))
         }
     }
+
+    @Test func aPhotoAnswerCarriesTheCatalogPictureOrNothing() throws {
+        let found = try HaulOffersClient.decodePhoto(
+            Data(#"{"imageURL": "https://cdn.baseus.com/s1-pro.jpg", "cached": false}"#.utf8))
+        #expect(found == URL(string: "https://cdn.baseus.com/s1-pro.jpg"))
+        // Nobody publishes a photo of this thing: the page keeps the video's frame.
+        #expect(try HaulOffersClient.decodePhoto(Data(#"{"imageURL": null, "cached": true}"#.utf8)) == nil)
+        #expect(throws: BoxError.self) {
+            try HaulOffersClient.decodePhoto(Data("not json".utf8))
+        }
+    }
 }
