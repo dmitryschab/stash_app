@@ -88,6 +88,7 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
     /// without them leaves both walls empty however many saves the category holds.
     public var recipe: RecipeData?
     public var music: [MusicPick]
+    public var films: [FilmPick]
     /// Haul is a query over these, not a category segment, so a cloud result without them
     /// leaves the shelf empty however many product videos the library holds.
     public var buys: [BuyPick]
@@ -108,6 +109,7 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         topics: [String] = [],
         recipe: RecipeData? = nil,
         music: [MusicPick] = [],
+        films: [FilmPick] = [],
         buys: [BuyPick] = [],
         unavailable: Bool = false,
         errorCode: String? = nil
@@ -125,6 +127,7 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         self.topics = topics
         self.recipe = recipe
         self.music = music
+        self.films = FilmPick.cleaned(films)
         self.buys = buys
         self.unavailable = unavailable
         self.errorCode = errorCode
@@ -132,7 +135,7 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case videoID, analysisRevision, author, caption, hashtags, thumbnailURL, duration
-        case category, title, summary, topics, recipe, music, buys, unavailable, errorCode
+        case category, title, summary, topics, recipe, music, films, buys, unavailable, errorCode
     }
 
     public init(from decoder: Decoder) throws {
@@ -153,6 +156,7 @@ public struct CloudImportResult: Codable, Equatable, Sendable {
         // rather than failing the whole result decode.
         music = Array((try values.decodeIfPresent([MusicPick].self, forKey: .music) ?? [])
             .filter { !$0.title.isEmpty }.prefix(MusicPick.maxPerVideo))
+        films = values.decodeFilmPicksIfPresent(forKey: .films)
         buys = Array((try values.decodeIfPresent([BuyPick].self, forKey: .buys) ?? [])
             .filter { !$0.name.isEmpty }.prefix(BuyPick.maxPerVideo))
         unavailable = try values.decodeIfPresent(Bool.self, forKey: .unavailable) ?? false
@@ -419,13 +423,19 @@ public enum CloudImportResultUpserter {
         for result in results {
             guard let video = byID[result.videoID], result.analysisRevision > video.cloudAnalysisRevision else { continue }
             if !result.unavailable, result.errorCode == nil {
+                let previousCategory = video.categoryRaw
                 if let author = result.author { video.author = author }
                 if let caption = result.caption { video.caption = caption }
                 video.hashtags = result.hashtags
                 if let thumbnailURL = result.thumbnailURL, let url = URL(string: thumbnailURL) {
                     video.thumbnailURL = url
                 }
-                if let category = result.category { video.categoryRaw = category }
+                if let category = result.category {
+                    video.categoryRaw = category
+                    if category != Category.film.rawValue, previousCategory == Category.film.rawValue {
+                        video.filmsJSON = nil
+                    }
+                }
                 if let title = result.title { video.title = title }
                 if let summary = result.summary { video.summary = summary }
                 video.topics = result.topics
@@ -434,6 +444,11 @@ public enum CloudImportResultUpserter {
                 // caption-only fast pass that found nothing.
                 if let recipe = result.recipe { video.recipeJSON = try? JSONEncoder().encode(recipe) }
                 if !result.music.isEmpty { video.musicJSON = try? JSONEncoder().encode(result.music) }
+                if video.categoryRaw == Category.film.rawValue, !result.films.isEmpty {
+                    video.filmsJSON = try? JSONEncoder().encode(result.films)
+                } else if video.categoryRaw != Category.film.rawValue {
+                    video.filmsJSON = nil
+                }
                 if !result.buys.isEmpty { video.buysJSON = try? JSONEncoder().encode(result.buys) }
             }
             video.unavailable = result.unavailable

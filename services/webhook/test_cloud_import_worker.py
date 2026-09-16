@@ -91,6 +91,33 @@ def test_fast_pass_maps_yt_dlp_metadata(monkeypatch):
     assert result.category == "recipe"
 
 
+def test_fast_pass_forwards_normalized_film_picks(monkeypatch):
+    """The cloud worker must carry the analyzer's explicit movie list to the saved result."""
+    metadata = {"id": "123", "description": "movie list"}
+    monkeypatch.setattr(
+        cloud_import_pipeline.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(metadata), stderr=""),
+    )
+    pipeline = cloud_import_pipeline.FastPassPipeline(
+        analyzer=lambda payload: {
+            "category": "film",
+            "films": [
+                {"title": "  Alien ", "year": 1979},
+                {"title": "alien", "year": 1979},
+                {"title": "Alien", "year": 1986},
+            ],
+        }
+    )
+
+    result = pipeline.process("https://www.tiktok.com/@x/video/123")
+
+    assert [(pick.title, pick.year) for pick in result.films] == [
+        ("Alien", 1979),
+        ("Alien", 1986),
+    ]
+
+
 def test_empty_metadata_is_unavailable(monkeypatch):
     monkeypatch.setattr(
         cloud_import_pipeline.subprocess,

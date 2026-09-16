@@ -47,6 +47,10 @@ struct HaulProductArtwork: View {
                 } else { placeholder }
             }
             .clipped()
+            // clipped() trims the drawing, not the touches: a portrait frame filled into a
+            // wide box still spills hundreds of points above it and swallows the taps meant
+            // for the page's back and options buttons.
+            .contentShape(Rectangle())
             .accessibilityHidden(true)
     }
 

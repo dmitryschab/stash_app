@@ -107,7 +107,67 @@ def test_result_revision_supersedes_broken_extractor_rows():
     client only applies a strictly greater revision — so fresh results must not be revision 1."""
     from cloud_import_models import VideoResult
 
-    assert VideoResult(videoID="1").analysis_revision > 1
+    assert VideoResult(videoID="1").analysis_revision == 8
+
+
+def test_film_picks_default_to_empty_when_analyzer_omits_them():
+    """Older analyzer payloads must still save without a new required field."""
+    from cloud_import_models import VideoResult
+
+    result = VideoResult.model_validate({"videoID": "film-default", "category": "film"})
+
+    assert result.films == []
+
+
+def test_film_picks_trim_dedupe_and_keep_distinct_remakes_in_source_order():
+    """A repeated card must not create a duplicate, while same-titled remakes need their year."""
+    from cloud_import_models import VideoResult
+
+    result = VideoResult.model_validate({
+        "videoID": "film-normalized",
+        "category": "film",
+        "films": [
+            {"title": "  The Thing  ", "year": "1982"},
+            {"title": "the thing", "year": 1982},
+            {"title": "The Thing", "year": 2011},
+            {"title": "Am\u00e9lie", "year": "not stated"},
+            {"title": "   ", "year": 2020},
+        ],
+    })
+
+    assert [(pick.title, pick.year) for pick in result.films] == [
+        ("The Thing", 1982),
+        ("The Thing", 2011),
+        ("Am\u00e9lie", None),
+    ]
+
+
+def test_film_picks_are_capped_at_twenty():
+    """A model response cannot turn one film save into an unbounded poster shelf."""
+    from cloud_import_models import MAX_FILM_PICKS, VideoResult
+
+    result = VideoResult.model_validate({
+        "videoID": "film-cap",
+        "category": "film",
+        "films": [{"title": f"Film {index}"} for index in range(25)],
+    })
+
+    assert [(pick.title, pick.year) for pick in result.films] == [
+        (f"Film {index}", None) for index in range(MAX_FILM_PICKS)
+    ]
+
+
+def test_non_film_results_drop_film_picks():
+    """Film objects only drive the movie UI; a stray list on another category must not leak in."""
+    from cloud_import_models import VideoResult
+
+    result = VideoResult.model_validate({
+        "videoID": "not-film",
+        "category": "music",
+        "films": [{"title": "Paris, Texas", "year": 1984}],
+    })
+
+    assert result.films == []
 
 
 def test_result_carries_recipe_and_music():

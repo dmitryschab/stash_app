@@ -3,14 +3,16 @@
 Three endpoints, each behind a per-user Stash JWT (spec:
 docs/superpowers/specs/2026-07-11-tester-ready-cloud-pipeline-design.md):
 
-  POST /v1/videos/transcript   {url} -> yt-dlp audio -> Groq whisper -> filtered text
+  POST /v1/videos/transcript   {url} -> yt-dlp audio -> OpenRouter whisper -> filtered text
   POST /v1/chat/completions    OpenAI-shape proxy to Bedrock Gemma (model and output cap
                                pinned here; the client body is not forwarded as-is)
   GET  /v1/tiktok/download/{id} -> mp4 bytes, transient only (visual-text OCR backfill)
 
 TikTok blocks all in-app media downloads (blank playAddr / CDN 403 / CORS), so the
-box owns every media fetch. Groq free tier: 7200 audio-sec per rolling hour — 429s
-are passed through with Retry-After so the app can park the stage and retry.
+box owns every media fetch. Transcription runs through OpenRouter, which spreads the same
+Whisper weights over Groq, DeepInfra and Together instead of queueing behind one provider's
+hourly audio budget; 429s are still passed through with Retry-After so the app can park the
+stage and retry.
 
 The analyzer proxy costs one quota unit, charged only when the work actually produced
 something: a throttled provider or a Bedrock error must not eat the caller's budget. The
@@ -42,9 +44,15 @@ from stash_auth import entitled_store, peek_quota
 
 router = APIRouter(prefix="/v1")
 
-GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-GROQ_MODEL = "whisper-large-v3-turbo"
-GROQ_MAX_BYTES = 24_000_000  # free-tier file cap is 25 MB; re-encode above this
+# Transcription goes through OpenRouter, which fans the same Whisper weights out across
+# Groq, DeepInfra and Together. Groq direct was a single point of throttling: its free tier
+# caps at 7200 audio-sec/rolling-hour and developer-tier upgrades are shut for demand, so a
+# library re-run stalled on 429s for hours. OpenRouter routes around a busy provider and
+# bills the provider's catalog rate with no markup. Both are overridable from the unit's
+# EnvironmentFile, so falling back to Groq direct is a two-line edit and a restart.
+STT_URL = os.environ.get("STT_URL") or "https://openrouter.ai/api/v1/audio/transcriptions"
+STT_MODEL = os.environ.get("STT_MODEL") or "openai/whisper-large-v3-turbo"
+STT_MAX_BYTES = 24_000_000  # multipart cap is 25 MB either side; re-encode above this
 
 BEDROCK_URL = "https://bedrock-mantle.eu-central-1.api.aws/openai/v1/chat/completions"
 BEDROCK_MODEL = "google.gemma-4-26b-a4b"
@@ -64,10 +72,10 @@ CHAT_MAX_BYTES = 32_000
 CHAT_MAX_OUTPUT_TOKENS = 1280  # a full recipe measures ~600; eight "buys" entries add ~250
 
 
-def _groq_key() -> str:
+def _stt_key() -> str:
     """Read lazily: a module-level read would make pytest and `python api_v1.py` reach
     for instance metadata off-box."""
-    return stash_secrets.secret("GROQ_API_KEY")
+    return stash_secrets.secret("STT_API_KEY") or stash_secrets.secret("OPENROUTER_API_KEY")
 
 
 def _has_no_video_track(directory: str) -> bool:
@@ -107,11 +115,14 @@ def _openrouter_key() -> str:
 
 # ---------------------------------------------------------------- deep-pass cap
 
-# How many transcript + download calls one account may make in a UTC day. Sized for the
-# honest ceiling of a library (~600 videos, two calls each): a whole library deepens over
-# a few nights of charging rather than in one, which is exactly the pace the client's
-# charging + Wi-Fi gate already implies.
-DEEP_PASS_DAILY_CAP = 300
+# How many transcript + download calls one account may make in a UTC day. Sized so the
+# honest ceiling of a library (~600 videos, two calls each) finishes in one run instead of
+# being spread over four nights. 300 was chosen when the client drained this queue one video
+# at a time against a provider that metered audio by the hour, so a slow pace cost nothing;
+# now that both backfills run 8-wide through OpenRouter, the cap was the only thing left
+# making a library re-run take days. The bill is still bounded: the analyzer measured
+# ~$0.0005 per video, so a user who spends this to the last unit costs well under a dollar.
+DEEP_PASS_DAILY_CAP = 1500
 
 
 def _daily_cap() -> int:
@@ -223,18 +234,18 @@ def filter_transcript(lines: list[str]) -> str:
 
 @router.post("/videos/transcript")
 def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends(entitled_store)):
-    groq_key = _groq_key()
-    if not groq_key:
+    stt_key = _stt_key()
+    if not stt_key:
         raise HTTPException(status_code=503, detail="transcription not configured")
     if not re.match(r"^https://(www\.)?tiktok(v)?\.com/", body.url):
         raise HTTPException(status_code=400, detail="not a tiktok url")
-    charge_deep_pass(store)  # 429 before spending yt-dlp and Groq time
+    charge_deep_pass(store)  # 429 before spending yt-dlp and transcription time
     # Echoed unchanged: the app keeps its counter fresh from whatever route answered last,
     # and this one no longer moves it.
     quota = store.get_quota()
 
     with tempfile.TemporaryDirectory() as td:
-        # Keep yt-dlp's native container — Groq accepts m4a/mp4/webm alike.
+        # Keep yt-dlp's native container — Whisper accepts m4a/mp4/webm alike.
         dl = subprocess.run(
             [YTDLP, "-q", "--no-warnings", "-f", "bestaudio/best", "--write-info-json",
              "-o", os.path.join(td, "audio.%(ext)s"), body.url],
@@ -257,7 +268,7 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
                     "quota": quota.model_dump(by_alias=True)}
         audio = produced[0]
 
-        if os.path.getsize(audio) > GROQ_MAX_BYTES:
+        if os.path.getsize(audio) > STT_MAX_BYTES:
             small = os.path.join(td, "small.ogg")
             subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", audio,
                             "-ar", "16000", "-ac", "1", "-b:a", "24k", small],
@@ -266,12 +277,12 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
 
         with open(audio, "rb") as f:
             resp = requests.post(
-                GROQ_URL,
-                headers={"Authorization": f"Bearer {groq_key}"},
+                STT_URL,
+                headers={"Authorization": f"Bearer {stt_key}"},
                 files={"file": (os.path.basename(audio), f)},
                 # temperature=0 disables Whisper's sampling fallback, which is a
                 # major source of hallucinated text on noisy/musical clips.
-                data={"model": GROQ_MODEL, "response_format": "verbose_json", "temperature": 0},
+                data={"model": STT_MODEL, "response_format": "verbose_json", "temperature": 0},
                 timeout=120)
 
     if resp.status_code == 429:
@@ -281,8 +292,8 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
     if resp.status_code != 200:
         # Log the upstream body so the cause of these 502s is diagnosable — the
         # bare status alone told us nothing about the ~60% historical failure rate.
-        print(f"groq transcription {resp.status_code}: {resp.text[:300]}", file=sys.stderr)
-        raise HTTPException(status_code=502, detail=f"groq {resp.status_code}")
+        print(f"stt {STT_MODEL} {resp.status_code}: {resp.text[:300]}", file=sys.stderr)
+        raise HTTPException(status_code=502, detail=f"stt {resp.status_code}")
 
     data = resp.json()
     # Gate each segment on Whisper's own confidence signals before joining, so a
@@ -321,12 +332,14 @@ object, no prose and no Markdown code fences. Use this exact shape:
   "topics": [string],            // short lowercase topic keywords
   "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
   "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
+  "films": [ { "title": string, "year": integer | null } ],
   "code": { "summary": string, "links": [string], "techTags": [string] } | null,
   "buys": [ { "name": string, "kind": string, "price": string } ]
 }
-recipe, music and code belong to a category: fill the one matching the category you chose and
-leave the others empty — for every other category set "recipe" and "code" to null and "music"
-to []. Never include a "link" field; the app resolves streaming links separately.
+recipe, music, films and code belong to a category: fill the one matching the category you chose
+and leave the others empty — for every other category set "recipe" and "code" to null and
+"music" and "films" to []. Never include a "link" field; the app resolves streaming links
+separately.
 
 "buys" is different, and it is the one field that does NOT follow the category. Judge it
 separately, on every video, whatever you filed it under.
@@ -344,7 +357,7 @@ characters. Use empty strings or arrays when information is missing. NEVER outpu
 prose such as "No Content Provided" or "Untitled Video". If caption and transcript are both
 empty, use title "Saved video" and summary "No caption or audio was available for this save."
 
-Two categories carry extra structure, and the Cook and Music screens are empty without it:
+Three categories carry extra structure, and the Cook, Music and film screens are empty without it:
 - category recipe: fill the "recipe" object only when the source actually lists a name,
   ingredients or steps; leave it null rather than inventing a recipe. Write every quantity in
   metric — grams, millilitres, °C, centimetres. Convert cups, ounces, pounds and °F rather
@@ -359,6 +372,13 @@ Two categories carry extra structure, and the Cook and Music screens are empty w
   next to that title, or leave it an empty string — NEVER invent an artist you are not
   confident about, and never reuse one entry's artist for another, because a guessed artist
   links the wrong release.
+
+- category film: list each distinct feature film explicitly named or shown by the source, in source
+  order, at most 20. Read titles from the caption, transcript, on-screen text or attached images;
+  never infer a title from an advertised count, genre, plot description or incidental mention,
+  and never pad a list with guesses. A TV series is not a film: exclude series, episodes and
+  seasons. Set "year" only when the source states that movie's release year; otherwise use null.
+  Never add poster URLs, artwork, links or any field besides title and year.
 
 "buys" — things the user might want to own, collected from every category into one shelf.
 Ask one question: is a specific, purchasable product a FOCAL POINT of this post? If the video

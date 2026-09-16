@@ -165,6 +165,14 @@ final class PipelineCenter {
         }
     }
 
+    /// Shop answers for picks that have none, so a pick page opens with its links already
+    /// there. Fire and forget from the same places as `backfillEmbeddings`; `OfferStore`
+    /// owns the order, the width and the stop rules.
+    func backfillOffers() {
+        guard StashSession.shared.isSignedIn, let container else { return }
+        OfferStore.shared.prefetchLibrary(container: container)
+    }
+
     /// Housekeeping for installs upgrading from build ≤13, which shipped a shared bearer in
     /// UserDefaults and could keep video files on the device. Both are gone by design now
     /// (per-user JWT in the Keychain; no persistent copies), so leaving the old ones lying
@@ -777,6 +785,7 @@ final class PipelineCenter {
         Task { await StashSession.shared.refreshQuota() }
         deepPassBlocked = false   // a new foreground is exactly when retrying is worth it
         backfillEmbeddings()
+        backfillOffers()
         if Self.cloudImportEnabled {
             drainSharedInbox()
             syncCloudImportIfNeeded()
@@ -954,6 +963,7 @@ final class PipelineCenter {
                         if applied > 0 {
                             refreshThumbnails()
                             backfillEmbeddings()   // a classified save is one there is text to embed
+                            backfillOffers()
                         }
                     }
                     guard status.state == .completed || status.state == .cancelled else { continue }
@@ -999,6 +1009,7 @@ final class PipelineCenter {
                         lastSummary = "Synced \(applied) cloud results"
                         refreshThumbnails()
                         backfillEmbeddings()
+                        backfillOffers()
                     }
                 }
                 guard let nextCursor = page.nextCursor else {

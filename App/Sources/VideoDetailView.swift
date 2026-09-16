@@ -1,10 +1,14 @@
 // VideoDetailView.swift
 //
 // A pushed detail screen, Set List style: circular back button + category pill, big Archivo
-// title, the category payload (recipe / track / code) under micro headers in the category
-// color, and the ink pill TikTok action with a per-video "re-run pipeline" underneath. The
-// pipeline stage list that used to sit above the actions is gone — it was a troubleshooting
+// title, the category payload (recipe / track / code / film) under micro headers in the
+// category color, and the ink pill TikTok action with a per-video "re-run pipeline" underneath.
+// The pipeline stage list that used to sit above the actions is gone — it was a troubleshooting
 // aid, and the Import screen still shows the run as a whole.
+//
+// Film is the one category that skips the embedded player: `FilmSection`'s poster strip stands
+// in for `WatchSection`, and the action pill below reads "WATCH ON TIKTOK" instead of "OPEN IN
+// TIKTOK" — nothing on this screen plays the clip itself, so "open" undersold what the button does.
 
 import SwiftUI
 import SwiftData
@@ -27,7 +31,11 @@ struct VideoDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
                 header
-                WatchSection(video: video, tint: tint)
+                if video.category == .film {
+                    FilmSection(video: video, tint: tint)
+                } else {
+                    WatchSection(video: video, tint: tint)
+                }
                 if let recipe = video.recipe { recipeSection(recipe) }
                 if !video.music.isEmpty { musicSection(video.music) }
                 if let code = video.codeNote { codeSection(code) }
@@ -280,8 +288,9 @@ struct VideoDetailView: View {
         VStack(spacing: 0) {
             Link(destination: video.url) {
                 HStack(spacing: 9) {
-                    Image(systemName: "play.rectangle").font(.system(size: 15, weight: .semibold))
-                    Text("OPEN IN TIKTOK")
+                    Image(systemName: video.category == .film ? "arrow.up.right.square" : "play.rectangle")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(video.category == .film ? "WATCH ON TIKTOK" : "OPEN IN TIKTOK")
                         .font(.archivo(13, .heavy))
                         .tracking(0.8)
                 }

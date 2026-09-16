@@ -15,9 +15,19 @@ variable "region" {
 }
 
 variable "instance_type" {
-  description = "t3.micro is free-tier eligible in eu-north-1 (no t2.micro there)."
+  description = <<-DESC
+    t3.medium. The binding resource is memory, not CPU: each video in flight holds one
+    yt-dlp process (~100 MB), and the ffmpeg re-encode almost never fires because a
+    minute of TikTok audio sits far under the 24 MB threshold that triggers it. At 4 GiB
+    this carries the client's 8-wide backfill; the 1 GiB t3.micro it replaces could not,
+    which is what held a library re-run to one video at a time.
+
+    t3.micro was the free-tier-eligible size in eu-north-1 (no t2.micro there), so if that
+    12-month window is still open this costs roughly $30/month where the old size cost
+    nothing. Resize back down after a bulk run if the box is otherwise idle.
+  DESC
   type        = string
-  default     = "t3.micro"
+  default     = "t3.medium"
 }
 
 variable "name" {

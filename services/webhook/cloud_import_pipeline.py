@@ -209,6 +209,7 @@ class FastPassPipeline:
                 topics=analysis.get("topics") or [],
                 recipe=analysis.get("recipe") or None,
                 music=analysis.get("music") or [],
+                films=analysis.get("films") or [],
                 buys=analysis.get("buys") or [],
             )
         except (ValidationError, TypeError, ValueError) as error:

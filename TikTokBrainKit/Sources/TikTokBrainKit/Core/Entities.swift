@@ -21,6 +21,9 @@ import SwiftData
     /// nil so a library saved before multi-pick extraction is not blank until re-analysis runs.
     public var trackJSON: Data?
     public var musicJSON: Data?           // JSONEncoder-encoded [MusicPick]
+    /// JSONEncoder-encoded [FilmPick]. Nil means this record predates film extraction and may
+    /// need an on-open backfill; encoded `[]` means analysis ran and found no explicit movies.
+    public var filmsJSON: Data? = nil
     public var codeJSON: Data?
     /// JSONEncoder-encoded [BuyPick]. Optional with a default, so adding it is a SwiftData
     /// lightweight migration and an existing library opens unchanged — it simply has no picks
@@ -56,6 +59,7 @@ import SwiftData
         self.recipeJSON = nil
         self.trackJSON = nil
         self.musicJSON = nil
+        self.filmsJSON = nil
         self.codeJSON = nil
         self.buysJSON = nil
         let initialStages: [String: StageState] = [
@@ -70,6 +74,13 @@ import SwiftData
 }
 
 public extension Video {
+    /// Film picks decoded from storage. `filmsJSON` itself remains available so callers can
+    /// distinguish a legacy nil migration marker from an analyzed empty list.
+    var films: [FilmPick] {
+        guard let filmsJSON else { return [] }
+        return (try? JSONDecoder().decode([FilmPick].self, from: filmsJSON)) ?? []
+    }
+
     /// What gets embedded: everything the analysis produced, then as much of the raw text as is
     /// worth paying for.
     ///

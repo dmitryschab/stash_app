@@ -29,7 +29,7 @@ VIDEO_ID = "1234567890"
 
 @pytest.fixture
 def store(monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     subject = DynamoImportStore(table=ConditionalTable(), user_id="user-a")
     app.dependency_overrides[stash_auth.current_user] = lambda: "user-a"
     app.dependency_overrides[stash_auth.user_store] = lambda: subject
@@ -56,7 +56,7 @@ def fake_download(monkeypatch, *, succeeds=True):
     monkeypatch.setattr(api_v1.subprocess, "run", run)
 
 
-def groq_reply(monkeypatch, status=200, payload=None):
+def stt_reply(monkeypatch, status=200, payload=None):
     monkeypatch.setattr(api_v1.requests, "post", lambda *a, **k: SimpleNamespace(
         status_code=status, headers={},
         json=lambda: payload or {"segments": [], "duration": 3.0}, text=""))
@@ -68,7 +68,7 @@ def groq_reply(monkeypatch, status=200, payload=None):
 def test_transcript_costs_no_quota_and_echoes_the_balance(store, monkeypatch):
     """The video was paid for at import; reading it deeply must not cost as much again."""
     fake_download(monkeypatch)
-    groq_reply(monkeypatch)
+    stt_reply(monkeypatch)
     with TestClient(app) as client:
         response = client.post("/v1/videos/transcript", json={"url": URL})
 
@@ -89,7 +89,7 @@ def test_an_unavailable_video_is_not_billable(store, monkeypatch):
 @pytest.mark.parametrize("status", [429, 502])
 def test_a_provider_failure_is_not_billable(store, monkeypatch, status):
     fake_download(monkeypatch)
-    groq_reply(monkeypatch, status=status)
+    stt_reply(monkeypatch, status=status)
     with TestClient(app) as client:
         response = client.post("/v1/videos/transcript", json={"url": URL})
 
@@ -102,7 +102,7 @@ def test_a_spent_budget_no_longer_blocks_the_deep_pass(store, monkeypatch):
     and nothing about deepening it spends the counter that ran out."""
     drain(store)
     fake_download(monkeypatch)
-    groq_reply(monkeypatch)
+    stt_reply(monkeypatch)
     with TestClient(app) as client:
         assert client.post("/v1/videos/transcript", json={"url": URL}).status_code == 200
         assert client.get(f"/v1/tiktok/download/{VIDEO_ID}").status_code == 200
@@ -214,7 +214,7 @@ def test_the_daily_cap_429s_at_the_limit(store, monkeypatch, route):
     """Quota no longer bounds these two, so this is the only thing that does."""
     monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "2")
     fake_download(monkeypatch)
-    groq_reply(monkeypatch)
+    stt_reply(monkeypatch)
     with TestClient(app) as client:
         call = deep_pass_calls(client)[route]
         assert call().status_code == 200
@@ -232,7 +232,7 @@ def test_both_routes_draw_on_the_same_daily_counter(store, monkeypatch):
     a cap each would be twice the cap it says it is."""
     monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "1")
     fake_download(monkeypatch)
-    groq_reply(monkeypatch)
+    stt_reply(monkeypatch)
     with TestClient(app) as client:
         assert client.post("/v1/videos/transcript", json={"url": URL}).status_code == 200
         assert client.get(f"/v1/tiktok/download/{VIDEO_ID}").status_code == 429
@@ -346,6 +346,16 @@ def test_a_photo_post_goes_to_the_vision_model_with_its_picture(monkeypatch, ana
     system = call["body"]["messages"][0]["content"]
     assert system.startswith(api_v1.ANALYSIS_SYSTEM_PROMPT)
     assert system.endswith(api_v1.PHOTO_SYSTEM_PROMPT_ADDENDUM)
+
+
+def test_film_extraction_rules_reach_the_analyzer(analyzer_calls):
+    """The shared analyzer contract must request only explicit movie titles, never TV padding."""
+    api_v1.analyze_metadata({"caption": "five films to watch"})
+
+    system = analyzer_calls[-1]["body"]["messages"][0]["content"]
+    assert '"films"' in system
+    assert "explicitly named" in system
+    assert "TV series" in system
 
 
 def test_every_slide_reaches_the_vision_model_in_order(monkeypatch, analyzer_calls):
