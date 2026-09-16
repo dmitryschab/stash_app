@@ -89,8 +89,10 @@ CACHE_HOURS = 24
 # A catalog photo outlives a price: shops reshoot a product about never. A month also keeps the
 # photo route free even while an answer sits behind a shop that has started refusing bots.
 PHOTO_CACHE_HOURS = 24 * 30
-# A shopping session opens a couple dozen picks; a hundred uncached lookups is ~a dollar.
-OFFER_DAILY_CAP = 100
+# Sized for the app's library sweep, not a shopping session: at ~5 s a lookup and eight abreast
+# a hundred ran out in a minute and left the rest of a library linkless until midnight. At
+# ~$0.007 a lookup, a user who spends this to the last unit costs about $3.50.
+OFFER_DAILY_CAP = 500
 
 # Mirror of Shop.amazonHost in TikTokBrainKit/Core/Types.swift, fallback included: there is no
 # worldwide Amazon, and a European buyer's nearest storefront that ships across the EU is .de.
