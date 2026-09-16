@@ -26,7 +26,7 @@ Money: no quota moves — the save was already paid for at import, and asking "h
 thing" must not cost like saving it. What bounds the route instead is a per-user per-UTC-day
 cap (the deep-pass pattern) and a day-long answer cache shared across users, keyed on the
 product + country, so one lookup serves everyone who saved the same viral thing. Roughly $0.01
-per uncached lookup (Gemini Flash + the web plugin's per-request fee).
+per uncached lookup, nearly all of it the web plugin's per-request fee.
 
 ponytail: prices are whatever the search snippets said, not a live scrape — each offer links to
 the shop page as the source of truth. A structured product API (with an Amazon Associates
@@ -62,15 +62,20 @@ log = logging.getLogger("stash-webhook")
 router = APIRouter(prefix="/v1")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-# The vision model already trusted with photo posts; here it reads search results instead.
-OFFERS_MODEL = "google/gemini-3.7-flash"
-# Six offers of one JSON line each; generous, because a truncated body loses the whole answer.
-OFFERS_MAX_OUTPUT_TOKENS = 1200
+# Measured 2026-09-16 on ten real picks, same prompt and search: gemini-3.7-flash took 53s
+# (31s median in production, over half its calls upstream-throttled) with 26% of its links
+# dead; mercury-2.5 took 4.6s with 7% dead and a right link for every pick, at the same
+# ~$0.007 a lookup. Low reasoning: default reasoning was slower and found fewer Amazon listings.
+OFFERS_MODEL = "inception/mercury-2.5"
+OFFERS_REASONING = {"effort": "low"}
+# Reasoning tokens count against this cap. At 1200 a thinking model spent all of it thinking
+# and returned an empty answer; six offers of one JSON line each need ~300 more.
+OFFERS_MAX_OUTPUT_TOKENS = 4000
 SEARCH_MAX_RESULTS = 8
 SEARCH_TIMEOUT = 90
 
 # Measured against the live box: a 504 here is almost always an upstream provider 429 that
-# clears immediately, and it comes back fast (~11s) while a real answer takes 33-69s. So one
+# clears immediately, and it comes back fast (~11s) while a real answer took 33-69s on Gemini. So one
 # retry is worth taking, but only when the first failure was quick enough to leave room for it
 # — a slow failure means the app is already near its own 100s timeout, and a second attempt
 # would only make it wait longer for the same 502. When the app does give up, this request
@@ -142,6 +147,7 @@ def _search(name: str, kind: str, country: str, storefront: str) -> str:
         "model": OFFERS_MODEL,
         "temperature": 0.1,
         "max_tokens": OFFERS_MAX_OUTPUT_TOKENS,
+        "reasoning": OFFERS_REASONING,
         # The web plugin, engine left on auto. OpenRouter is steering new work toward its
         # server tool, but the plugin is the shape its docs still fully specify — swap when
         # the tool's contract is documented.
@@ -426,14 +432,14 @@ def verify_offers(offers: list[dict]) -> list[dict]:
     survivor whose page shows a product photo.
 
     The model invents plausible product URLs: measured against the live box, most non-Amazon
-    links answered 404. A dead link is worse than no link on a card whose whole job is telling
+    links answered 404, and small models make up Amazon ASINs, which amazon.de answers with a
+    404 too (a bot check is a 503, so a real listing still survives). A dead link is worse than no link on a card whose whole job is telling
     someone where to buy. Every shop is checked at once rather than in turn, because the search
     ahead of this already spends most of the app's timeout budget.
     """
-    targets = [entry for entry in offers if entry["kind"] != "amazon"]
-    if not targets:
+    if not offers:
         return offers
-    urls = [entry["url"] for entry in targets]
+    urls = [entry["url"] for entry in offers]
     with ThreadPoolExecutor(max_workers=len(urls)) as pool:
         pages = dict(zip(urls, pool.map(_page, urls)))
 
@@ -447,7 +453,8 @@ def verify_offers(offers: list[dict]) -> list[dict]:
 
     # Brand site first for the photo, but a dead or pictureless one must not stop a live shop
     # further down the list from supplying it.
-    for entry in sorted(kept, key=lambda entry: entry["kind"] != "brand"):
+    # Amazon's page is checked for existence only; its photo was never the one this card used.
+    for entry in sorted((e for e in kept if e["kind"] != "amazon"), key=lambda e: e["kind"] != "brand"):
         status, html = pages.get(entry["url"], (None, ""))
         if status == 200 and (image := og_image(html)):
             entry["imageURL"] = image

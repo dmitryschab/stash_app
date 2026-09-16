@@ -331,8 +331,8 @@ def test_the_brand_pages_og_image_rides_on_its_offer(store, provider, pages):
     by_merchant = {entry["merchant"]: entry for entry in body["offers"]}
     assert by_merchant["Logitech"]["imageURL"] == "https://cdn.logitech.com/mx-master-4.png"
     assert "imageURL" not in by_merchant["Amazon.de"]
-    # Amazon answers bots with a captcha page, so it is never asked.
-    assert pages["fetched"] == [BRAND]
+    # Amazon's page is fetched to catch an invented ASIN, but its photo is never taken.
+    assert sorted(pages["fetched"]) == sorted([AMAZON, BRAND])
 
 
 def test_a_brand_page_without_a_picture_falls_through_to_the_next_shop(store, provider, pages):
@@ -450,16 +450,28 @@ def test_a_server_error_at_the_shop_keeps_its_offer(store, provider, pages):
     assert [entry["merchant"] for entry in body["offers"]] == ["Logitech"]
 
 
-def test_amazon_is_never_fetched_and_always_survives(store, provider, pages):
+def test_a_made_up_amazon_listing_is_dropped(store, provider, pages):
+    # Measured 2026-09-16: small models invent plausible ASINs, and amazon.de answers them with
+    # a clean 404 rather than a bot check.
     provider["content"] = json.dumps({"offers": [
         offer("Amazon.de", AMAZON, 94.99), offer("1a.lv", OTHER, 96.9)]})
-    pages["pages"][OTHER] = (404, "")
+    pages["pages"][AMAZON] = (404, "")
+    pages["pages"][OTHER] = (200, "")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert [entry["merchant"] for entry in body["offers"]] == ["1a.lv"]
+
+
+def test_a_bot_checked_amazon_listing_survives(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [offer("Amazon.de", AMAZON, 94.99)]})
+    pages["pages"][AMAZON] = (503, "")
 
     with TestClient(app) as client:
         body = lookup(client).json()
 
     assert [entry["merchant"] for entry in body["offers"]] == ["Amazon.de"]
-    assert pages["fetched"] == [OTHER]
 
 
 def test_every_shop_dead_is_an_empty_answer(store, provider, pages):
@@ -484,7 +496,7 @@ def test_each_shop_is_checked_exactly_once(store, provider, pages):
     with TestClient(app) as client:
         lookup(client)
 
-    assert sorted(pages["fetched"]) == sorted([BRAND, OTHER])
+    assert sorted(pages["fetched"]) == sorted([BRAND, OTHER, AMAZON])
 
 
 def test_a_dead_brand_page_does_not_steal_the_picture(store, provider, pages):
