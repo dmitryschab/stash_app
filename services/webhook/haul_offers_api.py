@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from urllib.parse import urlparse
@@ -61,6 +62,17 @@ OFFERS_MODEL = "google/gemini-3.7-flash"
 # Six offers of one JSON line each; generous, because a truncated body loses the whole answer.
 OFFERS_MAX_OUTPUT_TOKENS = 1200
 SEARCH_MAX_RESULTS = 8
+SEARCH_TIMEOUT = 90
+
+# Measured against the live box: a 504 here is almost always an upstream provider 429 that
+# clears immediately, and it comes back fast (~11s) while a real answer takes 33-69s. So one
+# retry is worth taking, but only when the first failure was quick enough to leave room for it
+# — a slow failure means the app is already near its own 100s timeout, and a second attempt
+# would only make it wait longer for the same 502. When the app does give up, this request
+# still finishes and caches, so the user's next open is an instant hit.
+SEARCH_ATTEMPTS = 2
+RETRY_WHILE_FASTER_THAN = 25.0
+_TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 
 MAX_OFFERS = 3
 CACHE_HOURS = 24
@@ -117,27 +129,34 @@ def _search(name: str, kind: str, country: str, storefront: str) -> str:
     if kind:
         lines.append(f"Kind: {kind}")
     lines += [f"Buyer country: {country}", f"Preferred Amazon storefront: {storefront}"]
-    response = requests.post(
-        OPENROUTER_URL,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={
-            "model": OFFERS_MODEL,
-            "temperature": 0.1,
-            "max_tokens": OFFERS_MAX_OUTPUT_TOKENS,
-            # The web plugin, engine left on auto. OpenRouter is steering new work toward its
-            # server tool, but the plugin is the shape its docs still fully specify — swap when
-            # the tool's contract is documented.
-            "plugins": [{"id": "web", "max_results": SEARCH_MAX_RESULTS}],
-            "messages": [
-                {"role": "system", "content": OFFERS_SYSTEM_PROMPT},
-                {"role": "user", "content": "\n".join(lines)},
-            ],
-        },
-        timeout=90,
-    )
-    if response.status_code != 200:
-        raise RuntimeError(f"openrouter {response.status_code}")
-    return response.json()["choices"][0]["message"]["content"]
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    body = {
+        "model": OFFERS_MODEL,
+        "temperature": 0.1,
+        "max_tokens": OFFERS_MAX_OUTPUT_TOKENS,
+        # The web plugin, engine left on auto. OpenRouter is steering new work toward its
+        # server tool, but the plugin is the shape its docs still fully specify — swap when
+        # the tool's contract is documented.
+        "plugins": [{"id": "web", "max_results": SEARCH_MAX_RESULTS}],
+        "messages": [
+            {"role": "system", "content": OFFERS_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+    }
+    started = time.monotonic()
+    status = 0
+    for attempt in range(1, SEARCH_ATTEMPTS + 1):
+        response = requests.post(OPENROUTER_URL, headers=headers, json=body,
+                                 timeout=SEARCH_TIMEOUT)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        status = response.status_code
+        if attempt == SEARCH_ATTEMPTS or status not in _TRANSIENT_STATUS:
+            break
+        if time.monotonic() - started >= RETRY_WHILE_FASTER_THAN:
+            break
+        log.info("openrouter %s on attempt %s, retrying", status, attempt)
+    raise RuntimeError(f"openrouter {status}")
 
 
 def _parse(content: str) -> list[dict]:

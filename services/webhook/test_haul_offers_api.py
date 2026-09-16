@@ -384,6 +384,102 @@ def test_og_image_reads_either_attribute_order_and_unescapes():
     assert haul_offers_api.og_image("<head></head>") is None
 
 
+
+# ------------------------------------------------------------------ search retry
+
+
+class FakePost:
+    """Stands in for requests.post, answering a scripted sequence of statuses."""
+
+    def __init__(self, *statuses, elapsed=0.0):
+        self.statuses = list(statuses)
+        self.calls = 0
+        self.elapsed = elapsed   # seconds each attempt appears to take
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        status = self.statuses[min(self.calls - 1, len(self.statuses) - 1)]
+        return FakeResponse(status)
+
+
+class FakeResponse:
+    def __init__(self, status):
+        self.status_code = status
+
+    def json(self):
+        payload = json.dumps({"offers": [
+            {"merchant": "Logitech", "url": "https://logi.example/p/mx", "price": "€99",
+             "amount": 99.0, "currency": "EUR", "isBrandSite": True}]})
+        return {"choices": [{"message": {"content": payload}}]}
+
+
+def with_key(monkeypatch):
+    """The real _search runs in these tests, and it refuses without a configured key."""
+    monkeypatch.setattr(haul_offers_api.stash_secrets, "secret",
+                        lambda name: "sk-test" if name == "OPENROUTER_API_KEY" else "")
+
+
+def fake_clock(monkeypatch, per_attempt):
+    """Make each attempt appear to take `per_attempt` seconds."""
+    ticks = {"now": 0.0}
+
+    def monotonic():
+        value = ticks["now"]
+        ticks["now"] += per_attempt
+        return value
+
+    monkeypatch.setattr(haul_offers_api.time, "monotonic", monotonic)
+
+
+def test_a_fast_504_is_retried_and_the_second_answer_is_used(store, monkeypatch):
+    with_key(monkeypatch)
+    post = FakePost(504, 200)
+    monkeypatch.setattr(haul_offers_api.requests, "post", post)
+    fake_clock(monkeypatch, 11.0)   # a 504 comes back fast, as measured against the live box
+
+    with TestClient(app) as client:
+        response = lookup(client)
+
+    assert response.status_code == 200
+    assert post.calls == 2
+    assert [entry["merchant"] for entry in response.json()["offers"]] == ["Logitech"]
+
+
+def test_a_permanent_400_is_not_retried(store, monkeypatch):
+    with_key(monkeypatch)
+    post = FakePost(400)
+    monkeypatch.setattr(haul_offers_api.requests, "post", post)
+    fake_clock(monkeypatch, 1.0)
+
+    with TestClient(app) as client:
+        assert lookup(client).status_code == 502
+    assert post.calls == 1
+
+
+def test_a_slow_failure_is_not_retried(store, monkeypatch):
+    # A 504 that took most of the caller's budget leaves no room for a second attempt, which
+    # would only make the app wait longer for the same 502.
+    with_key(monkeypatch)
+    post = FakePost(504, 200)
+    monkeypatch.setattr(haul_offers_api.requests, "post", post)
+    fake_clock(monkeypatch, 60.0)
+
+    with TestClient(app) as client:
+        assert lookup(client).status_code == 502
+    assert post.calls == 1
+
+
+def test_retrying_stops_after_the_attempt_limit(store, monkeypatch):
+    with_key(monkeypatch)
+    post = FakePost(504)
+    monkeypatch.setattr(haul_offers_api.requests, "post", post)
+    fake_clock(monkeypatch, 1.0)
+
+    with TestClient(app) as client:
+        assert lookup(client).status_code == 502
+    assert post.calls == haul_offers_api.SEARCH_ATTEMPTS
+
+
 # ------------------------------------------------------------------ input
 
 
