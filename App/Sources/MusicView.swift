@@ -604,8 +604,11 @@ private func scatter(_ id: String) -> (angle: Double, dy: CGFloat) {
 
 struct AlbumDetailView: View {
     @Environment(\.openURL) private var openURL
+    @AppStorage(MusicService.key) private var serviceRaw = ""
+    @State private var pending: MusicTarget?
     let album: MusicAlbum
     let store: AlbumStore
+    private var service: MusicService? { MusicService(rawValue: serviceRaw) }
 
     private var tracklist: [String]? {
         album.collectionID.flatMap { store.tracklists[$0] }
@@ -801,7 +804,15 @@ struct AlbumDetailView: View {
 
     private var actionBar: some View {
         HStack(spacing: 10) {
-            StashPrimaryButton(title: "Play on Spotify") { openURL(spotifySearchURL) }
+            StashPrimaryButton(title: service.map { "Play on \($0.label)" } ?? "Play") {
+                let target = MusicTarget(title: album.title, artist: album.artist,
+                                         link: album.albumURL.map(universalLink))
+                if let service {
+                    openURL(service.url(title: target.title, artist: target.artist, link: target.link))
+                } else {
+                    pending = target
+                }
+            }
             if let albumURL = album.albumURL {
                 Link(destination: universalLink(for: albumURL)) {
                     Image(systemName: "arrow.up.right")
@@ -810,22 +821,10 @@ struct AlbumDetailView: View {
                         .frame(width: 52, height: 52)
                         .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
                 }
-                .accessibilityLabel("Open on your streaming service")
+                .accessibilityLabel("Open on every streaming service")
             }
         }
-    }
-
-    /// Spotify album search as a universal link — Spotify's AASA claims `/search/*`, so on a
-    /// device with the app this opens Spotify straight to the album search.
-    /// ponytail: search, not a direct album id — song.link's album→Spotify mapping missed
-    /// every real album tested; search always lands. Upgrade path: Spotify Web API for /album/<id>.
-    private var spotifySearchURL: URL {
-        // Encode the whole query as one path component — album titles contain "/" (e.g.
-        // "russian shoegaze/dream-pop albums vol. 1"), which must not become a path separator.
-        let query = "\(album.title) \(album.artist)"
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? query
-        return URL(string: "https://open.spotify.com/search/\(encoded)")
-            ?? URL(string: "https://open.spotify.com")!
+        .musicServiceChooser($pending)
     }
 
     /// song.link universal wrapper, same encoding contract as the Kit's track links.
@@ -849,8 +848,11 @@ struct AlbumDetailView: View {
 /// album page built on a guess.
 struct MusicListDetailView: View {
     @Environment(\.openURL) private var openURL
+    @AppStorage(MusicService.key) private var serviceRaw = ""
+    @State private var pending: MusicTarget?
     let list: MusicList
     let store: AlbumStore
+    private var service: MusicService? { MusicService(rawValue: serviceRaw) }
     /// Indexes of the album picks opened into their tracklists.
     @State private var expanded: Set<Int> = []
 
@@ -875,6 +877,7 @@ struct MusicListDetailView: View {
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        .musicServiceChooser($pending)
         .onDisappear { PreviewPlayer.shared.stop() }
     }
 
@@ -935,9 +938,16 @@ struct MusicListDetailView: View {
                 // The sleeve is the preview button: hear it before deciding to go looking for it.
                 pickArt(sleeve)
                     .overlay { PreviewButton(key: "\(list.id)#\(index)", pick: pick, size: 26) }
-                // A pick with no confident catalogue match still gets you somewhere: Spotify search on
+                // A pick with no confident catalogue match still gets you somewhere: a search on
                 // the name the video showed. Better than a dead row, and honest about being a search.
-                Button { openURL(pick.link ?? spotifySearch(for: pick)) } label: {
+                Button {
+                    let target = MusicTarget(title: pick.title, artist: pick.artist, link: pick.link)
+                    if let service {
+                        openURL(service.url(title: target.title, artist: target.artist, link: target.link))
+                    } else {
+                        pending = target
+                    }
+                } label: {
                     HStack(spacing: 11) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(pick.title)
@@ -958,7 +968,7 @@ struct MusicListDetailView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(pick.link != nil
                                     ? "Open \(pick.title)"
-                                    : "Search Spotify for \(pick.title)")
+                                    : "Search for \(pick.title)")
                 if album != nil {
                     Button {
                         withAnimation(.easeOut(duration: 0.2)) {
@@ -1038,15 +1048,6 @@ struct MusicListDetailView: View {
         let kind = pick.kind == .album ? "Album" : "Track"
         let who = pick.artist.isEmpty ? "" : " · " + pick.artist
         return pick.link == nil ? kind + who + " · search" : kind + who
-    }
-
-    /// Spotify claims `/search/*` in its AASA, so on a device with the app this opens Spotify.
-    /// Whole query as one path component — titles contain "/" ("Reflections / Secret Portraits").
-    private func spotifySearch(for pick: MusicPick) -> URL {
-        let query = "\(pick.title) \(pick.artist)".trimmingCharacters(in: .whitespaces)
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? query
-        return URL(string: "https://open.spotify.com/search/\(encoded)")
-            ?? URL(string: "https://open.spotify.com")!
     }
 
     private var clipLink: some View {
@@ -1184,4 +1185,45 @@ struct PreviewButton: View {
         ),
         store: AlbumStore()
     )
+}
+
+// MARK: - Streaming service choice
+
+/// A release about to be opened — held while the first-tap chooser asks where to send it.
+struct MusicTarget: Equatable {
+    let title: String
+    let artist: String
+    let link: URL?
+}
+
+extension View {
+    /// The one-time "where do you listen?" sheet. Views set `pending` when no service is chosen
+    /// yet; the chosen service is stored and the pending release opened there.
+    func musicServiceChooser(_ pending: Binding<MusicTarget?>) -> some View {
+        modifier(MusicServiceChooser(pending: pending))
+    }
+}
+
+private struct MusicServiceChooser: ViewModifier {
+    @Binding var pending: MusicTarget?
+    @AppStorage(MusicService.key) private var serviceRaw = ""
+    @Environment(\.openURL) private var openURL
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Where do you listen?",
+            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+            titleVisibility: .visible
+        ) {
+            ForEach(MusicService.allCases) { service in
+                Button(service.label) {
+                    serviceRaw = service.rawValue
+                    if let t = pending { openURL(service.url(title: t.title, artist: t.artist, link: t.link)) }
+                    pending = nil
+                }
+            }
+        } message: {
+            Text("Every release opens there from now on. Change it any time in Settings.")
+        }
+    }
 }

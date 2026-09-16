@@ -451,6 +451,7 @@ struct SettingsView: View {
     @State private var showPaywall = false
     /// The pill's slots. See `TabSlots` for the two rules this editor has to respect.
     @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
+    @AppStorage(MusicService.key) private var musicService = ""
     /// Saves still classified from the caption alone — the backfill's work queue.
     private var missingTranscripts: Int {
         videos.filter { !$0.unavailable && $0.transcript == nil }.count
@@ -478,6 +479,12 @@ struct SettingsView: View {
                 subscriptionSection
                 if let quota = session.quota { quotaSection(quota) }
                 tabBarSection
+                Section("Music") {
+                    Picker("Open releases in", selection: $musicService) {
+                        Text("Ask on first tap").tag("")
+                        ForEach(MusicService.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                }
                 #if DEBUG
                 Section("Stash cloud") {
                     field("Base URL", text: $boxBaseURL, placeholder: BoxDefaults.baseURL, disableAutocaps: true)
