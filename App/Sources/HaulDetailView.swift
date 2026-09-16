@@ -691,9 +691,11 @@ final class OfferStore {
     /// A sweep asked for while one was running fetched its list before those saves landed —
     /// same problem, same fix, as `PipelineCenter.embeddingsPending`.
     private var sweepPending = false
-    /// Each lookup is a live web search on the box (up to 100 s); three abreast keeps a
-    /// fresh library's first answers arriving in minutes without hammering the box.
-    private static let sweepWidth = 3
+    /// Each lookup is a live web search on the box, ~5 s since the switch to mercury-2.5 (it was
+    /// 30-100 s on Gemini, which also throttled past three abreast). Eight keeps the box's
+    /// shared thread pool mostly free for other callers; the daily lookup cap, not this width,
+    /// is what bounds a big library.
+    private static let sweepWidth = 8
 
     /// Looks up every pick that has no answer yet, newest save first, so a pick page opens
     /// with its shops already there instead of "Checking stores…". The box caps lookups at
