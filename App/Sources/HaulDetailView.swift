@@ -544,6 +544,7 @@ struct DeliveryAddressSheet: View {
                     ForEach(countries, id: \.code) { country in
                         Button {
                             savedCountry = country.code
+                            PipelineCenter.shared.backfillOffers()   // the new country has no answers yet
                             UserDefaults.standard.removeObject(forKey: DeliveryAddress.addressKey)
                             dismiss()
                         } label: {
@@ -657,12 +658,15 @@ final class OfferStore {
         failed.contains(Self.key(name: name, country: country))
     }
 
-    func resolve(name: String, kind: String, country: String, force: Bool = false) async {
+    /// Returns the failure, when there was one, so the library sweep can tell "this pick"
+    /// from "the whole day" (the cap, offline, signed out).
+    @discardableResult
+    func resolve(name: String, kind: String, country: String, force: Bool = false) async -> Error? {
         let key = Self.key(name: name, country: country)
         if !force, let entry = entries[key], Date().timeIntervalSince(entry.fetchedAt) < Self.maxAge {
-            return
+            return nil
         }
-        guard !inflight.contains(key) else { return }
+        guard !inflight.contains(key) else { return nil }
         failed.remove(key)
         inflight.insert(key)
         defer { inflight.remove(key) }
@@ -672,10 +676,79 @@ final class OfferStore {
             entries[key] = Entry(offers: offers, fetchedAt: Date())
             failed.remove(key)
             try? JSONEncoder().encode(entries).write(to: Self.cacheURL)
+            return nil
         } catch {
             // A stale answer, when one exists, outranks an error screen; only a pick with no
             // answer at all shows the miss state.
             failed.insert(key)
+            return error
+        }
+    }
+
+    // MARK: - Library sweep
+
+    private var sweepTask: Task<Void, Never>?
+    /// A sweep asked for while one was running fetched its list before those saves landed —
+    /// same problem, same fix, as `PipelineCenter.embeddingsPending`.
+    private var sweepPending = false
+    /// Each lookup is a live web search on the box (up to 100 s); three abreast keeps a
+    /// fresh library's first answers arriving in minutes without hammering the box.
+    private static let sweepWidth = 3
+
+    /// Looks up every pick that has no answer yet, newest save first, so a pick page opens
+    /// with its shops already there instead of "Checking stores…". The box caps lookups at
+    /// 100 a day per account, so the order is what decides which picks get answered first;
+    /// the sweep stops at the cap, offline or signed out, and the next foreground resumes.
+    /// Stale answers are left alone — day-old prices still open the page, and the page
+    /// refreshes them itself — so the cap is spent on picks nobody has priced yet.
+    func prefetchLibrary(container: ModelContainer) {
+        guard sweepTask == nil else {
+            sweepPending = true
+            return
+        }
+        let country = DeliveryAddress.country
+        sweepTask = Task { [weak self] in
+            let picks = await Task.detached(priority: .utility) { () -> [(name: String, kind: String)] in
+                let context = ModelContext(container)
+                let videos = (try? context.fetch(FetchDescriptor<Video>(
+                    sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
+                return videos.flatMap { $0.buys.map { (name: $0.name, kind: $0.kind) } }
+            }.value
+            guard let self else { return }
+            var seen: Set<String> = []
+            let pending = picks.filter {
+                let key = Self.key(name: $0.name, country: country)
+                return seen.insert(key).inserted && entries[key] == nil && !failed.contains(key)
+            }
+            var next = pending.makeIterator()
+            var stopped = false
+            await withTaskGroup(of: Error?.self) { group in
+                for _ in 0..<Self.sweepWidth {
+                    guard let pick = next.next() else { break }
+                    group.addTask { await self.resolve(name: pick.name, kind: pick.kind, country: country) }
+                }
+                while let error = await group.next() {
+                    if Self.endsSweep(error) { stopped = true }   // let the in-flight ones land
+                    guard !stopped, let pick = next.next() else { continue }
+                    group.addTask { await self.resolve(name: pick.name, kind: pick.kind, country: country) }
+                }
+            }
+            sweepTask = nil
+            if sweepPending {
+                sweepPending = false
+                if !stopped { prefetchLibrary(container: container) }
+            }
+        }
+    }
+
+    /// The failures the next pick cannot fix: the day's cap (429), no network, no session.
+    /// A 502 is one search that went wrong, and the next pick may well be fine.
+    private static func endsSweep(_ error: Error?) -> Bool {
+        guard let error else { return false }
+        if error is StashError { return true }
+        switch error as? BoxError {
+        case .badResponse(429), .unreachable: return true
+        default: return false
         }
     }
 }
