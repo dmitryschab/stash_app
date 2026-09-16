@@ -1,7 +1,8 @@
 """Stash /v1 haul offers — where a pick can actually be bought, priced for the buyer's country.
 
   POST /v1/haul/offers  {name, kind, country} -> {offers: [...], checkedAt, cached}
-  One offer may carry imageURL: the shop page's og:image, the pick's catalog photo.
+  Dead shop links are dropped before caching; one survivor may carry imageURL,
+  the shop page's og:image, which becomes the pick's catalog photo.
 
 Its own module and its own router, mounted in app.py, like embeddings_api before it.
 
@@ -35,6 +36,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from urllib.parse import urlparse
@@ -236,11 +238,14 @@ def rank_offers(raw_offers: list[dict], storefront: str) -> list[dict]:
 
 # ---------------------------------------------------------------- picture
 
-# The shop page's own product photo, read from its og:image tag. Fetched for at most this many
-# offers per uncached lookup, brand site first; Amazon is skipped because it answers a bot with
-# a captcha page and no og:image.
-PAGE_TRIES = 2
+# Every non-Amazon offer's page is fetched once: it proves the link is real and it carries the
+# product photo in its og:image tag. Amazon is skipped because it answers a bot with a captcha
+# page, so a fetch would prove nothing about the listing.
 PAGE_TIMEOUT = 10
+# Only these prove the page is not there. A 403 is a bot check, which Aesop answers with; a 5xx
+# is the shop having a bad minute; a transport error proves nothing at all. None of those are
+# grounds to throw away what may be a real shop.
+_PAGE_GONE = {404, 410}
 _PAGE_HEADERS = {"User-Agent": (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Version/17.4 Safari/605.1.15")}
@@ -249,11 +254,23 @@ _OG_IMAGE = re.compile(r"""\b(?:property|name)\s*=\s*["']og:image["']""", re.I)
 _CONTENT = re.compile(r"""\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
 
 
-def _fetch_page(url: str) -> str:
-    """The first 200 KB of the page — og:image lives in <head>, and a shop page runs megabytes."""
+def _fetch_page(url: str) -> tuple[int, str]:
+    """(status, first 200 KB of the body) — og:image lives in <head> and a shop page runs
+    megabytes. Raises only when the shop could not be reached at all."""
     response = requests.get(url, headers=_PAGE_HEADERS, timeout=PAGE_TIMEOUT, stream=True)
-    response.raise_for_status()
-    return response.raw.read(200_000, decode_content=True).decode("utf-8", "replace")
+    if response.status_code != 200:
+        response.close()
+        return response.status_code, ""
+    return 200, response.raw.read(200_000, decode_content=True).decode("utf-8", "replace")
+
+
+def _page(url: str) -> tuple[int | None, str]:
+    """_fetch_page with an unreachable shop reported as (None, "") instead of raised."""
+    try:
+        return _fetch_page(url)
+    except Exception as error:
+        log.info("product page unread (%s): %s", url, error)
+        return None, ""
 
 
 def og_image(html: str) -> str | None:
@@ -270,20 +287,38 @@ def og_image(html: str) -> str | None:
     return None
 
 
-def attach_picture(offers: list[dict]) -> None:
-    """Put "imageURL" on the first offer whose page shows a product photo. Failures cost only
-    the picture: an unreachable shop still keeps its price."""
-    candidates = [entry for entry in offers if entry["kind"] != "amazon"]
-    candidates.sort(key=lambda entry: entry["kind"] != "brand")
-    for entry in candidates[:PAGE_TRIES]:
-        try:
-            image = og_image(_fetch_page(entry["url"]))
-        except Exception as error:
-            log.info("product page unread (%s): %s", entry["url"], error)
+def verify_offers(offers: list[dict]) -> list[dict]:
+    """Drop offers whose product page is definitively gone, and put "imageURL" on the first
+    survivor whose page shows a product photo.
+
+    The model invents plausible product URLs: measured against the live box, most non-Amazon
+    links answered 404. A dead link is worse than no link on a card whose whole job is telling
+    someone where to buy. Every shop is checked at once rather than in turn, because the search
+    ahead of this already spends most of the app's timeout budget.
+    """
+    targets = [entry for entry in offers if entry["kind"] != "amazon"]
+    if not targets:
+        return offers
+    urls = [entry["url"] for entry in targets]
+    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        pages = dict(zip(urls, pool.map(_page, urls)))
+
+    kept = []
+    for entry in offers:
+        status = pages.get(entry["url"], (None, ""))[0]
+        if status in _PAGE_GONE:
+            log.info("dropping dead offer %s (%s)", entry["url"], status)
             continue
-        if image:
+        kept.append(entry)
+
+    # Brand site first for the photo, but a dead or pictureless one must not stop a live shop
+    # further down the list from supplying it.
+    for entry in sorted(kept, key=lambda entry: entry["kind"] != "brand"):
+        status, html = pages.get(entry["url"], (None, ""))
+        if status == 200 and (image := og_image(html)):
             entry["imageURL"] = image
-            return
+            break
+    return kept
 
 
 # ---------------------------------------------------------------- cache + cap
@@ -403,7 +438,7 @@ def haul_offers(body: OfferRequest, store: DynamoImportStore = Depends(entitled_
         # failure must not become the day's answer.
         log.warning("offer lookup failed: %s", error)
         raise HTTPException(status_code=502, detail="offers unavailable")
-    attach_picture(offers)
+    offers = verify_offers(offers)
 
     checked_at = datetime.now(timezone.utc).isoformat()
     # An empty answer is cached too: "nobody ships this here" is a day's worth of true, and

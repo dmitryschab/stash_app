@@ -68,7 +68,7 @@ def pages(monkeypatch):
             raise RuntimeError("unreachable page")
         if isinstance(page, Exception):
             raise page
-        return page
+        return page if isinstance(page, tuple) else (200, page)
 
     monkeypatch.setattr(haul_offers_api, "_fetch_page", fetch)
     return state
@@ -346,7 +346,7 @@ def test_a_brand_page_without_a_picture_falls_through_to_the_next_shop(store, pr
     by_merchant = {entry["merchant"]: entry for entry in body["offers"]}
     assert "imageURL" not in by_merchant["Logitech"]
     assert by_merchant["1a.lv"]["imageURL"] == "https://img.1a.lv/mx.jpg"
-    assert pages["fetched"] == [BRAND, OTHER]
+    assert sorted(pages["fetched"]) == sorted([BRAND, OTHER])
 
 
 def test_a_page_failure_costs_only_the_picture(store, provider, pages):
@@ -383,6 +383,109 @@ def test_og_image_reads_either_attribute_order_and_unescapes():
     assert haul_offers_api.og_image('<meta property="og:image" content="/relative.jpg">') is None
     assert haul_offers_api.og_image("<head></head>") is None
 
+
+
+
+# ------------------------------------------------------------------ dead links
+
+
+def test_an_offer_whose_page_is_gone_is_dropped(store, provider, pages):
+    # Measured on the live box: the model invents plausible product URLs that 404, and the
+    # pick page was sending buyers to them.
+    provider["content"] = json.dumps({"offers": [
+        offer("Logitech", BRAND, 99.0, brand=True), offer("1a.lv", OTHER, 96.9)]})
+    pages["pages"][BRAND] = (404, "")
+    pages["pages"][OTHER] = og_page("https://img.1a.lv/mx.jpg")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert [entry["merchant"] for entry in body["offers"]] == ["1a.lv"]
+    assert body["offers"][0]["imageURL"] == "https://img.1a.lv/mx.jpg"
+
+
+def test_a_bot_blocked_shop_keeps_its_offer(store, provider, pages):
+    # Aesop answers a server fetch with 403. That is not proof the product page is missing,
+    # and dropping it would lose a real shop over a bot check.
+    provider["content"] = json.dumps({"offers": [offer("Aesop", BRAND, 99.0, brand=True)]})
+    pages["pages"][BRAND] = (403, "")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert [entry["merchant"] for entry in body["offers"]] == ["Aesop"]
+    assert "imageURL" not in body["offers"][0]
+
+
+def test_an_unreachable_shop_keeps_its_offer(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [offer("Logitech", BRAND, 99.0, brand=True)]})
+    pages["pages"][BRAND] = RuntimeError("connection reset")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert [entry["merchant"] for entry in body["offers"]] == ["Logitech"]
+
+
+def test_a_server_error_at_the_shop_keeps_its_offer(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [offer("Logitech", BRAND, 99.0, brand=True)]})
+    pages["pages"][BRAND] = (503, "")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert [entry["merchant"] for entry in body["offers"]] == ["Logitech"]
+
+
+def test_amazon_is_never_fetched_and_always_survives(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [
+        offer("Amazon.de", AMAZON, 94.99), offer("1a.lv", OTHER, 96.9)]})
+    pages["pages"][OTHER] = (404, "")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert [entry["merchant"] for entry in body["offers"]] == ["Amazon.de"]
+    assert pages["fetched"] == [OTHER]
+
+
+def test_every_shop_dead_is_an_empty_answer(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [
+        offer("Logitech", BRAND, 99.0, brand=True), offer("1a.lv", OTHER, 96.9)]})
+    pages["pages"][BRAND] = (404, "")
+    pages["pages"][OTHER] = (410, "")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert body["offers"] == []
+
+
+def test_each_shop_is_checked_exactly_once(store, provider, pages):
+    provider["content"] = json.dumps({"offers": [
+        offer("Logitech", BRAND, 99.0, brand=True), offer("1a.lv", OTHER, 96.9),
+        offer("Amazon.de", AMAZON, 94.99)]})
+    pages["pages"][BRAND] = og_page("https://cdn.logitech.com/mx.png")
+    pages["pages"][OTHER] = og_page("https://img.1a.lv/mx.jpg")
+
+    with TestClient(app) as client:
+        lookup(client)
+
+    assert sorted(pages["fetched"]) == sorted([BRAND, OTHER])
+
+
+def test_a_dead_brand_page_does_not_steal_the_picture(store, provider, pages):
+    # The brand site is asked first for the photo, but a 404 there must not stop a live shop
+    # further down the list from supplying one.
+    provider["content"] = json.dumps({"offers": [
+        offer("Logitech", BRAND, 99.0, brand=True), offer("1a.lv", OTHER, 96.9)]})
+    pages["pages"][BRAND] = (404, "")
+    pages["pages"][OTHER] = og_page("https://img.1a.lv/mx.jpg")
+
+    with TestClient(app) as client:
+        body = lookup(client).json()
+
+    assert body["offers"][0]["imageURL"] == "https://img.1a.lv/mx.jpg"
 
 
 # ------------------------------------------------------------------ search retry
