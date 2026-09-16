@@ -74,6 +74,26 @@ import SwiftData
 }
 
 public extension Video {
+    /// The transcript backfill's queue, shared with the count Settings puts on its button: a
+    /// count that also included videos already tried (no speech) read "(277)" over a tap that
+    /// found nothing to do.
+    var needsTranscript: Bool {
+        !unavailable && transcript == nil && stage(.transcribe) != .done
+    }
+
+    /// The on-screen text backfill's queue, shared with its Settings count the same way.
+    var needsVisualRead: Bool {
+        guard !unavailable else { return false }
+        // Read before frame grouping shipped. The flat pool it produced is what made the
+        // analyzer pair titles with the wrong artists, so it is worth the unit to re-read.
+        if let ocrText { return !ocrText.hasPrefix(FrameReader.frameMarker) }
+        return stage(.ocr) != .done
+    }
+
+    private func stage(_ stage: PipelineStage) -> StageState? {
+        (try? JSONDecoder().decode([String: StageState].self, from: stageStatesJSON))?[stage.rawValue]
+    }
+
     /// Film picks decoded from storage. `filmsJSON` itself remains available so callers can
     /// distinguish a legacy nil migration marker from an analyzed empty list.
     var films: [FilmPick] {

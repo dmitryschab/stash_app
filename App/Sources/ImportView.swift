@@ -453,13 +453,9 @@ struct SettingsView: View {
     @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
     @AppStorage(MusicService.key) private var musicService = ""
     /// Saves still classified from the caption alone — the backfill's work queue.
-    private var missingTranscripts: Int {
-        videos.filter { !$0.unavailable && $0.transcript == nil }.count
-    }
+    private var missingTranscripts: Int { videos.filter(\.needsTranscript).count }
     /// Saves whose frames have not been read yet.
-    private var missingVisualText: Int {
-        videos.filter { !$0.unavailable && $0.ocrText == nil }.count
-    }
+    private var missingVisualText: Int { videos.filter(\.needsVisualRead).count }
     // Development-only overrides, and gated because of what the first one does: the base URL
     // is where `StashSession` posts the Apple identity token and the rotating refresh token,
     // and where every /v1 call carries the session JWT. An editable field in a shipping build

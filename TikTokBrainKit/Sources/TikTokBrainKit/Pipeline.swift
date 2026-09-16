@@ -334,9 +334,7 @@ public actor PipelineRunner {
         let all = (try? ModelContext(container).fetch(
             FetchDescriptor<Video>(sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
         let targets = all.filter { video in
-            !video.unavailable && video.transcript == nil
-                && stageStates(video)[PipelineStage.transcribe.rawValue] != .done
-                && (only?.contains(video.videoID) ?? true)
+            video.needsTranscript && (only?.contains(video.videoID) ?? true)
         }.map(\.videoID).prefix(limit)
 
         return await drainBackfill(targets: Array(targets), progress: progress) { id in
@@ -407,13 +405,7 @@ public actor PipelineRunner {
         let all = (try? ModelContext(container).fetch(
             FetchDescriptor<Video>(sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
         let targets = all.filter { video in
-            guard !video.unavailable, only?.contains(video.videoID) ?? true else { return false }
-            if let existing = video.ocrText {
-                // Read before frame grouping shipped. The flat pool it produced is what made the
-                // analyzer pair titles with the wrong artists, so it is worth the unit to re-read.
-                return !existing.hasPrefix(FrameReader.frameMarker)
-            }
-            return stageStates(video)[PipelineStage.ocr.rawValue] != .done
+            video.needsVisualRead && (only?.contains(video.videoID) ?? true)
         }.map(\.videoID).prefix(limit)
 
         return await drainBackfill(targets: Array(targets), progress: progress) { id in
