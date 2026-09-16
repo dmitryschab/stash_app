@@ -1,6 +1,6 @@
 """Secret material for the box: AWS Secrets Manager, with an environment fallback.
 
-Every credential the API needs (STASH_JWT_SECRET, GROQ_API_KEY, TIKTOK_CLIENT_SECRET,
+Every credential the API needs (STASH_JWT_SECRET, OPENROUTER_API_KEY, TIKTOK_CLIENT_SECRET,
 APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_PRIVATE_KEY) is read through `secret(name)`.
 
 Lookup order is environment first, then one Secrets Manager blob. Environment-first is

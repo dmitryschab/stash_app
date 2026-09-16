@@ -104,8 +104,15 @@ public actor PipelineRunner {
 
     /// Number of videos processed concurrently. The shared Enricher's 1 s throttle
     /// still serializes TikTok page fetches; transcripts and analysis overlap.
-    /// ponytail: fixed at 3 — box is a t3.micro; raise alongside the box.
-    private static let concurrency = 3
+    ///
+    /// The ceiling is the box, never the model provider: OpenRouter bills paid models with
+    /// no platform request cap, but every transcript costs the box one yt-dlp download plus
+    /// an ffmpeg pass, and each of those wants its own memory. 12 assumes the resized box
+    /// (4 vCPU / 8 GiB). On the old t3.micro — 2 burstable vCPU, 1 GiB — this number was 3,
+    /// and raising it there buys nothing: the CPU credits drain in minutes and TikTok starts
+    /// refusing a single IP that opens dozens of parallel downloads.
+    /// ponytail: a constant, not a setting — it tracks one box we own and resize by hand.
+    private static let concurrency = 12
 
     /// Drains the queue in passes until nothing more can make progress:
     /// pass 1 is the caption-first fast pass (enrich + analyze, transcript deferred),
@@ -234,19 +241,87 @@ public actor PipelineRunner {
         }
     }
 
-    /// Give up after this many transcripts fail back-to-back: the free Whisper tier caps
-    /// audio-seconds per rolling hour, and once it is exhausted every further call just burns
-    /// a request. Stopping leaves the rest for the next run.
+    /// Give up after this many transcripts fail with no success in between: a spent budget or
+    /// a dead box makes every further call burn a request for nothing. Stopping leaves the
+    /// rest for the next run.
     private static let throttleAbortThreshold = 5
 
+    /// How many backfill videos are in flight at once.
+    ///
+    /// One at a time was correct while Groq metered audio-seconds per rolling hour: the
+    /// original bulk import fired hundreds of calls in parallel, blew the cap, and that is
+    /// what made ~60% of them fail. Transcription now goes through OpenRouter, which spreads
+    /// the same Whisper weights over several providers and does not meter paid models by the
+    /// hour, so serialising only costs wall-clock. 8 is set by the two limits that remain and
+    /// are not ours: the box holds one yt-dlp process per video in flight, and TikTok blocks a
+    /// single IP that opens dozens of parallel downloads. Raising it trades a few minutes for
+    /// a real risk of both.
+    private static let backfillConcurrency = 8
+
     private enum BackfillOutcome { case filled, empty, failed, quotaExhausted(Quota) }
+
+    /// Runs `work` over `targets`, at most `backfillConcurrency` at a time, under the same
+    /// stopping rules the serial version had: a spent budget ends the run at once, and
+    /// `throttleAbortThreshold` failures abort it.
+    ///
+    /// "Consecutive failures" cannot mean "adjacent in the queue" once the queue is parallel,
+    /// so the counter resets on any success and counts failures between successes. That is the
+    /// signal the threshold was always reaching for — a dead box, a spent quota — and unlike
+    /// adjacency it survives results arriving out of order.
+    ///
+    /// Work already in flight when the run stops still reports back and still counts as
+    /// attempted: those videos really were tried, and `remaining` has to mean what the next
+    /// run will pick up.
+    private func drainBackfill(
+        targets: [String],
+        progress: @escaping @Sendable (Int, Int) -> Void,
+        work: @escaping @Sendable (String) async -> BackfillOutcome
+    ) async -> BackfillResult {
+        let total = targets.count
+        var filled = 0, attempted = 0, failuresSinceSuccess = 0
+        var exhausted: Quota?
+        var stopped = false
+        var next = 0
+        progress(0, total)
+
+        await withTaskGroup(of: BackfillOutcome.self) { group in
+            func addNext() {
+                guard !stopped, !Task.isCancelled, next < total else { return }
+                let id = targets[next]
+                next += 1
+                group.addTask { await work(id) }
+            }
+            for _ in 0..<min(Self.backfillConcurrency, total) { addNext() }
+
+            while let outcome = await group.next() {
+                attempted += 1
+                switch outcome {
+                case .filled: filled += 1; failuresSinceSuccess = 0
+                case .empty: failuresSinceSuccess = 0   // no speech / no on-screen text is normal
+                case .failed: failuresSinceSuccess += 1
+                case .quotaExhausted(let quota):
+                    exhausted = quota
+                    stopped = true
+                }
+                progress(attempted, total)
+                if failuresSinceSuccess >= Self.throttleAbortThreshold { stopped = true }
+                if stopped { group.cancelAll() } else { addNext() }
+            }
+        }
+
+        return BackfillResult(filled: filled, attempted: attempted,
+                              remaining: total - attempted,
+                              stoppedEarly: stopped, quotaExhausted: exhausted)
+    }
 
     /// Fetches transcripts for videos that have none, then re-analyzes each one it fills so the
     /// summary and category come from the audio instead of the caption alone.
     ///
-    /// Deliberately serial: the original bulk import fired hundreds of transcript calls at once
-    /// and blew the hourly quota, which is what made ~60% of them fail. Running one at a time
-    /// stays under the cap. The run is resumable — it only picks videos that still have no
+    /// Runs `backfillConcurrency` videos at a time. This was deliberately serial while Groq
+    /// metered audio-seconds per rolling hour — the original bulk import fired hundreds of
+    /// calls at once, blew the cap, and that is what made ~60% of them fail — but OpenRouter
+    /// does not meter paid models by the hour, so the queue no longer has to be one-wide.
+    /// The run is resumable — it only picks videos that still have no
     /// transcript and were not already attempted — so calling it again continues where it left off.
     /// `only` narrows the run to specific videos. A share-imported video needs its transcript
     /// straight away, and without the filter that one save would drag the entire library's
@@ -264,30 +339,9 @@ public actor PipelineRunner {
                 && (only?.contains(video.videoID) ?? true)
         }.map(\.videoID).prefix(limit)
 
-        let total = targets.count
-        var filled = 0, attempted = 0, consecutiveFailures = 0
-        progress(0, total)
-        for id in targets {
-            if Task.isCancelled { break }
-            attempted += 1
-            switch await backfillOne(videoID: id) {
-            case .filled: filled += 1; consecutiveFailures = 0
-            case .empty: consecutiveFailures = 0   // music/no speech is a normal result
-            case .failed: consecutiveFailures += 1
-            case .quotaExhausted(let quota):
-                // No point burning the rest of the queue: every further call returns 402.
-                return BackfillResult(filled: filled, attempted: attempted,
-                                      remaining: total - attempted, stoppedEarly: true,
-                                      quotaExhausted: quota)
-            }
-            progress(attempted, total)
-            if consecutiveFailures >= Self.throttleAbortThreshold {
-                return BackfillResult(filled: filled, attempted: attempted,
-                                      remaining: total - attempted, stoppedEarly: true)
-            }
+        return await drainBackfill(targets: Array(targets), progress: progress) { id in
+            await self.backfillOne(videoID: id)
         }
-        return BackfillResult(filled: filled, attempted: attempted,
-                              remaining: total - attempted, stoppedEarly: false)
     }
 
     private func backfillOne(videoID: String) async -> BackfillOutcome {
@@ -336,8 +390,8 @@ public actor PipelineRunner {
     /// folds in whatever the audio identified along the way.
     ///
     /// On TikTok the words burned into the frame are often the actual content (recipe steps,
-    /// list items, auto-captions), and Vision OCR is free and unmetered — unlike cloud Whisper,
-    /// which is why this needs none of the transcript backfill's hourly pacing. The real cost is
+    /// list items, auto-captions), and Vision OCR is free and unmetered because it runs on the
+    /// device — no model is billed for this pass at all. The real cost is
     /// bandwidth for the video download, which `deepPass` owns; it receives the video's ID and
     /// URL and returns everything read off that one file (see `DeepPass`).
     ///
@@ -362,32 +416,9 @@ public actor PipelineRunner {
             return stageStates(video)[PipelineStage.ocr.rawValue] != .done
         }.map(\.videoID).prefix(limit)
 
-        let total = targets.count
-        var filled = 0, attempted = 0, consecutiveFailures = 0
-        progress(0, total)
-        for id in targets {
-            if Task.isCancelled { break }
-            attempted += 1
-            switch await backfillVisualOne(videoID: id, deepPass: deepPass) {
-            case .filled: filled += 1; consecutiveFailures = 0
-            case .empty: consecutiveFailures = 0   // no on-screen text is a normal result
-            case .failed: consecutiveFailures += 1
-            case .quotaExhausted(let quota):
-                // Each download costs a quota unit, so there is nothing left to spend.
-                return BackfillResult(filled: filled, attempted: attempted,
-                                      remaining: total - attempted, stoppedEarly: true,
-                                      quotaExhausted: quota)
-            }
-            progress(attempted, total)
-            // Repeated failures here mean the box or the network is down, not a quota — either
-            // way, continuing just burns bandwidth, so leave the rest for the next run.
-            if consecutiveFailures >= Self.throttleAbortThreshold {
-                return BackfillResult(filled: filled, attempted: attempted,
-                                      remaining: total - attempted, stoppedEarly: true)
-            }
+        return await drainBackfill(targets: Array(targets), progress: progress) { id in
+            await self.backfillVisualOne(videoID: id, deepPass: deepPass)
         }
-        return BackfillResult(filled: filled, attempted: attempted,
-                              remaining: total - attempted, stoppedEarly: false)
     }
 
     private func backfillVisualOne(

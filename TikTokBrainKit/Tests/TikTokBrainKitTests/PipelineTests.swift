@@ -289,6 +289,27 @@ private struct StubTranscriber: Transcribing {
     }
 }
 
+/// Records how many transcript calls are in flight at the same moment.
+private actor ConcurrencyWatcher {
+    private var current = 0
+    private(set) var peak = 0
+
+    func enter() { current += 1; peak = max(peak, current) }
+    func leave() { current -= 1 }
+}
+
+/// Holds each call open long enough for its siblings to start, so a serial queue and a
+/// parallel one give measurably different peaks.
+private struct WatchingTranscriber: Transcribing {
+    let watcher: ConcurrencyWatcher
+    func transcript(for videoURL: URL) async throws -> String? {
+        await watcher.enter()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        await watcher.leave()
+        return "boil the noodles"
+    }
+}
+
 private struct StubMusicResolver: MusicLinkResolving {
     var link: URL?
     func resolve(_ picks: [MusicPick]) async -> [MusicPick] {
@@ -416,6 +437,42 @@ extension PipelineTests {
         // Second run finds nothing left to do — resumable, not repeating.
         let second = await runner.backfillTranscripts { _, _ in }
         XCTAssertEqual(second.attempted, 0)
+    }
+
+    /// The point of the backfill rewrite: the queue overlaps instead of running one at a time.
+    /// Guards the regression that matters — a change that quietly serialises this again turns a
+    /// half-hour library re-run back into a multi-hour one, and every other test still passes.
+    func testBackfillTranscriptsRunsVideosInParallel() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        for index in 0..<16 {
+            let id = "70000000000000001\(String(format: "%02d", index))"
+            let video = Video(videoID: id,
+                              url: URL(string: "https://www.tiktok.com/@x/video/\(id)")!,
+                              bookmarkedAt: Date(timeIntervalSince1970: TimeInterval(600 + index)))
+            video.caption = "POV miso ramen"
+            context.insert(video)
+        }
+        try context.save()
+
+        let watcher = ConcurrencyWatcher()
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: WatchingTranscriber(watcher: watcher),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        let result = await runner.backfillTranscripts { _, _ in }
+        XCTAssertEqual(result.filled, 16)
+        XCTAssertFalse(result.stoppedEarly)
+
+        let peak = await watcher.peak
+        XCTAssertGreaterThan(peak, 1, "backfill ran one video at a time")
+        XCTAssertLessThanOrEqual(peak, 8, "backfill exceeded its concurrency cap")
     }
 
     /// A shared TikTok needs its transcript and on-screen text immediately, but the library
