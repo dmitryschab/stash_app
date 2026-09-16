@@ -189,25 +189,32 @@ public struct Analysis: Codable, Equatable, Sendable {
     public var recipe: RecipeData?
     /// Every release the video recommends, in the order it showed them. Empty for non-music.
     public var music: [MusicPick]
+    /// Every movie explicitly named or shown, in source order. Empty for non-film analyses.
+    public var films: [FilmPick]
+    /// Whether the decoded response actually carried `films`. This is deliberately not encoded:
+    /// it only distinguishes legacy responses from an explicit empty array while persisting.
+    public var hasFilmPayload: Bool
     public var code: CodeData?
     /// Everything the video is selling, whatever it was filed under. Empty for the vast majority.
     public var buys: [BuyPick]
 
     public init(category: Category, title: String, summary: String, topics: [String] = [],
                 recipe: RecipeData? = nil, music: [MusicPick] = [], code: CodeData? = nil,
-                buys: [BuyPick] = []) {
+                buys: [BuyPick] = [], films: [FilmPick] = []) {
         self.category = category
         self.title = title
         self.summary = summary
         self.topics = topics
         self.recipe = recipe
         self.music = music
+        self.films = FilmPick.cleaned(films)
+        self.hasFilmPayload = true
         self.code = code
         self.buys = buys
     }
 
     private enum CodingKeys: String, CodingKey {
-        case category, title, summary, topics, recipe, music, code, buys
+        case category, title, summary, topics, recipe, music, films, code, buys
     }
     /// Read-only: the pre-multi-pick key. Declared separately so `encode(to:)` stays synthesized
     /// and nothing ever writes the old shape back out.
@@ -221,6 +228,9 @@ public struct Analysis: Codable, Equatable, Sendable {
         topics = try values.decodeIfPresent([String].self, forKey: .topics) ?? []
         recipe = try values.decodeIfPresent(RecipeData.self, forKey: .recipe)
         code = try values.decodeIfPresent(CodeData.self, forKey: .code)
+        hasFilmPayload = values.contains(.films)
+            && ((try? values.decodeNil(forKey: .films)) == false)
+        films = hasFilmPayload ? values.decodeFilmPicksIfPresent(forKey: .films) : []
         // A nameless pick is a pick nothing can be searched for; drop it here rather than
         // letting the shelf render a blank row.
         buys = Array((try values.decodeIfPresent([BuyPick].self, forKey: .buys) ?? [])

@@ -148,6 +148,57 @@ final class CloudImportTests: XCTestCase {
         XCTAssertEqual(video.title, "Newest")
     }
 
+    func testResultUpsertPersistsFilmPicks() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let video = Video(videoID: "film-1", url: URL(string: "https://example.com/1")!, bookmarkedAt: .now)
+        context.insert(video)
+        try context.save()
+
+        try CloudImportResultUpserter.apply([
+            CloudImportResult(
+                videoID: "film-1", analysisRevision: 8, category: "film",
+                films: [FilmPick(title: "Arrival", year: 2016)])
+        ], to: context)
+
+        XCTAssertEqual(video.films, [FilmPick(title: "Arrival", year: 2016)])
+    }
+
+    func testEmptySameCategoryCloudPassPreservesRicherLocalFilmPicks() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let video = Video(videoID: "film-2", url: URL(string: "https://example.com/2")!, bookmarkedAt: .now)
+        video.categoryRaw = Category.film.rawValue
+        video.filmsJSON = try JSONEncoder().encode([FilmPick(title: "Heat", year: 1995)])
+        context.insert(video)
+        try context.save()
+
+        try CloudImportResultUpserter.apply([
+            CloudImportResult(videoID: "film-2", analysisRevision: 8, category: "film", films: [])
+        ], to: context)
+
+        XCTAssertEqual(video.films, [FilmPick(title: "Heat", year: 1995)])
+    }
+
+    func testCloudReclassificationAwayFromFilmClearsStalePicks() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let video = Video(videoID: "film-3", url: URL(string: "https://example.com/3")!, bookmarkedAt: .now)
+        video.categoryRaw = Category.film.rawValue
+        video.filmsJSON = try JSONEncoder().encode([FilmPick(title: "Heat", year: 1995)])
+        context.insert(video)
+        try context.save()
+
+        try CloudImportResultUpserter.apply([
+            CloudImportResult(
+                videoID: "film-3", analysisRevision: 8, category: "comedy",
+                films: [FilmPick(title: "Wrong category", year: 2020)])
+        ], to: context)
+
+        XCTAssertEqual(video.categoryRaw, Category.comedy.rawValue)
+        XCTAssertNil(video.filmsJSON)
+    }
+
     func testWholeLibraryFitsAndOverCapIsRejectedWithoutNetwork() async throws {
         // A 900-video library must submit; over the cap is rejected before any network call.
         XCTAssertGreaterThanOrEqual(CloudImportLimits.maxVideosPerImport, 900)
@@ -364,6 +415,19 @@ extension CloudImportTests {
         let result = try JSONDecoder().decode(CloudImportResult.self, from: json)
         XCTAssertNil(result.recipe)
         XCTAssertTrue(result.music.isEmpty)
+        XCTAssertTrue(result.films.isEmpty)
+    }
+
+    func testMalformedFilmMetadataIsCleanedWithoutFailingCloudResult() throws {
+        let json = #"{"videoID":"film-4","films":[{"title":"  Arrival  ","year":"2016"},null,{"title":4},{"title":"Heat","year":"unknown"}]}"#
+            .data(using: .utf8)!
+
+        let result = try JSONDecoder().decode(CloudImportResult.self, from: json)
+
+        XCTAssertEqual(result.films, [
+            FilmPick(title: "Arrival", year: 2016),
+            FilmPick(title: "Heat"),
+        ])
     }
 
     /// A blank title is not a pick, and the array is bounded the same way the contract bounds it.

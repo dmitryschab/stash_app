@@ -332,12 +332,14 @@ object, no prose and no Markdown code fences. Use this exact shape:
   "topics": [string],            // short lowercase topic keywords
   "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
   "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
+  "films": [ { "title": string, "year": integer | null } ],
   "code": { "summary": string, "links": [string], "techTags": [string] } | null,
   "buys": [ { "name": string, "kind": string, "price": string } ]
 }
-recipe, music and code belong to a category: fill the one matching the category you chose and
-leave the others empty — for every other category set "recipe" and "code" to null and "music"
-to []. Never include a "link" field; the app resolves streaming links separately.
+recipe, music, films and code belong to a category: fill the one matching the category you chose
+and leave the others empty — for every other category set "recipe" and "code" to null and
+"music" and "films" to []. Never include a "link" field; the app resolves streaming links
+separately.
 
 "buys" is different, and it is the one field that does NOT follow the category. Judge it
 separately, on every video, whatever you filed it under.
@@ -355,7 +357,7 @@ characters. Use empty strings or arrays when information is missing. NEVER outpu
 prose such as "No Content Provided" or "Untitled Video". If caption and transcript are both
 empty, use title "Saved video" and summary "No caption or audio was available for this save."
 
-Two categories carry extra structure, and the Cook and Music screens are empty without it:
+Three categories carry extra structure, and the Cook, Music and film screens are empty without it:
 - category recipe: fill the "recipe" object only when the source actually lists a name,
   ingredients or steps; leave it null rather than inventing a recipe. Write every quantity in
   metric — grams, millilitres, °C, centimetres. Convert cups, ounces, pounds and °F rather
@@ -370,6 +372,13 @@ Two categories carry extra structure, and the Cook and Music screens are empty w
   next to that title, or leave it an empty string — NEVER invent an artist you are not
   confident about, and never reuse one entry's artist for another, because a guessed artist
   links the wrong release.
+
+- category film: list each distinct feature film explicitly named or shown by the source, in source
+  order, at most 20. Read titles from the caption, transcript, on-screen text or attached images;
+  never infer a title from an advertised count, genre, plot description or incidental mention,
+  and never pad a list with guesses. A TV series is not a film: exclude series, episodes and
+  seasons. Set "year" only when the source states that movie's release year; otherwise use null.
+  Never add poster URLs, artwork, links or any field besides title and year.
 
 "buys" — things the user might want to own, collected from every category into one shelf.
 Ask one question: is a specific, purchasable product a FOCAL POINT of this post? If the video

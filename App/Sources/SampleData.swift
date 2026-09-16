@@ -87,6 +87,7 @@ enum SampleData {
             if let track = item["track"] as? [String: Any] { video.trackJSON = json(track) }
             if let code = item["code"] as? [String: Any] { video.codeJSON = json(code) }
             if let buys = item["buys"] as? [[String: Any]] { video.buysJSON = json(buys) }
+            if let films = item["films"] as? [[String: Any]] { video.filmsJSON = json(films) }
             let done: [String: StageState] = [
                 "enrich": .done, "media": .done,
                 "transcribe": video.transcript == nil ? .skipped : .done,
@@ -97,7 +98,7 @@ enum SampleData {
         }
     }
 
-    /// Twenty analyzed videos covering all ten library segments — Cook, Music, Today, Search
+    /// Twenty-one analyzed videos covering eleven library segments — Cook, Music, Today, Search
     /// and the mind map each need real content of their own — plus one "needs a look" entry.
     static func makeSampleVideos() -> [Video] {
         let videos = sampleVideos()
@@ -307,6 +308,29 @@ enum SampleData {
                     "artist": "Frank Ocean",
                 ])
             ),
+            // A film recommendation list: one clip naming five movies in the order it showed
+            // them — the same "one clip, several picks" shape as the albums entry above, just
+            // resolved against Wikipedia instead of iTunes (see FilmResolver).
+            make(
+                id: "7234567890000000022",
+                url: "https://www.tiktok.com/@reelnotes/video/7234567890000000022",
+                daysAgo: 2,
+                author: "reelnotes",
+                caption: "5 films that fixed my brain this year #movies #filmtok",
+                hashtags: ["movies", "filmtok"],
+                category: .film,
+                title: "5 films that fixed my brain this year",
+                summary: "Five films the creator credits with resetting their taste this year, in the order they came up.",
+                topics: ["films", "watchlist"],
+                transcript: "Arrival, then Past Lives, then Paddington 2, then Aftersun, and finally The Grand Budapest Hotel.",
+                filmsJSON: json([
+                    ["title": "Arrival", "year": 2016],
+                    ["title": "Past Lives", "year": 2023],
+                    ["title": "Paddington 2", "year": 2017],
+                    ["title": "Aftersun", "year": 2022],
+                    ["title": "The Grand Budapest Hotel", "year": 2014],
+                ])
+            ),
             make(
                 id: "7234567890000000003",
                 url: "https://www.tiktok.com/@swiftbits/video/7234567890000000003",
@@ -490,6 +514,7 @@ enum SampleData {
         recipeJSON: Data? = nil,
         trackJSON: Data? = nil,
         musicJSON: Data? = nil,
+        filmsJSON: Data? = nil,
         codeJSON: Data? = nil,
         buysJSON: Data? = nil
     ) -> Video {
@@ -509,6 +534,7 @@ enum SampleData {
         video.recipeJSON = recipeJSON
         video.trackJSON = trackJSON
         video.musicJSON = musicJSON
+        video.filmsJSON = filmsJSON
         video.codeJSON = codeJSON
         video.buysJSON = buysJSON
 

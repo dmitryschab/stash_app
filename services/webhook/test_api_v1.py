@@ -348,6 +348,16 @@ def test_a_photo_post_goes_to_the_vision_model_with_its_picture(monkeypatch, ana
     assert system.endswith(api_v1.PHOTO_SYSTEM_PROMPT_ADDENDUM)
 
 
+def test_film_extraction_rules_reach_the_analyzer(analyzer_calls):
+    """The shared analyzer contract must request only explicit movie titles, never TV padding."""
+    api_v1.analyze_metadata({"caption": "five films to watch"})
+
+    system = analyzer_calls[-1]["body"]["messages"][0]["content"]
+    assert '"films"' in system
+    assert "explicitly named" in system
+    assert "TV series" in system
+
+
 def test_every_slide_reaches_the_vision_model_in_order(monkeypatch, analyzer_calls):
     """A slideshow's list lives on its later slides; the model must see all of them, in the
     order the post shows them, or a seven-slide topster reads as a one-image meme."""

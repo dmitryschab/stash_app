@@ -615,6 +615,12 @@ public actor PipelineRunner {
         video.topics = analysis.topics
 
         let encoder = JSONEncoder()
+        if analysis.category == .film, analysis.hasFilmPayload {
+            // Persist an encoded empty array too: nil is reserved for pre-film-analysis records.
+            video.filmsJSON = try? encoder.encode(FilmPick.cleaned(analysis.films))
+        } else if analysis.category != .film {
+            video.filmsJSON = nil
+        }
         if let recipe = analysis.recipe {
             video.recipeJSON = try? encoder.encode(recipe)
         }

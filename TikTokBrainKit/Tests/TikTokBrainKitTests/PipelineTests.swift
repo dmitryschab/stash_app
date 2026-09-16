@@ -691,6 +691,96 @@ extension PipelineTests {
         XCTAssertEqual(updated.categoryRaw, Category.recipe.rawValue)  // re-bucketed
         XCTAssertEqual(updated.title, "Miso Ramen")                    // re-analyzed
     }
+
+    func testFilmAnalysisPersistsAnExplicitEmptyPickList() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "film-empty",
+            url: URL(string: "https://www.tiktok.com/@x/video/film-empty")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.categoryRaw = Category.film.rawValue
+        context.insert(video)
+        try context.save()
+
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: ""),
+                analyzer: FixedAnalyzer(analysis: Analysis(
+                    category: .film, title: "Films", summary: "", films: [])),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        await runner.reanalyzeAll { _, _ in }
+
+        let stored = try XCTUnwrap(fetchVideo("film-empty", in: container))
+        XCTAssertNotNil(stored.filmsJSON)
+        XCTAssertEqual(stored.films, [])
+    }
+
+    func testLegacyFilmAnalysisWithoutFilmsFieldPreservesNilMigrationMarker() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "film-legacy-response",
+            url: URL(string: "https://www.tiktok.com/@x/video/film-legacy-response")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.categoryRaw = Category.film.rawValue
+        context.insert(video)
+        try context.save()
+        let legacy = try JSONDecoder().decode(
+            Analysis.self,
+            from: #"{"category":"film","title":"Films","summary":"","topics":[]}"#.data(using: .utf8)!
+        )
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: ""),
+                analyzer: FixedAnalyzer(analysis: legacy),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        await runner.reanalyzeAll { _, _ in }
+
+        let stored = try XCTUnwrap(fetchVideo("film-legacy-response", in: container))
+        XCTAssertNil(stored.filmsJSON)
+    }
+
+    func testReanalysisAwayFromFilmClearsStalePicks() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "film-reclassified",
+            url: URL(string: "https://www.tiktok.com/@x/video/film-reclassified")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.categoryRaw = Category.film.rawValue
+        video.filmsJSON = try JSONEncoder().encode([FilmPick(title: "Arrival", year: 2016)])
+        context.insert(video)
+        try context.save()
+
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: ""),
+                analyzer: FixedAnalyzer(analysis: Analysis(
+                    category: .other, title: "Not a film list", summary: "")),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        await runner.reanalyzeAll { _, _ in }
+
+        let stored = try XCTUnwrap(fetchVideo("film-reclassified", in: container))
+        XCTAssertEqual(stored.categoryRaw, Category.other.rawValue)
+        XCTAssertNil(stored.filmsJSON)
+        XCTAssertEqual(stored.films, [])
+    }
 }
 
 /// Classifies from the stub metadata; for anything uncategorised it echoes the transcript

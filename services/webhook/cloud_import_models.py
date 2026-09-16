@@ -195,6 +195,38 @@ class MusicPick(ContractModel):
 MAX_MUSIC_PICKS = 12
 
 
+class FilmPick(ContractModel):
+    """One explicitly identified feature film. The client resolves artwork separately."""
+
+    title: str
+    year: int | None = None
+
+    @field_validator("title")
+    @classmethod
+    def cleaned_title(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("year", mode="before")
+    @classmethod
+    def stated_year_or_none(cls, value: object) -> int | None:
+        # Analyzer output occasionally represents an unknown year with prose. Preserve the
+        # film rather than rejecting the whole result, but never turn a guess into a year.
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            year = value
+        elif isinstance(value, str) and value.strip().isdigit():
+            year = int(value.strip())
+        else:
+            return None
+        return year if 1888 <= year <= datetime.now().year + 5 else None
+
+
+# Mirrors FilmPick.maxPerVideo in the Kit. A longer response is almost always repeated list
+# framing or incidental mentions, and makes the client start unnecessary artwork lookups.
+MAX_FILM_PICKS = 20
+
+
 class BuyPick(ContractModel):
     """One thing a video is plainly selling. Cross-cutting: unlike recipe/music/code this is
     not tied to the chosen category, because the sneakers in a style video and the desk in a
@@ -231,7 +263,9 @@ class VideoResult(ContractModel):
     # "other", which is now the wrong answer, and only a greater revision re-buckets them.
     # 7: results now carry "buys". Every row analysed before this has none, and the Haul shelf
     # reads empty for the whole library until a greater revision re-runs them.
-    analysis_revision: int = Field(alias="analysisRevision", default=7)
+    # 8: results now carry explicit film picks. The old rows cannot populate the film shelf,
+    # so their fast pass must be superseded rather than silently retained.
+    analysis_revision: int = Field(alias="analysisRevision", default=8)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)
@@ -246,6 +280,7 @@ class VideoResult(ContractModel):
     # cloud pipeline could not populate either screen at all.
     recipe: RecipeData | None = None
     music: list[MusicPick] = Field(default_factory=list)
+    films: list[FilmPick] = Field(default_factory=list)
     # Haul is a query over these rather than a category segment, so without them the shelf is
     # empty however many product videos the library holds.
     buys: list[BuyPick] = Field(default_factory=list)
@@ -257,12 +292,35 @@ class VideoResult(ContractModel):
     def bounded_picks(cls, value: list[MusicPick]) -> list[MusicPick]:
         return [pick for pick in value if pick.title.strip()][:MAX_MUSIC_PICKS]
 
+    @field_validator("films")
+    @classmethod
+    def bounded_films(cls, value: list[FilmPick]) -> list[FilmPick]:
+        picks: list[FilmPick] = []
+        seen: set[tuple[str, int | None]] = set()
+        for pick in value:
+            if not pick.title:
+                continue
+            identity = (pick.title.casefold(), pick.year)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            picks.append(pick)
+            if len(picks) == MAX_FILM_PICKS:
+                break
+        return picks
+
     @field_validator("buys")
     @classmethod
     def bounded_buys(cls, value: list[BuyPick]) -> list[BuyPick]:
         # A nameless pick is one nothing can be searched for; drop it rather than shipping a
         # blank row to the shelf.
         return [pick for pick in value if pick.name.strip()][:MAX_BUY_PICKS]
+
+    @model_validator(mode="after")
+    def film_picks_only_for_film_category(self) -> VideoResult:
+        if self.category != "film":
+            self.films = []
+        return self
 
 
 class ResultPage(ContractModel):
