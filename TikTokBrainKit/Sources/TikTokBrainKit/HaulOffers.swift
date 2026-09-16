@@ -55,6 +55,8 @@ public struct HaulOffersClient {
     private let session: URLSession
     /// A live web search runs behind this call; it is the slow kind of request.
     private static let lookupTimeout: TimeInterval = 100
+    /// A search page plus at most three page reads — nothing like the offers wait.
+    private static let photoTimeout: TimeInterval = 40
 
     public init(config: BoxConfig, session: URLSession = .shared) {
         self.config = config
@@ -70,6 +72,29 @@ public struct HaulOffersClient {
         request.httpBody = try JSONEncoder().encode(["name": name, "kind": kind, "country": country])
         let data = try await BoxHTTP.send(request, on: session, auth: config.auth)
         return try Self.decodeOffers(data)
+    }
+
+    /// The pick's catalog photo, looked up on its own — no prices, no model, so a picture
+    /// still arrives on a day the price search is down. Nil is the honest "nobody publishes
+    /// one", and the caller falls back to the video's own frame.
+    public func photo(name: String, kind: String, link: URL?) async throws -> URL? {
+        let url = config.baseURL.appendingPathComponent("haul/photo")
+        var request = URLRequest(url: url, timeoutInterval: Self.photoTimeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body = ["name": name, "kind": kind]
+        if let link { body["link"] = link.absoluteString }
+        request.httpBody = try JSONEncoder().encode(body)
+        return try Self.decodePhoto(try await BoxHTTP.send(request, on: session, auth: config.auth))
+    }
+
+    static func decodePhoto(_ data: Data) throws -> URL? {
+        struct PhotoResponse: Decodable { let imageURL: URL? }
+        do {
+            return try JSONDecoder().decode(PhotoResponse.self, from: data).imageURL
+        } catch {
+            throw BoxError.malformedPayload("photo response: \(error.localizedDescription)")
+        }
     }
 
     /// Split from the request so the decode — the part with rules of its own — tests dry.

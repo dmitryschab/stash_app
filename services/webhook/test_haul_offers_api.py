@@ -74,8 +74,9 @@ def pages(monkeypatch):
     return state
 
 
-def og_page(image):
-    return f'<html><head><meta property="og:image" content="{image}"></head><body></body></html>'
+def og_page(image, title=""):
+    return (f'<html><head><title>{title}</title>'
+            f'<meta property="og:image" content="{image}"></head><body></body></html>')
 
 
 def refuse(monkeypatch):
@@ -374,6 +375,18 @@ def test_the_picture_is_cached_with_the_offers(store, provider, pages):
     assert pages["fetched"] == [BRAND]
 
 
+def test_a_brands_logo_card_is_not_a_product_photo():
+    # logitech.com answers every page with the same "logi" logo card; under a product name it
+    # is a lie, and the video's own frame is the better picture.
+    html = """<head>
+      <meta property="og:image" content="https://resource.logitech.com/logitech-global-og-image.png">
+      <meta property="og:image" content="https://resource.logitech.com/mx-master-3s-top.png">
+    </head>"""
+    assert haul_offers_api.og_image(html) == "https://resource.logitech.com/mx-master-3s-top.png"
+    assert haul_offers_api.og_image(
+        '<meta property="og:image" content="https://x.example/social-share.jpg">') is None
+
+
 def test_og_image_reads_either_attribute_order_and_unescapes():
     html = """<head>
       <meta content="https://x.example/a.jpg?w=1&amp;h=2" property='og:image' />
@@ -598,3 +611,196 @@ def test_a_bad_country_code_is_refused(store, monkeypatch):
     with TestClient(app) as client:
         response = client.post("/v1/haul/offers", json={"name": "x", "country": "Latvia"})
     assert response.status_code == 422
+
+
+# ------------------------------------------------------------------ photo route
+
+LINK = "https://www.baseus.com/products/security-s1-pro"
+PAGE_TITLE = "Baseus Security S1 Pro Outdoor Camera | 220.lv"
+FOUND = "https://www.220.lv/en/baseus-security-s1-pro"
+
+
+@pytest.fixture
+def search_results(monkeypatch):
+    """Stand in for the keyless web search behind the photo route: the pages it would find."""
+    state = {"pages": [], "queries": []}
+
+    def shop_pages(name, kind, limit=3):
+        state["queries"].append({"name": name, "kind": kind})
+        return state["pages"][:limit]
+
+    monkeypatch.setattr(haul_offers_api, "shop_pages", shop_pages)
+    return state
+
+
+def photo(client, name="Baseus Security S1 Pro", kind="camera", link=None):
+    body = {"name": name, "kind": kind}
+    if link:
+        body["link"] = link
+    return client.post("/v1/haul/photo", json=body)
+
+
+def test_the_videos_own_link_is_the_first_place_the_photo_is_looked_for(store, pages, search_results):
+    pages["pages"][LINK] = og_page("https://cdn.baseus.com/s1-pro.jpg")
+    search_results["pages"] = [FOUND]
+
+    with TestClient(app) as client:
+        body = photo(client, link=LINK).json()
+
+    assert body == {"imageURL": "https://cdn.baseus.com/s1-pro.jpg", "cached": False}
+    # The search is never run: the creator's own link already named the seller.
+    assert pages["fetched"] == [LINK]
+    assert search_results["queries"] == []
+
+
+def test_a_pick_with_no_link_falls_back_to_the_search(store, pages, search_results):
+    search_results["pages"] = [FOUND]
+    pages["pages"][FOUND] = og_page("https://img.220.lv/s1-pro.jpg", PAGE_TITLE)
+
+    with TestClient(app) as client:
+        body = photo(client).json()
+
+    assert body["imageURL"] == "https://img.220.lv/s1-pro.jpg"
+    assert search_results["queries"] == [{"name": "Baseus Security S1 Pro", "kind": "camera"}]
+
+
+def test_a_pictureless_first_result_falls_through_to_the_next(store, pages, search_results):
+    search_results["pages"] = [FOUND, LINK]
+    pages["pages"][FOUND] = f"<html><head><title>{PAGE_TITLE}</title></head></html>"
+    pages["pages"][LINK] = og_page("https://cdn.baseus.com/s1-pro.jpg", PAGE_TITLE)
+
+    with TestClient(app) as client:
+        assert photo(client).json()["imageURL"] == "https://cdn.baseus.com/s1-pro.jpg"
+    assert pages["fetched"] == [FOUND, LINK]
+
+
+def test_no_photo_anywhere_is_an_honest_null(store, pages, search_results):
+    search_results["pages"] = [FOUND]
+    pages["pages"][FOUND] = RuntimeError("connection reset")
+
+    with TestClient(app) as client:
+        response = photo(client)
+
+    assert response.status_code == 200
+    assert response.json()["imageURL"] is None
+
+
+def test_the_photo_is_cached_and_a_miss_is_cached_too(store, pages, search_results):
+    search_results["pages"] = [FOUND]
+    pages["pages"][FOUND] = og_page("https://img.220.lv/s1-pro.jpg", PAGE_TITLE)
+
+    with TestClient(app) as client:
+        first = photo(client).json()
+        second = photo(client).json()
+        search_results["pages"] = [FOUND]   # the search answers, the page does not
+        pages["pages"][FOUND] = "<html><head><title>220.lv</title></head></html>"
+        miss = photo(client, name="Nothing Sells This").json()
+        miss_again = photo(client, name="Nothing Sells This").json()
+
+    assert first["cached"] is False and second == {"imageURL": first["imageURL"], "cached": True}
+    assert miss["imageURL"] is None and miss_again == {"imageURL": None, "cached": True}
+    # One page read for the hit, one for the miss — the cache answered the repeats.
+    assert pages["fetched"] == [FOUND, FOUND]
+
+
+def test_the_photo_lookup_spends_no_model_and_no_cap(store, pages, search_results, monkeypatch):
+    monkeypatch.setenv("OFFER_DAILY_CAP", "1")
+    refuse(monkeypatch)
+    search_results["pages"] = [FOUND]
+    pages["pages"][FOUND] = og_page("https://img.220.lv/s1-pro.jpg", PAGE_TITLE)
+
+    with TestClient(app) as client:
+        for _ in range(3):
+            assert photo(client, name=f"thing {_}").status_code == 200
+    assert store.table.get_item(Key={"PK": store.partition, "SK": "OFFERCAP"}).get("Item") is None
+
+
+def test_a_blank_photo_name_is_refused(store):
+    with TestClient(app) as client:
+        assert client.post("/v1/haul/photo", json={"name": " "}).status_code == 422
+
+
+def test_a_photo_caller_without_a_session_is_refused():
+    with TestClient(app) as client:
+        assert client.post("/v1/haul/photo", json={"name": "x"}).status_code == 401
+
+
+# ------------------------------------------------------------------ the search behind the photo
+
+
+class FakeSearch:
+    """One canned DuckDuckGo HTML answer."""
+
+    def __init__(self, html, status=200):
+        self.html, self.status, self.calls = html, status, []
+
+    def __call__(self, url, params=None, headers=None, timeout=None):
+        self.calls.append({"url": url, "params": params})
+        return type("Response", (), {"status_code": self.status, "text": self.html})()
+
+
+def ddg(*hrefs):
+    links = "".join(f'<a rel="nofollow" class="result__a" href="{href}">result</a>' for href in hrefs)
+    return f"<html><body>{links}</body></html>"
+
+
+def test_the_search_unwraps_duckduckgos_redirect_and_keeps_only_listings(monkeypatch):
+    search = FakeSearch(ddg(
+        "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.amazon.de%2Fdp%2FB0ABC&rut=x",
+        "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.baseus.com%2Fproducts%2Fs1-pro&rut=x",
+        "https://www.tiktok.com/@baseus.us/video/123",
+        "https://hub.sync.baseus.com/s1-pro",
+        "https://www.thestyleshaker.com/product-reviews/baseus-s1-pro",
+        "https://www.220.lv/en/p/baseus-s1-pro",
+    ))
+    monkeypatch.setattr(haul_offers_api.requests, "get", search)
+
+    # Amazon and TikTok are not catalogs; a hub page and a review are not listings.
+    assert haul_offers_api.shop_pages("Baseus Security S1 Pro", "camera") == [
+        "https://www.baseus.com/products/s1-pro", "https://www.220.lv/en/p/baseus-s1-pro"]
+    assert search.calls[0]["params"] == {"q": "Baseus Security S1 Pro camera"}
+
+
+def test_a_shop_that_serves_one_brand_card_everywhere_falls_back_to_its_schema(store, pages, search_results):
+    # logitech.com's og:image is the "logi" logo on every page; its JSON-LD names the mouse.
+    search_results["pages"] = [FOUND]
+    pages["pages"][FOUND] = """<html><head><title>Baseus Security S1 Pro outdoor camera</title>
+      <meta property="og:image" content="https://resource.logitech.com/logitech-global-og-image.png">
+      <script type="application/ld+json">{"@type": "Product", "name": "MX Master 3S",
+        "image": "https://resource.logitech.com/mx-master-3s-top-view.png"}</script>
+    </head></html>"""
+
+    with TestClient(app) as client:
+        assert photo(client).json()["imageURL"] == \
+            "https://resource.logitech.com/mx-master-3s-top-view.png"
+
+
+def test_a_blocked_search_costs_only_the_photo(monkeypatch):
+    monkeypatch.setattr(haul_offers_api.requests, "get", FakeSearch("<html>anomaly</html>", 403))
+    assert haul_offers_api.shop_pages("Baseus Security S1 Pro", "camera") == []
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(haul_offers_api.requests, "get", explode)
+    assert haul_offers_api.shop_pages("x", "") == []
+
+
+def test_a_page_that_is_not_about_this_product_keeps_its_picture(store, pages, search_results):
+    # Live: "Umbra desk lamp" found a shop selling a different brand's Umbra table lamp, and
+    # its photo would have sat on the pick page as if it were the thing.
+    search_results["pages"] = [FOUND]
+    pages["pages"][FOUND] = og_page("https://bomma.cz/umbra-table-lamp.png",
+                                    "Umbra table lamp | BOMMA")
+
+    with TestClient(app) as client:
+        body = photo(client, name="Umbra desk lamp", kind="lamp").json()
+
+    assert body["imageURL"] is None
+
+
+def test_accents_and_punctuation_do_not_break_the_name_match():
+    assert haul_offers_api.page_is_about(
+        "Ikea Skadis pegboard", "<title>SKÅDIS pegboard, white - IKEA</title>")
+    assert not haul_offers_api.page_is_about(
+        "Ikea Skadis pegboard", "<title>SKÅDIS shelf, white - IKEA</title>")

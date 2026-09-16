@@ -3,6 +3,8 @@
   POST /v1/haul/offers  {name, kind, country} -> {offers: [...], checkedAt, cached}
   Dead shop links are dropped before caching; one survivor may carry imageURL,
   the shop page's og:image, which becomes the pick's catalog photo.
+  POST /v1/haul/photo   {name, kind, link} -> {imageURL, cached}
+  The same catalog photo without the prices: a keyless web search, then og:image.
 
 Its own module and its own router, mounted in app.py, like embeddings_api before it.
 
@@ -36,10 +38,11 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from html import unescape
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -78,6 +81,9 @@ _TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 
 MAX_OFFERS = 3
 CACHE_HOURS = 24
+# A catalog photo outlives a price: shops reshoot a product about never. A month also keeps the
+# photo route free even while an answer sits behind a shop that has started refusing bots.
+PHOTO_CACHE_HOURS = 24 * 30
 # A shopping session opens a couple dozen picks; a hundred uncached lookups is ~a dollar.
 OFFER_DAILY_CAP = 100
 
@@ -273,8 +279,16 @@ def _page(url: str) -> tuple[int | None, str]:
         return None, ""
 
 
+# Measured on live shops: logitech.com serves "logitech-global-og-image.png" — the company
+# logo on a green card — as the og:image of every page it has. A brand card under a product
+# name is a wrong picture, which is worse than the video's own frame, so these never pass.
+_GENERIC_IMAGE = ("og-image", "og_image", "ogimage", "logo", "social", "share",
+                  "default", "placeholder", "banner")
+_JSON_LD_IMAGE = re.compile(r'"image"\s*:\s*(?:\[\s*)?"(https?://[^"]+)"', re.I)
+
+
 def og_image(html: str) -> str | None:
-    """The page's og:image when it is an absolute http(s) URL, else None."""
+    """The page's og:image when it is an absolute http(s) URL and shows a product, else None."""
     for tag in _META_TAG.findall(html):
         if not _OG_IMAGE.search(tag):
             continue
@@ -282,9 +296,129 @@ def og_image(html: str) -> str | None:
         if not match:
             continue
         url = unescape(match.group(1) or match.group(2) or "").strip()
-        if urlparse(url).scheme in ("http", "https"):
+        if _shows_a_product(url):
+            return url
+        log.info("skipping generic og:image %s", url)
+    # Shops that hand every page the same brand card still describe the product properly in
+    # their schema.org block, and its "image" is the catalog shot.
+    for url in _JSON_LD_IMAGE.findall(html):
+        if _shows_a_product(url):
             return url
     return None
+
+
+def _shows_a_product(url: str) -> bool:
+    if urlparse(url).scheme not in ("http", "https"):
+        return False
+    file = urlparse(url).path.rsplit("/", 1)[-1].lower()
+    return not any(word in file for word in _GENERIC_IMAGE)
+
+
+DDG_URL = "https://html.duckduckgo.com/html/"
+# The shops whose page is a bot check, a feed or a marketplace listing of somebody's used one:
+# none of them hands back the catalog photo the product's own seller publishes.
+_NOT_A_CATALOG = ("amazon.", "tiktok.com", "instagram.", "facebook.", "youtube.", "pinterest.",
+                  "ebay.", "aliexpress.", "reddit.com", "wikipedia.org")
+_DDG_LINK = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"', re.I)
+# The page has to be the thing's own listing. Measured live: without this, "Logitech MX Master
+# 3S" settled on hub.sync.logitech.com and its "Welcome to Logitech Hub" banner — a wrong
+# picture, which the frame from the video beats.
+_PRODUCT_PATH = ("/product/", "/products/", "/p/", "/dp/", "/shop/", "/item/")
+
+
+def shop_pages(name: str, kind: str, limit: int = 3) -> list[str]:
+    """The first few product pages a plain web search finds for the pick, best first.
+
+    DuckDuckGo's HTML endpoint, because it needs no key and no account: this lookup must keep
+    working on the day OpenRouter does not. A blocked or changed page yields no links, which
+    costs the pick its photo and nothing else.
+    """
+    query = " ".join(part for part in (name, kind) if part)
+    try:
+        response = requests.get(DDG_URL, params={"q": query}, headers=_PAGE_HEADERS,
+                                timeout=PAGE_TIMEOUT)
+        html = response.text if response.status_code == 200 else ""
+    except Exception as error:
+        log.info("photo search unread (%s): %s", query, error)
+        return []
+
+    pages: list[str] = []
+    for href in _DDG_LINK.findall(html):
+        url = unescape(href)
+        # DDG wraps results as /l/?uddg=<encoded>; older layouts link straight out.
+        if "uddg=" in url:
+            url = unquote(parse_qs(urlparse(url).query).get("uddg", [""])[0])
+        if url.startswith("//"):
+            url = "https:" + url
+        host = (urlparse(url).hostname or "").lower()
+        if urlparse(url).scheme not in ("http", "https") or not host:
+            continue
+        if any(skip in host for skip in _NOT_A_CATALOG) or url in pages:
+            continue
+        if not any(part in urlparse(url).path.lower() for part in _PRODUCT_PATH):
+            continue  # a review, a hub, a category: pages that picture something else
+        pages.append(url)
+        if len(pages) == limit:
+            break
+    return pages
+
+
+def product_photo(name: str, kind: str = "", link: str | None = None) -> str | None:
+    """The product's own catalog photo, from the first page that publishes one.
+
+    The video's own link leads when it has one — a creator linking the product links the seller
+    — and a web search supplies the rest. Same og:image reader the offers path uses, so a pick
+    gets the same picture whether its prices answered or not.
+    """
+    if link:
+        status, html = _page(link)
+        if status == 200 and (image := og_image(html)):
+            return image  # a linked seller answers before any search is run
+    for url in shop_pages(name, kind):
+        if url == link:
+            continue
+        status, html = _page(url)
+        if status != 200 or not page_is_about(name, html):
+            continue
+        if image := og_image(html):
+            return image
+    return None
+
+
+_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+_OG_TITLE = re.compile(r"""\b(?:property|name)\s*=\s*["']og:title["']""", re.I)
+# PickFrames.matchFloor, replayed: a page has to carry three quarters of the pick's words
+# before its picture may claim to be the pick. Measured live, this is what separates
+# keychron.com's K3 listing from a lamp shop that merely sells something called Umbra.
+NAME_MATCH_FLOOR = 0.75
+
+
+def page_is_about(name: str, html: str) -> bool:
+    """Does this page's own title name the product the pick names?
+
+    The search will answer something for any words at all: "Umbra desk lamp" found a Czech shop
+    selling a different brand's Umbra table lamp, and its photo would have sat on the pick page
+    as if it were the thing. A wrong picture is worse than the video's own frame.
+    """
+    wanted = _words(name)
+    if not wanted:
+        return False
+    titles = [unescape(match) for match in _TITLE.findall(html)]
+    for tag in _META_TAG.findall(html):
+        if _OG_TITLE.search(tag) and (match := _CONTENT.search(tag)):
+            titles.append(unescape(match.group(1) or match.group(2) or ""))
+    for title in titles:
+        present = set(_words(title))
+        if sum(word in present for word in wanted) / len(wanted) >= NAME_MATCH_FLOOR:
+            return True
+    return False
+
+
+def _words(text: str) -> list[str]:
+    """Lowercased alphanumeric runs, accents folded — "SKÅDIS" and "skadis" are one word."""
+    folded = unicodedata.normalize("NFKD", text.lower())
+    stripped = "".join(char for char in folded if not unicodedata.combining(char))
+    return [word for word in re.split(r"[^a-z0-9]+", stripped) if word]
 
 
 def verify_offers(offers: list[dict]) -> list[dict]:
@@ -331,12 +465,20 @@ def _cache_key(country: str, name: str) -> dict[str, str]:
     return {"PK": f"OFFERS#{digest}", "SK": "OFFERS"}
 
 
-def _fresh(item: dict) -> bool:
+def _photo_key(name: str) -> dict[str, str]:
+    """No country in the key: a shop's catalog photo of a product is the same picture in every
+    country, so one lookup serves every buyer who saved it."""
+    slug = " ".join(name.lower().split())
+    digest = hashlib.sha256(f"photo|{slug}".encode()).hexdigest()[:24]
+    return {"PK": f"PHOTO#{digest}", "SK": "PHOTO"}
+
+
+def _fresh(item: dict, hours: int = CACHE_HOURS) -> bool:
     try:
         checked = datetime.fromisoformat(item["checkedAt"])
     except (KeyError, TypeError, ValueError):
         return False
-    return datetime.now(timezone.utc) - checked < timedelta(hours=CACHE_HOURS)
+    return datetime.now(timezone.utc) - checked < timedelta(hours=hours)
 
 
 def _offers_out(stored: list) -> list[dict]:
@@ -445,3 +587,45 @@ def haul_offers(body: OfferRequest, store: DynamoImportStore = Depends(entitled_
     # re-asking on every open would spend the cap proving it.
     store.table.put_item(Item={**key, "offers": _dynamo_value(offers), "checkedAt": checked_at})
     return {"offers": offers, "checkedAt": checked_at, "cached": False}
+
+
+class PhotoRequest(BaseModel):
+    name: str
+    kind: str = ""
+    # The link the video itself gave, when it gave one. Checked before any search.
+    link: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_must_say_something(cls, value: str) -> str:
+        value = value.strip()
+        if not value or len(value) > 200:
+            raise ValueError("name must be 1..200 characters")
+        return value
+
+    @field_validator("link")
+    @classmethod
+    def link_is_a_web_address(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        return value if urlparse(value).scheme in ("http", "https") else None
+
+
+@router.post("/haul/photo")
+def haul_photo(body: PhotoRequest, store: DynamoImportStore = Depends(entitled_store)):
+    """The pick's catalog photo — the seller's own product shot — or null.
+
+    Deliberately not part of /haul/offers: a picture must not depend on a price search that has
+    a bad day, which is the whole reason a pick was still wearing a frame of the video. No
+    quota moves, because no model runs here: this is a search page and at most three HEAD-sized
+    reads. A miss is cached too, so a product nobody photographs is asked about once a month.
+    """
+    key = _photo_key(body.name)
+    cached = store.table.get_item(Key=key).get("Item")
+    if cached and _fresh(cached, hours=PHOTO_CACHE_HOURS):
+        return {"imageURL": cached.get("imageURL") or None, "cached": True}
+
+    image = product_photo(body.name, body.kind, body.link)
+    checked_at = datetime.now(timezone.utc).isoformat()
+    store.table.put_item(Item={**key, "imageURL": image or "", "checkedAt": checked_at})
+    return {"imageURL": image, "cached": False}
