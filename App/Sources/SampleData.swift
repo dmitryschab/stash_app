@@ -347,6 +347,12 @@ enum SampleData {
                     "summary": "Actors serialize access to mutable state, so cross-task access is race-free by construction.",
                     "links": ["https://developer.apple.com/documentation/swift/actor", "https://www.swift.org/documentation/concurrency/"],
                     "techTags": ["swift", "concurrency", "actors"],
+                    "kind": "explainer",
+                    "items": [
+                        ["text": "An actor lets one task touch its state at a time", "detail": "Every call queues behind the one running, so two tasks never write the same property together."],
+                        ["text": "Calls from outside are async", "detail": "The await is where your task waits its turn."],
+                        ["text": "Reach for an actor before a lock", "detail": "The compiler checks an actor; a lock it cannot."],
+                    ],
                 ])
             ),
             make(
@@ -365,6 +371,12 @@ enum SampleData {
                     "summary": "git worktree add ../hotfix main checks a branch out beside the repo and leaves the current tree untouched.",
                     "links": ["https://git-scm.com/docs/git-worktree"],
                     "techTags": ["git", "cli"],
+                    "kind": "howto",
+                    "items": [
+                        ["text": "git worktree add ../hotfix main", "detail": "Checks main out into a sibling folder."],
+                        ["text": "Fix and commit inside ../hotfix", "detail": ""],
+                        ["text": "git worktree remove ../hotfix", "detail": "Back in the original tree nothing was ever stashed."],
+                    ],
                 ]),
                 buysJSON: json([
                     ["name": "Keychron K3 Pro low profile", "kind": "keyboard", "price": "$94"],
@@ -386,6 +398,45 @@ enum SampleData {
                     "summary": "grid-template-rows: subgrid makes a nested grid use its parent's track lines instead of its own.",
                     "links": ["https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout/Subgrid"],
                     "techTags": ["css", "layout", "frontend"],
+                    "kind": "explainer",
+                    "items": [
+                        ["text": "grid-template-rows: subgrid", "detail": "The child grid adopts its parent's row lines."],
+                        ["text": "Titles align because they share a track", "detail": ""],
+                        ["text": "Cards still size themselves", "detail": "Only the named tracks are shared."],
+                    ],
+                ])
+            ),
+            make(
+                id: "7234567890000000023",
+                url: "https://www.tiktok.com/@shipcheck/video/7234567890000000023",
+                daysAgo: 4,
+                author: "shipcheck",
+                caption: "before you put it on the internet #vibecoding #webdev",
+                hashtags: ["vibecoding", "webdev"],
+                category: .coding,
+                title: "Ship checklist for a vibe coded app",
+                summary: "Twelve things to lock down before a side project takes real users.",
+                topics: ["security", "launch"],
+                transcript: "These are the things I check before anything I built goes live.",
+                codeJSON: json([
+                    "summary": "The pre-launch pass: limits, validation, secrets, states, monitoring.",
+                    "links": [],
+                    "techTags": ["security", "webdev", "launch"],
+                    "kind": "checklist",
+                    "items": [
+                        ["text": "Rate limit every public endpoint", "detail": ""],
+                        ["text": "Put a spending cap on every API key", "detail": ""],
+                        ["text": "Validate input on the server, not just the form", "detail": ""],
+                        ["text": "Keep secrets in env vars, never in the bundle", "detail": ""],
+                        ["text": "Add error handling to every fetch", "detail": ""],
+                        ["text": "Add loading and empty states", "detail": ""],
+                        ["text": "Paginate long results", "detail": ""],
+                        ["text": "Index the columns you filter on", "detail": ""],
+                        ["text": "Limit upload size", "detail": ""],
+                        ["text": "Cache repeat requests", "detail": ""],
+                        ["text": "Set up uptime monitoring", "detail": ""],
+                        ["text": "Back up the database on a schedule", "detail": ""],
+                    ],
                 ])
             ),
             make(

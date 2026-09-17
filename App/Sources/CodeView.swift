@@ -119,7 +119,8 @@ struct CodeView: View {
         let summary = note.flatMap { $0.summary.isEmpty ? nil : $0.summary } ?? video.summary
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Micro(text: "Latest save", size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.65))
+                Micro(text: ["Latest save", note?.shelfLabel].compactMap { $0 }.joined(separator: " · "),
+                      size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.65))
                 Spacer()
                 Micro(text: video.bookmarkedAt.formatted(.relative(presentation: .named)), size: 10, tracking: 2, color: .stashOnAccent.opacity(0.65))
             }
@@ -188,8 +189,9 @@ struct CodeView: View {
 
 // MARK: - Row
 
-/// Compact row: the first tech tag in green, then the link count — or the author when the
-/// save points nowhere. The green up-right arrow is the tell for a save with links.
+/// Compact row: the first tech tag in green, then what the save holds — "checklist · 20",
+/// "6 tools" — falling back to the link count, then the author when the save points nowhere.
+/// The green up-right arrow is the tell for a save with links.
 private struct CodeRow: View {
     let video: Video
 
@@ -208,7 +210,7 @@ private struct CodeRow: View {
                     if let tag {
                         Micro(text: tag, size: 10, tracking: 1.2, color: .categoryCoding)
                     }
-                    Text(meta(links: links, tagged: tag != nil))
+                    Text(meta(label: note?.shelfLabel, links: links, tagged: tag != nil))
                         .font(.archivo(12))
                         .foregroundStyle(Color.stashInk.opacity(0.55))
                         .lineLimit(1)
@@ -222,9 +224,11 @@ private struct CodeRow: View {
         .padding(.vertical, 9)
     }
 
-    private func meta(links: Int, tagged: Bool) -> String {
+    private func meta(label: String?, links: Int, tagged: Bool) -> String {
         let tail: String
-        if links > 0 {
+        if let label {
+            tail = label
+        } else if links > 0 {
             tail = "\(links) link\(links == 1 ? "" : "s")"
         } else if !video.author.isEmpty {
             tail = "@\(video.author)"

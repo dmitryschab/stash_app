@@ -333,7 +333,9 @@ object, no prose and no Markdown code fences. Use this exact shape:
   "recipe": { "name": string, "ingredients": [string], "steps": [string] } | null,
   "music": [ { "kind": "album" | "track", "title": string, "artist": string } ],
   "films": [ { "title": string, "year": integer | null } ],
-  "code": { "summary": string, "links": [string], "techTags": [string] } | null,
+  "code": { "summary": string, "links": [string], "techTags": [string],
+            "kind": "checklist" | "tools" | "howto" | "explainer",
+            "items": [ { "text": string, "detail": string } ] } | null,
   "buys": [ { "name": string, "kind": string, "price": string } ]
 }
 recipe, music, films and code belong to a category: fill the one matching the category you chose
@@ -357,7 +359,7 @@ characters. Use empty strings or arrays when information is missing. NEVER outpu
 prose such as "No Content Provided" or "Untitled Video". If caption and transcript are both
 empty, use title "Saved video" and summary "No caption or audio was available for this save."
 
-Three categories carry extra structure, and the Cook, Music and film screens are empty without it:
+Four categories carry extra structure, and the Cook, Music, film and Code screens are empty without it:
 - category recipe: fill the "recipe" object only when the source actually lists a name,
   ingredients or steps; leave it null rather than inventing a recipe. Write every quantity in
   metric — grams, millilitres, °C, centimetres. Convert cups, ounces, pounds and °F rather
@@ -379,6 +381,20 @@ Three categories carry extra structure, and the Cook, Music and film screens are
   and never pad a list with guesses. A TV series is not a film: exclude series, episodes and
   seasons. Set "year" only when the source states that movie's release year; otherwise use null.
   Never add poster URLs, artwork, links or any field besides title and year.
+- category coding: fill "code" with the shape of the post, because each shape is shown
+  differently. Set "kind" to exactly one of: "checklist" for a list of things to do, check,
+  avoid or have ("20 things before you launch", "9 console commands for more FPS"); "tools" for
+  a roundup of named software, repos, apps, libraries, models or services ("6 Claude Code
+  plugins", "crazy GitHub projects this week"); "howto" for one procedure done in order
+  ("self-host Matrix with Docker and Caddy"); "explainer" for a concept, opinion, comparison or
+  news item with nothing to tick off ("why SSR matters for SEO"). Then fill "items" in source
+  order, at most 25, one entry per point the post actually makes: for a checklist every listed
+  thing; for tools every named tool, with "text" the tool's name as written and "detail" what it
+  does in one short clause; for a howto every step; for an explainer the three to six takeaways.
+  Read the list off the on-screen text when there is one — it is usually the only place the full
+  list appears — and never pad to an advertised count: a "20 things" post whose text shows 17
+  has 17 items. Set "detail" to "" when the post says nothing more about that item. Keep
+  "summary", "techTags" and "links" as before, and put in "links" only URLs the post states.
 
 "buys" — things the user might want to own, collected from every category into one shelf.
 Ask one question: is a specific, purchasable product a FOCAL POINT of this post? If the video

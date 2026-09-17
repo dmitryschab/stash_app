@@ -197,16 +197,129 @@ struct VideoDetailView: View {
         return pick.link == nil ? kind + who + " · no match found" : kind + who
     }
 
+    /// The shaped code note: one row per item, laid out by `CodeData.shape` — tick boxes for a
+    /// checklist, numbers for a howto, a link per tool, plain takeaways for an explainer. A save
+    /// analyzed before shapes existed has no items and keeps the plain note card.
     @ViewBuilder
     private func codeSection(_ code: CodeData) -> some View {
-        sectionHeader("Code note")
-        VStack(alignment: .leading, spacing: 10) {
-            if !code.summary.isEmpty {
-                Text(code.summary)
-                    .font(.archivo(14))
-                    .foregroundStyle(Color.stashInk)
-                    .lineSpacing(3)
+        if code.items.isEmpty {
+            codeNoteCard(code)
+        } else {
+            sectionHeader(code.headline(checked: code.items.filter(video.isChecked).count))
+            VStack(spacing: 0) {
+                ForEach(Array(code.items.enumerated()), id: \.offset) { index, item in
+                    codeItemRow(index: index, item: item, shape: code.shape, links: code.links)
+                    if code.shape != .howto {
+                        Divider().overlay(Color.stashInk.opacity(0.12))
+                    }
+                }
             }
+            .padding(.top, 4)
+            if !code.links.isEmpty || !code.techTags.isEmpty {
+                codeFooter(code)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func codeItemRow(index: Int, item: CodeItem, shape: CodeData.Kind, links: [URL]) -> some View {
+        switch shape {
+        case .checklist:
+            let checked = video.isChecked(item)
+            Button {
+                video.setChecked(!checked, for: item)
+                try? context.save()
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        Rectangle().strokeBorder(tint, lineWidth: 1.5)
+                        if checked {
+                            Rectangle().fill(tint)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(Color.stashOnAccent)
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    .padding(.top, 1)
+                    codeItemText(item, dimmed: checked)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(checked ? "Checked" : "Not checked")
+        case .howto:
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("\(index + 1)")
+                    .font(.archivo(19, .heavy))
+                    .foregroundStyle(tint)
+                    .frame(width: 22, alignment: .leading)
+                codeItemText(item, dimmed: false)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 9)
+        case .tools:
+            Link(destination: toolURL(for: item, in: links)) {
+                HStack(alignment: .top, spacing: 12) {
+                    codeItemText(item, dimmed: false)
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(tint)
+                        .padding(.top, 2)
+                }
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Open \(item.text)")
+        case .explainer:
+            HStack(alignment: .top, spacing: 12) {
+                Rectangle().fill(tint)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 6)
+                codeItemText(item, dimmed: false)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 9)
+        }
+    }
+
+    private func codeItemText(_ item: CodeItem, dimmed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.text)
+                .font(.archivo(14, .semibold))
+                .foregroundStyle(Color.stashInk.opacity(dimmed ? 0.45 : 1))
+                .strikethrough(dimmed, color: Color.stashInk.opacity(0.45))
+                .multilineTextAlignment(.leading)
+            if !item.detail.isEmpty {
+                Text(item.detail)
+                    .font(.archivo(12.5))
+                    .foregroundStyle(Color.stashInk.opacity(dimmed ? 0.35 : 0.6))
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A stated link that names the tool wins; otherwise a GitHub search for it.
+    // ponytail: no repo resolver — a search page is one tap from the repo and needs no API key.
+    private func toolURL(for item: CodeItem, in links: [URL]) -> URL {
+        let needle = item.text.lowercased().filter { !$0.isWhitespace }
+        if !needle.isEmpty,
+           let link = links.first(where: { $0.absoluteString.lowercased().contains(needle) }) {
+            return link
+        }
+        var parts = URLComponents(string: "https://github.com/search")!
+        parts.queryItems = [URLQueryItem(name: "q", value: item.text),
+                            URLQueryItem(name: "type", value: "repositories")]
+        return parts.url!
+    }
+
+    private func codeFooter(_ code: CodeData) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(code.links, id: \.self) { link in
                 Link(destination: link) {
                     HStack(spacing: 7) {
@@ -223,9 +336,40 @@ struct VideoDetailView: View {
                     .foregroundStyle(Color.categoryCoding)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .stashOutlineCard()
-        .padding(.top, 8)
+        .padding(.top, 12)
+    }
+
+    /// The pre-shape note: summary, links and tags in one card.
+    private func codeNoteCard(_ code: CodeData) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Code note")
+            VStack(alignment: .leading, spacing: 10) {
+                if !code.summary.isEmpty {
+                    Text(code.summary)
+                        .font(.archivo(14))
+                        .foregroundStyle(Color.stashInk)
+                        .lineSpacing(3)
+                }
+                ForEach(code.links, id: \.self) { link in
+                    Link(destination: link) {
+                        HStack(spacing: 7) {
+                            Image(systemName: "link").font(.system(size: 11, weight: .bold))
+                            Text(link.host ?? link.absoluteString)
+                                .font(.archivo(13, .semibold))
+                        }
+                        .foregroundStyle(Color.categoryCoding)
+                    }
+                }
+                if !code.techTags.isEmpty {
+                    Text(code.techTags.map { "#\($0)" }.joined(separator: " "))
+                        .font(.archivo(12, .semibold))
+                        .foregroundStyle(Color.categoryCoding)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .stashOutlineCard()
+            .padding(.top, 8)
+        }
     }
 
     /// What this save is selling. Shown on every category, because that is what `BuyPick` is —

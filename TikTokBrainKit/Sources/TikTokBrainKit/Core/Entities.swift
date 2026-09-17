@@ -25,6 +25,9 @@ import SwiftData
     /// need an on-open backfill; encoded `[]` means analysis ran and found no explicit movies.
     public var filmsJSON: Data? = nil
     public var codeJSON: Data?
+    /// Normalized `CodeItem.text` keys the user has ticked on a checklist save (`isChecked`).
+    /// Defaulted so stores written before checklists existed open without a migration.
+    public var codeChecksJSON: Data? = nil
     /// JSONEncoder-encoded [BuyPick]. Optional with a default, so adding it is a SwiftData
     /// lightweight migration and an existing library opens unchanged — it simply has no picks
     /// until the analysis that fills them runs again.

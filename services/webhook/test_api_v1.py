@@ -358,6 +358,19 @@ def test_film_extraction_rules_reach_the_analyzer(analyzer_calls):
     assert "TV series" in system
 
 
+def test_code_extraction_rules_reach_the_analyzer(analyzer_calls):
+    """The shared analyzer contract must ask for the shape of a coding post and its items."""
+    api_v1.analyze_metadata({"caption": "20 things to do before you launch #vibecoding"})
+
+    system = analyzer_calls[-1]["body"]["messages"][0]["content"]
+    assert '"kind"' in system
+    assert '"items"' in system
+    for kind in ("checklist", "tools", "howto", "explainer"):
+        assert f'"{kind}"' in system
+    assert "never pad" in system
+    assert "on-screen text" in system
+
+
 def test_every_slide_reaches_the_vision_model_in_order(monkeypatch, analyzer_calls):
     """A slideshow's list lives on its later slides; the model must see all of them, in the
     order the post shows them, or a seven-slide topster reads as a one-image meme."""

@@ -44,7 +44,30 @@ public struct RecipeData: Codable, Equatable, Sendable { public var name: String
 /// Legacy single-track shape. Superseded by `MusicPick`; kept only so saves written before
 /// multi-pick extraction, and any in-flight model response still using the old key, still read.
 public struct TrackData: Codable, Equatable, Sendable { public var title: String; public var artist: String; public var universalLink: URL? }
-public struct CodeData: Codable, Equatable, Sendable { public var summary: String; public var links: [URL]; public var techTags: [String] }
+/// The coding payload. `kind` and `items` arrived with the shaped Code screen; saves analyzed
+/// before then decode with `kind == nil` and no items and keep rendering as the plain note.
+public struct CodeData: Codable, Equatable, Sendable {
+    public static let maxItems = 25
+
+    public var summary: String
+    public var links: [URL]
+    public var techTags: [String]
+    /// The shape of the post, or nil for a legacy save or an off-list answer from the model.
+    public var kind: Kind?
+    /// One entry per point the post makes, in source order, cleaned by `CodeItem.cleaned`.
+    public var items: [CodeItem]
+
+    private enum CodingKeys: String, CodingKey { case summary, links, techTags, kind, items }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try values.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        links = try values.decodeIfPresent([URL].self, forKey: .links) ?? []
+        techTags = try values.decodeIfPresent([String].self, forKey: .techTags) ?? []
+        kind = (try? values.decode(String.self, forKey: .kind)).flatMap(Kind.init(rawValue:))
+        items = CodeItem.cleaned((try? values.decode([CodeItem].self, forKey: .items)) ?? [])
+    }
+}
 
 /// One release a video recommends.
 ///
