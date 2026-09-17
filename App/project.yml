@@ -58,11 +58,14 @@ targets:
         # Import continues in background windows granted by BGTaskScheduler. Two identifiers,
         # because the two jobs want opposite conditions: `.process` finishes an import the user
         # started and must not wait for a charger, while `.deeppass` deepens the whole library
-        # and asks for external power (PipelineCenter.scheduleDeepPassProcessing).
-        UIBackgroundModes: [processing]
+        # and asks for external power (PipelineCenter.scheduleDeepPassProcessing). `.refresh`
+        # is the third: a seconds-long poll of the box while the app is closed, so a finished
+        # cloud import ends in a notification (PipelineCenter.scheduleCloudRefresh).
+        UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - dev.dmitryschab.Stash.process
           - dev.dmitryschab.Stash.deeppass
+          - dev.dmitryschab.Stash.refresh
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash

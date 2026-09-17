@@ -9,6 +9,7 @@ import SwiftUI
 
 struct DataDownloadGuideView: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(PipelineCenter.exportRequestedKey) private var exportRequestedAt = 0.0
 
     var body: some View {
         NavigationStack {
@@ -41,6 +42,14 @@ struct DataDownloadGuideView: View {
                     ]).padding(.top, 22)
 
                     privacyNote.padding(.top, 24)
+
+                    // Turns every empty tab into "waiting on TikTok" until the import lands, so
+                    // the days between asking and receiving do not read as a broken app.
+                    StashPrimaryButton(title: "I've requested it", systemImage: "checkmark") {
+                        exportRequestedAt = Date().timeIntervalSince1970
+                        dismiss()
+                    }
+                    .padding(.top, 28)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 32)

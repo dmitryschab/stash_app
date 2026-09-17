@@ -17,6 +17,7 @@ import SwiftData
 import SwiftUI
 import TikTokBrainKit
 import UIKit
+import UserNotifications
 
 @MainActor
 @Observable
@@ -27,6 +28,13 @@ final class PipelineCenter {
     /// one asks iOS for external power, which the import task must never do — an import the
     /// user is watching cannot wait for a charger.
     static let deepPassTaskID = "dev.dmitryschab.Stash.deeppass"
+    /// A light poll of the box while the app is closed mid-import, so "you can close the app"
+    /// can end in a notification instead of a guess. App refresh, not processing: it wants no
+    /// charger and takes seconds.
+    static let refreshTaskID = "dev.dmitryschab.Stash.refresh"
+    /// Set by the data guide when the user says they asked TikTok for the export; the empty
+    /// states read it, and the next submitted import clears it.
+    static let exportRequestedKey = "tiktokExportRequestedAt"
 
     var progress: (done: Int, total: Int)?
     var isImporting = false
@@ -346,6 +354,9 @@ final class PipelineCenter {
             let submission = try await client.submit(bookmarks: submitting, clientImportID: clientImportID)
             cloudState.importID = submission.importID
             persistCloudState()
+            UserDefaults.standard.removeObject(forKey: Self.exportRequestedKey)
+            // Asked here, where the answer buys something visible: the "library is ready" ping.
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             if submitting.count < bookmarks.count, let quota {
                 let refills = quota.monthResetDate.formatted(date: .abbreviated, time: .omitted)
                 lastSummary = "Submitted the newest \(submission.accepted) of \(bookmarks.count) "
@@ -802,6 +813,7 @@ final class PipelineCenter {
             // The library pass wants a charger and Wi-Fi, which is a description of the night —
             // so the window it is most likely to run in is one iOS grants after this point.
             scheduleDeepPassProcessing()
+            if cloudState.isActive { scheduleCloudRefresh() }
             return
         }
         guard isImporting else { return }
@@ -835,6 +847,68 @@ final class PipelineCenter {
             guard let task = task as? BGProcessingTask else { return }
             Task { @MainActor in Self.shared.handleDeepPassBackgroundTask(task) }
         }
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshTaskID, using: nil) { task in
+            guard let task = task as? BGAppRefreshTask else { return }
+            Task { @MainActor in Self.shared.handleCloudRefreshTask(task) }
+        }
+    }
+
+    // MARK: - Cloud refresh while closed
+
+    // ponytail: BGAppRefresh is opportunistic — iOS runs it minutes to hours after the request,
+    // so the ping lands late rather than never. Upgrade path: an APNs push from the box.
+    func scheduleCloudRefresh() {
+        let request = BGAppRefreshTaskRequest(identifier: Self.refreshTaskID)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    private func handleCloudRefreshTask(_ task: BGAppRefreshTask) {
+        let work = Task { [weak self] in
+            await StashSession.shared.restore()
+            guard let self, StashSession.shared.isSignedIn, cloudState.isActive else {
+                task.setTaskCompleted(success: true)
+                return
+            }
+            await syncCloudImport()
+            if cloudState.isActive {
+                scheduleCloudRefresh()   // still cooking — look again next window
+            } else if let status = cloudState.status {
+                Self.notifyLibraryReady(status)
+            }
+            task.setTaskCompleted(success: true)
+        }
+        task.expirationHandler = {
+            work.cancel()
+            Task { @MainActor in Self.shared.scheduleCloudRefresh() }
+            task.setTaskCompleted(success: false)
+        }
+    }
+
+    /// One local notification per finished import. Unauthorized centers drop it silently,
+    /// which is the right amount of noise for someone who said no.
+    static func notifyLibraryReady(_ status: CloudImportStatus) {
+        let content = UNMutableNotificationContent()
+        content.title = "Your library is ready"
+        let sorted = status.fastPass.done - status.unavailable
+        content.body = "\(max(sorted, 0)) videos sorted onto your shelves. Open Stash to browse."
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "library-ready-\(status.importID)", content: content, trigger: nil))
+    }
+
+    /// Pull-to-refresh: one full poll now, ahead of the 8-second repoll. Waits out a poll that
+    /// is already in flight so the spinner means "checked", not "asked".
+    func refresh() async {
+        guard StashSession.shared.isSignedIn else { return }
+        await StashSession.shared.refreshQuota()
+        refreshThumbnails()
+        guard Self.cloudImportEnabled else { resumePendingIfNeeded(); return }
+        cloudSyncTask?.cancel()
+        cloudSyncTask = nil
+        while cloudSyncing { try? await Task.sleep(nanoseconds: 200_000_000) }
+        drainSharedInbox()
+        await syncCloudImport()
     }
 
     private func handleBackgroundTask(_ task: BGProcessingTask) {

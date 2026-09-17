@@ -51,6 +51,8 @@ struct StashScrollView<Content: View>: View {
             ScrollView {
                 content.id(topID)
             }
+            // Every section is a view of the same cloud import, so every section can ask it.
+            .refreshable { await PipelineCenter.shared.refresh() }
             .onChange(of: reselect) { _, signal in
                 guard signal.tab == tab else { return }
                 withAnimation(.easeOut(duration: 0.32)) {

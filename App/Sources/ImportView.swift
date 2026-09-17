@@ -222,9 +222,9 @@ struct ImportView: View {
             if let status = controller.cloudStatus {
                 switch status.state {
                 case .accepted:
-                    return "Queued for cloud processing · \(status.fastPass.total) videos — you can close the app"
+                    return "Queued for cloud processing · \(status.fastPass.total) videos — close the app if you like, Stash pings you when it is done"
                 case .fastPass:
-                    return "Fast pass \(status.fastPass.done) of \(status.fastPass.total) · \(status.unavailable) unavailable · \(status.partialFailures) partial failures — cloud keeps going if you close the app"
+                    return "Fast pass \(status.fastPass.done) of \(status.fastPass.total) · \(status.unavailable) unavailable · \(status.partialFailures) partial failures — cloud keeps going if you close the app, and pings you when it is done"
                 case .completed:
                     return "Complete · \(status.unavailable) unavailable · \(status.partialFailures) partial failures"
                 case .cancelled:

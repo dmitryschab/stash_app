@@ -484,16 +484,21 @@ struct StashEmptyState: View {
     /// Off when the caller already offers Import a tap away — the Library header has its own
     /// button, and a second one under a half-empty shelf is noise.
     var offersImport = true
+    /// Seconds since 1970 when the user told the data guide they asked TikTok for the export;
+    /// zero until then. While set, the empty library is a wait, not a dead end.
+    @AppStorage(PipelineCenter.exportRequestedKey) private var exportRequestedAt = 0.0
+
+    private var waitingOnTikTok: Bool { offersImport && exportRequestedAt > 0 }
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: symbol)
+            Image(systemName: waitingOnTikTok ? "envelope.badge.clock" : symbol)
                 .font(.system(size: 38, weight: .semibold))
                 .foregroundStyle(tint)
-            Text(title)
+            Text(waitingOnTikTok ? "Waiting on TikTok" : title)
                 .font(.archivo(17, .bold))
                 .foregroundStyle(Color.stashInk)
-            Text(message)
+            Text(waitingOnTikTok ? waitingMessage : message)
                 .font(.archivo(13))
                 .foregroundStyle(Color.stashInk.opacity(0.55))
                 .multilineTextAlignment(.center)
@@ -507,6 +512,13 @@ struct StashEmptyState: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var waitingMessage: String {
+        let requested = Date(timeIntervalSince1970: exportRequestedAt)
+            .formatted(.relative(presentation: .named))
+        return "You asked for your export \(requested). TikTok emails when it is ready — "
+            + "usually within the hour, sometimes a day or two. Then bring the file in here."
     }
 }
 
