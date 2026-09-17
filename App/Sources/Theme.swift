@@ -346,6 +346,10 @@ extension Video {
     /// "needs a look" pile shown at the end of each library segment.
     var needsLook: Bool { unavailable || categoryRaw.isEmpty }
 
+    /// Saves the pipeline gave up on: gone or private on TikTok, or an analysis that failed.
+    /// They leave the Library for Settings › Archive, which retries them.
+    var isArchived: Bool { unavailable || (categoryRaw.isEmpty && stageStates.values.contains(.failed)) }
+
     /// The recipe as the kitchen reads it: US quantities rewritten to metric on the way out
     /// (`Metric.localize`), so saves analyzed before the prompt asked for metric read right too.
     var recipe: RecipeData? {

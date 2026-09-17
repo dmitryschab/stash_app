@@ -327,3 +327,15 @@ def test_deletion_and_export_follow_every_query_page():
 
     assert len(removed) == stored
     assert list(table.items) == [("INSTALL#user-b", "USER")]
+
+
+def test_failure_counts_tally_failed_and_unavailable_rows_across_imports():
+    table = FakeTable()
+    store = DynamoImportStore(table=table, user_id=USER)
+    first = store.create_import(request(("1", "2", "3")))
+    second = store.create_import(request(("1",), "33333333-3333-4333-8333-333333333333"))
+    for import_id, video_id, state in ((first.import_id, "1", "failed"), (second.import_id, "1", "failed"),
+                                       (first.import_id, "2", "unavailable"), (first.import_id, "3", "completed")):
+        table.items[(PARTITION, f"IMPORT#{import_id}#VIDEO#{video_id}")]["state"] = state
+
+    assert store.failure_counts({"1", "2", "3", "4"}) == {"1": 2, "2": 1}

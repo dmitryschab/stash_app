@@ -38,6 +38,7 @@ class FakeStore:
         self.user_id = USER_ID
         self.initial = INITIAL_LIMIT
         self.month = MONTH_LIMIT
+        self.failures = {}  # videoID -> failed/unavailable rows already stored
 
     # -- quota
     def get_quota(self):
@@ -74,6 +75,9 @@ class FakeStore:
         self.imports[key] = (import_id, False, len(request.videos), 0, deferred)
         self.staged[import_id] = [(video.video_id, video.url) for video in request.videos]
         return CreateImportResult(import_id, True, len(request.videos), deferred=deferred)
+
+    def failure_counts(self, video_ids):
+        return {video_id: count for video_id, count in self.failures.items() if video_id in video_ids}
 
     def pending_videos(self, import_id):
         # No worker runs in these tests, so every staged row is still waiting.
@@ -283,3 +287,30 @@ def test_an_enqueue_that_dies_halfway_is_finished_by_the_retry(dependencies):
     assert retry.status_code == 202
     assert store.initial == INITIAL_LIMIT - 10  # still charged exactly once
     assert {message["videoID"] for message in queue.messages} == {str(n) for n in range(1, 11)}
+
+
+def test_resubmitting_a_failed_save_is_free_for_three_retries(dependencies):
+    """A save the box failed on (spent provider credits, a TikTok blip) was already paid for.
+    The app's Archive re-submits it; charging again would make every outage cost the user."""
+    store, queue = dependencies
+    store.failures = {"1": 1, "2": 3, "3": 4}   # 3 has used its free retries
+    with TestClient(app) as client:
+        response = client.post("/v1/imports", json=payload(4))
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] == 4
+    assert store.initial == INITIAL_LIMIT - 2   # only 3 (retries spent) and 4 (new) are charged
+    assert len(queue.messages) == 4
+
+
+def test_a_free_retry_goes_through_on_an_empty_budget(dependencies):
+    store, queue = dependencies
+    store.initial = 0
+    store.month = 0
+    store.failures = {"1": 1, "2": 1}
+    with TestClient(app) as client:
+        response = client.post("/v1/imports", json=payload(3))
+
+    assert response.status_code == 202
+    assert (response.json()["accepted"], response.json()["deferred"]) == (2, 1)
+    assert [message["videoID"] for message in queue.messages] == ["1", "2"]

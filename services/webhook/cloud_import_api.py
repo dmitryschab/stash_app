@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from cloud_import_models import CreateImportRequest, CreateImportResponse, ImportStatus, ResultPage
 from cloud_import_queue import SQSImportQueue
-from cloud_import_store import DynamoImportStore
+from cloud_import_store import MAX_FREE_RETRIES, DynamoImportStore
 from stash_auth import entitled_store, quota_exhausted, user_store
 
 
@@ -52,25 +52,33 @@ def create_import(
     else:
         requested = len(body.videos)
         quota = store.get_quota()
+        # A save that already failed is retried free (see MAX_FREE_RETRIES) and is never the
+        # part a short budget cuts.
+        counts = store.failure_counts({video.video_id for video in body.videos})
+        is_free = [1 <= counts.get(video.video_id, 0) <= MAX_FREE_RETRIES for video in body.videos]
+        free = [video for video, gratis in zip(body.videos, is_free) if gratis]
+        paid = [video for video, gratis in zip(body.videos, is_free) if not gratis]
         # Partial acceptance. A 720-video favourites library against a 500-unit budget takes
         # the newest 500 and defers the rest; refusing the whole import left exactly the user
         # this product is for with no way in at all. Newest-first is the client's submission
         # order — ExportParser.bookmarks sorts `$0.date > $1.date` and CloudImportClient.submit
         # maps that list straight into the payload — so the slice keeps the freshest saves.
-        charged = min(requested, quota.initial_remaining + quota.month_remaining)
-        if charged == 0:
+        charged = min(len(paid), quota.initial_remaining + quota.month_remaining)
+        if charged == 0 and not free:
             raise quota_exhausted(quota)
-        quota = store.reserve_quota(charged)
-        if quota is None:  # lost a race for the last units
-            raise quota_exhausted(store.get_quota())
-        if charged < requested:
-            body = body.model_copy(update={"videos": body.videos[:charged]})
+        if charged:
+            quota = store.reserve_quota(charged)
+            if quota is None:  # lost a race for the last units
+                raise quota_exhausted(store.get_quota())
+        if charged < len(paid):
+            body = body.model_copy(update={"videos": free + paid[:charged]})
         try:
-            created = store.create_import(body, deferred=requested - charged)
+            created = store.create_import(body, deferred=requested - len(body.videos))
         except Exception:
-            store.refund_quota(charged)
+            if charged:
+                store.refund_quota(charged)
             raise
-        if not created.created:
+        if not created.created and charged:
             # Lost a race with a concurrent identical retry; hand the units back.
             quota = store.refund_quota(charged)
         else:

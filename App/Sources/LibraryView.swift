@@ -102,9 +102,10 @@ struct LibraryView: View {
     /// In-flight shares are excluded: until the fast pass classifies them, the incoming card
     /// at the top is their representation — a second "Not classified yet" row would show the
     /// same save twice.
+    /// Archived saves are excluded too — they live in Settings › Archive.
     private var needsLook: [Video] {
         let inFlight = center.pendingShareVideoIDs
-        return videos.filter { $0.needsLook && !inFlight.contains($0.videoID) }
+        return videos.filter { $0.needsLook && !$0.isArchived && !inFlight.contains($0.videoID) }
     }
 
     // MARK: - Header
@@ -279,7 +280,7 @@ struct LibraryView: View {
                                     .font(.archivo(16, .bold))
                                     .foregroundStyle(Color.stashInk)
                                     .lineLimit(1)
-                                Text(video.unavailable ? "Unavailable — kept the original link" : "Not classified yet")
+                                Text("Not classified yet")
                                     .font(.archivo(12.5))
                                     .foregroundStyle(Color.categoryOther)
                                     .lineLimit(1)

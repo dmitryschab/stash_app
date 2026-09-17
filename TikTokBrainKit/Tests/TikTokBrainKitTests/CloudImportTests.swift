@@ -148,6 +148,30 @@ final class CloudImportTests: XCTestCase {
         XCTAssertEqual(video.title, "Newest")
     }
 
+    /// A retried save comes back at the revision its failure was stored with — the box stamps
+    /// both with the current one — so "strictly newer" alone would drop the success on the floor.
+    func testResultUpsertLetsASameRevisionSuccessReplaceAFailure() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        context.insert(Video(videoID: "1", url: URL(string: "https://www.tiktok.com/@x/video/1")!,
+                             bookmarkedAt: Date(timeIntervalSince1970: 1)))
+        try context.save()
+
+        let failed = try CloudImportResultUpserter.apply([
+            CloudImportResult(videoID: "1", analysisRevision: 8, errorCode: "provider_402")], to: context)
+        let failedAgain = try CloudImportResultUpserter.apply([
+            CloudImportResult(videoID: "1", analysisRevision: 8, errorCode: "provider_402")], to: context)
+        let retried = try CloudImportResultUpserter.apply([
+            CloudImportResult(videoID: "1", analysisRevision: 8, category: "music", title: "Retried")], to: context)
+        let replayed = try CloudImportResultUpserter.apply([
+            CloudImportResult(videoID: "1", analysisRevision: 8, category: "music", title: "Replayed")], to: context)
+
+        let video = try XCTUnwrap(context.fetch(FetchDescriptor<Video>()).first)
+        XCTAssertEqual([failed, failedAgain, retried, replayed], [1, 0, 1, 0])
+        XCTAssertEqual(video.categoryRaw, "music")
+        XCTAssertEqual(video.title, "Retried")
+    }
+
     func testResultUpsertPersistsFilmPicks() throws {
         let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = ModelContext(container)

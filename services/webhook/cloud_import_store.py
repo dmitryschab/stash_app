@@ -51,6 +51,12 @@ CLAIM_LEASE_SECONDS = 300
 # step with the queue's redrive maxReceiveCount (infra/aws-box/main.tf).
 MAX_FAST_PASS_ATTEMPTS = 5
 
+# A save that already failed (or came back unavailable) is re-submitted free this many times.
+# Its first submission paid; an outage on our side — spent provider credits, a TikTok blip —
+# must not cost the user again. Past this it charges like any import, so a dead link cannot
+# be retried against our model bill forever.
+MAX_FREE_RETRIES = 3
+
 # Compare-and-set retries on the quota row. N writers racing on one row need N attempts in
 # the worst case — each round exactly one wins and the rest re-read — and the shipping app
 # drains its queue at concurrency 3 on the metered transcript route. A budget of 3 was
@@ -323,6 +329,22 @@ class DynamoImportStore:
             for item in page.get("Items", [])
             if item.get("state") in waiting
         ]
+
+    def failure_counts(self, video_ids: set[str]) -> dict[str, int]:
+        """How many failed or unavailable rows each of `video_ids` already has, across every
+        import this user made. Backs free retries: a failed save was paid for once.
+
+        ponytail: reads the whole partition per import — ~1000 rows for the largest library,
+        a few read units. Index videoID if partitions grow into the tens of thousands.
+        """
+        settled = {VideoState.FAILED.value, VideoState.UNAVAILABLE.value}
+        counts: dict[str, int] = {}
+        for page in self._pages("IMPORT#"):
+            for item in page.get("Items", []):
+                video_id = item.get("videoID")
+                if video_id in video_ids and "#VIDEO#" in item.get("SK", "") and item.get("state") in settled:
+                    counts[video_id] = counts.get(video_id, 0) + 1
+        return counts
 
     def _mark_fast_pass(self, import_id: str) -> None:
         key = self._key(import_id, "META")

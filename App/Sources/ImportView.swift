@@ -390,7 +390,7 @@ struct ImportView: View {
                     .background(category.color, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
-            let flagged = videos.filter(\.needsLook).count
+            let flagged = videos.filter { $0.needsLook && !$0.isArchived }.count
             if flagged > 0 {
                 HStack {
                     HStack(spacing: 8) {
@@ -504,6 +504,9 @@ struct SettingsView: View {
                     }
                 } else {
                 Section("Library") {
+                    NavigationLink { ArchiveView() } label: {
+                        LabeledContent("Archive", value: "\(videos.filter(\.isArchived).count)")
+                    }
                     Button {
                         controller.reanalyzeLibrary()
                     } label: {
@@ -838,4 +841,41 @@ struct SettingsView: View {
         ImportView()
     }
     .modelContainer(SampleData.previewContainer)
+}
+
+/// Saves Stash gave up on — deleted or private TikToks, and analyses that failed — kept out of
+/// the Library but not lost. Failed ones retry on their own (`PipelineCenter.retryArchived`).
+struct ArchiveView: View {
+    @Query(filter: #Predicate<Video> { $0.unavailable || $0.categoryRaw == "" },
+           sort: \Video.bookmarkedAt, order: .reverse)
+    private var candidates: [Video]
+    private var controller = PipelineCenter.shared
+
+    private var archived: [Video] { candidates.filter(\.isArchived) }
+
+    var body: some View {
+        let archived = self.archived
+        Form {
+            Section {
+                Button("Retry all (\(archived.count))") { controller.retryArchived(manual: true) }
+                    .disabled(archived.isEmpty || controller.isImporting)
+            } footer: {
+                Text("Saves Stash couldn't read. Failed ones retry automatically up to 3 times; retries don't use your budget. Deleted or private TikToks stay here until they come back.")
+            }
+            Section {
+                ForEach(archived, id: \.videoID) { video in
+                    NavigationLink { VideoDetailView(video: video) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(video.rowTitle).lineLimit(1)
+                            Text(video.unavailable ? "Unavailable on TikTok" : "Couldn't classify")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Archive")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 }

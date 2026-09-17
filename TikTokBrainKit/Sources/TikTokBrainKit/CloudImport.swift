@@ -425,7 +425,13 @@ public enum CloudImportResultUpserter {
         var applied = 0
 
         for result in results {
-            guard let video = byID[result.videoID], result.analysisRevision > video.cloudAnalysisRevision else { continue }
+            guard let video = byID[result.videoID] else { continue }
+            // A retried save comes back at the same revision its failure was stored with, so a
+            // success may also replace an unclassified row at an equal revision.
+            let replacesFailure = result.analysisRevision == video.cloudAnalysisRevision
+                && video.categoryRaw.isEmpty && result.category != nil
+                && !result.unavailable && result.errorCode == nil
+            guard result.analysisRevision > video.cloudAnalysisRevision || replacesFailure else { continue }
             if !result.unavailable, result.errorCode == nil {
                 let previousCategory = video.categoryRaw
                 if let author = result.author { video.author = author }

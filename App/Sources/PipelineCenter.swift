@@ -801,6 +801,7 @@ final class PipelineCenter {
             drainSharedInbox()
             syncCloudImportIfNeeded()
             startLibraryDeepPassIfReady()
+            retryArchived(manual: false)
         } else {
             resumePendingIfNeeded()
         }
@@ -993,6 +994,68 @@ final class PipelineCenter {
         pendingShares = []
         UserDefaults.standard.removeObject(forKey: Self.cloudStateKey)
         UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
+        UserDefaults.standard.removeObject(forKey: Self.archiveRetriesKey)
+        UserDefaults.standard.removeObject(forKey: Self.archiveRetryAtKey)
+    }
+
+    // MARK: - Archive retries
+
+    private static let archiveRetriesKey = "archive.autoRetries"
+    private static let archiveRetryAtKey = "archive.lastAutoRetryAt"
+    private static let maxAutoRetries = 3
+    private static let autoRetrySpacing: TimeInterval = 6 * 3600
+
+    /// Re-submits archived saves as a cloud import. The box re-runs a save that already failed
+    /// without charging for it (cloud_import_store.MAX_FREE_RETRIES), and the upserter lets the
+    /// success replace the failure.
+    ///
+    /// Automatic runs (every foreground) take failed saves only — a deleted TikTok stays
+    /// deleted — at most every 6 hours and 3 times per save. Manual runs take the whole archive.
+    /// ponytail: attempt counts live in UserDefaults, not on `Video`, so a counter costs no
+    /// SwiftData migration.
+    func retryArchived(manual: Bool) {
+        guard StashSession.shared.isSignedIn, !StashSession.shared.isDemoAccount, Self.cloudImportEnabled,
+              !isImporting, !cloudState.isActive, let container else { return }
+        let defaults = UserDefaults.standard
+        if !manual, let last = defaults.object(forKey: Self.archiveRetryAtKey) as? Date,
+           Date.now.timeIntervalSince(last) < Self.autoRetrySpacing { return }
+        var counts = defaults.dictionary(forKey: Self.archiveRetriesKey) as? [String: Int] ?? [:]
+        let archived = ((try? ModelContext(container).fetch(FetchDescriptor<Video>(
+            predicate: #Predicate { $0.unavailable || $0.categoryRaw == "" }))) ?? []).filter(\.isArchived)
+        let targets = manual ? archived : archived.filter {
+            !$0.unavailable && counts[$0.videoID, default: 0] < Self.maxAutoRetries
+        }
+        guard !targets.isEmpty else { return }
+        if !manual {
+            targets.forEach { counts[$0.videoID, default: 0] += 1 }
+            defaults.set(counts, forKey: Self.archiveRetriesKey)
+            defaults.set(Date.now, forKey: Self.archiveRetryAtKey)
+        }
+        let bookmarks = targets.prefix(CloudImportLimits.maxVideosPerImport)
+            .map { Bookmark(id: $0.videoID, url: $0.url, date: $0.bookmarkedAt) }
+        isImporting = true
+        Task { [weak self] in await self?.submitRetry(bookmarks) }
+    }
+
+    /// Takes the library-import slot, so the existing poll applies the results and Import
+    /// shows the progress. Only called while that slot is idle.
+    private func submitRetry(_ bookmarks: [Bookmark]) async {
+        defer { isImporting = false }
+        guard let client = Self.makeCloudClient() else { return }
+        // A poll of the previous import still in flight would write its cursor into the new state.
+        cloudSyncTask?.cancel()
+        cloudSyncTask = nil
+        while cloudSyncing { try? await Task.sleep(nanoseconds: 200_000_000) }
+        do {
+            let clientImportID = UUID()
+            let submission = try await client.submit(bookmarks: bookmarks, clientImportID: clientImportID)
+            cloudState = CloudImportSyncState(importID: submission.importID, clientImportID: clientImportID)
+            persistCloudState()
+            lastSummary = "Retrying \(submission.accepted) archived saves"
+            await syncCloudImport()
+        } catch {
+            lastError = "Could not retry archived saves: \(error.localizedDescription)"
+        }
     }
 
     private func persistCloudState() {
