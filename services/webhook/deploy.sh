@@ -71,4 +71,6 @@ sleep 2
 
 echo ">>> status"
 sudo systemctl is-active stash-webhook
-curl -fsS http://127.0.0.1/health && echo
+# Straight to uvicorn: through Caddy this is a 308 to https, which `-f` counts as success,
+# so the old check never reached the app at all.
+curl -fsS http://127.0.0.1:8000/health && echo
