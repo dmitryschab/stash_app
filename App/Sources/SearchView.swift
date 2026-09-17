@@ -59,6 +59,14 @@ struct SearchOverlay: View {
     /// Nil is not an error state — it is the lexical-only mode the whole screen degrades to.
     @State private var queryEmbedding: [Float]?
 
+    /// The library flattened for scoring, and the last scoring over it. Both are filled off the
+    /// main thread; a render only maps ids back onto rows.
+    @Environment(\.modelContext) private var context
+    @State private var index: [SearchEntry] = []
+    @State private var indexRevision = 0
+    @State private var scored: [SearchMatch] = []
+    @State private var scoredQuery = ""
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -73,7 +81,7 @@ struct SearchOverlay: View {
                         emptyLibrary.padding(.top, 44)
                     } else if trimmedQuery.isEmpty {
                         suggestions.padding(.top, 22)
-                    } else if results.isEmpty {
+                    } else if results.isEmpty, scoredQuery == trimmedQuery {
                         Text("No saves matched.")
                             .font(.archivo(14, .semibold))
                             .foregroundStyle(Color.stashInk.opacity(0.55))
@@ -89,6 +97,10 @@ struct SearchOverlay: View {
             .background(Color.stashBackground.opacity(0.96).ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .task(id: trimmedQuery) { await embedQuery() }
+            .task(id: videos.count) { await rebuildIndex() }
+            .task(id: ScoreKey(query: trimmedQuery, embedding: queryEmbedding, index: indexRevision)) {
+                await rescore()
+            }
         }
     }
 
@@ -129,78 +141,55 @@ struct SearchOverlay: View {
         var percent: Int { max(20, min(98, Int(score * 98))) }
     }
 
-    /// Token overlap across the extracted fields, weighted by field quality, blended with cosine
-    /// distance to the query's embedding once there is one.
-    ///
-    /// The lexical half is unchanged and unconditional: it is what runs per keystroke, what runs
-    /// offline, and what runs for a save the embedding backfill has not reached — a library
-    /// mid-backfill has to stay searchable, not half-searchable. Only a save that has a vector
-    /// gets the blend, which is why one without keeps its lexical-only score rather than being
-    /// pushed down by a semantic term it cannot score.
-    private var results: [Hit] {
-        let tokens = trimmedQuery.lowercased().split(separator: " ").map(String.init)
-        guard !tokens.isEmpty else { return [] }
-        let query = queryEmbedding
-        let oldest = videos.last?.bookmarkedAt ?? .distantPast
-        let newest = videos.first?.bookmarkedAt ?? .distantPast
-
-        return videos.compactMap { video in
-            // (field label, text, weight) — title matches count double.
-            let fields: [(String, String, Double)] = [
-                ("title", video.rowTitle, 2),
-                ("topics", video.topics.joined(separator: " "), 1.5),
-                ("caption", video.caption, 1),
-                ("summary", video.summary, 1),
-                ("transcript", video.transcript ?? "", 1),
-                ("on-screen text", video.ocrText ?? "", 1),
-            ]
-            var raw = 0.0
-            var matchedIn: String?
-            for (label, text, weight) in fields {
-                let lower = text.lowercased()
-                let hits = tokens.filter { lower.contains($0) }
-                if !hits.isEmpty {
-                    raw += Double(hits.count) * weight
-                    if matchedIn == nil { matchedIn = label }
-                }
-            }
-            // The normalization the percent above always applied, now named because the blend
-            // needs it as a 0...1 term rather than as a badge.
-            let lexical = min(1, raw / (Double(tokens.count) * 2))
-
-            guard let query, let stored = video.embedding.map(EmbeddingVector.unpack),
-                  !stored.isEmpty else {
-                guard let matchedIn else { return nil }
-                return Hit(video: video, score: lexical, matchedIn: matchedIn)
-            }
-
-            let cosine = EmbeddingVector.cosine(query, stored)
-            let meaning = cosine >= SearchBlend.meaningFloor
-            // A save has to have matched a word or come close enough in meaning; otherwise the
-            // blend's recency term alone would return the entire library for every query.
-            guard matchedIn != nil || meaning else { return nil }
-            let reason: String
-            switch (matchedIn, meaning) {
-            case (let field?, true): reason = "meaning and \(field)"
-            case (let field?, false): reason = field
-            case (nil, _): reason = "meaning"
-            }
-            return Hit(
-                video: video,
-                score: SearchBlend.score(cosine: cosine, lexical: lexical,
-                                         recency: recency(of: video, oldest: oldest, newest: newest)),
-                matchedIn: reason)
-        }
-        .sorted { $0.score > $1.score }
+    /// What a scoring run is keyed on: the query, its vector, and which build of the index.
+    private struct ScoreKey: Equatable {
+        let query: String
+        let embedding: [Float]?
+        let index: Int
     }
 
-    /// Recency as 0...1 across the library's own span: the oldest save scores 0, the newest 1.
-    /// Relative rather than absolute, so a library imported last month and one imported three
-    /// years ago both get a usable tie-breaker out of the blend's smallest term.
-    private func recency(of video: Video, oldest: Date, newest: Date) -> Double {
-        let span = newest.timeIntervalSince(oldest)
-        guard span > 0 else { return 1 }
-        return min(1, max(0, video.bookmarkedAt.timeIntervalSince(oldest) / span))
+    /// Flattens the library once, on its own context off the main thread. Per keystroke this
+    /// used to run on the main thread, twice per render: six lowercased fields, two JSON
+    /// decodes and an unpacked vector for every save — ~100 ms on an 855-save library, which
+    /// is the lag this replaces.
+    /// ponytail: rebuilt when the count moves, the one signal that is free to read per render;
+    /// a save re-analyzed while the overlay is open keeps its old text until it is reopened.
+    private func rebuildIndex() async {
+        let container = context.container
+        let built = await Task.detached(priority: .userInitiated) {
+            let context = ModelContext(container)
+            let all = (try? context.fetch(FetchDescriptor<Video>(
+                sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
+            return SearchIndex.build(all)
+        }.value
+        guard !Task.isCancelled else { return }
+        index = built
+        indexRevision += 1
+    }
+
+    /// Scores the index off the main thread. `.task(id:)` cancels the previous keystroke's
+    /// run, and a result that lands after cancellation is dropped rather than shown late.
+    private func rescore() async {
+        let entries = index, query = trimmedQuery, embedding = queryEmbedding
+        guard !query.isEmpty, !entries.isEmpty else {
+            scored = []
+            scoredQuery = query
+            return
+        }
+        let result = await Task.detached(priority: .userInitiated) {
+            SearchIndex.score(entries, query: query, embedding: embedding)
+        }.value
+        guard !Task.isCancelled else { return }
+        scored = result
+        scoredQuery = query
+    }
+
+    /// The scored ids back onto the live rows. A save deleted since it was scored drops out.
+    private var results: [Hit] {
+        let byID = Dictionary(videos.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
+        return scored.compactMap { match in
+            byID[match.videoID].map { Hit(video: $0, score: match.score, matchedIn: match.matchedIn) }
+        }
     }
 
     // MARK: - Pieces
@@ -262,6 +251,133 @@ struct SearchOverlay: View {
         }
         .padding(.vertical, 13)
     }
+}
+
+/// One save flattened for scoring off the main thread: every lexical field already lowercased,
+/// the vector already unpacked, the row title already decided.
+struct SearchEntry: Sendable {
+    let videoID: String
+    let bookmarkedAt: Date
+    /// (field label, lowercased text, weight) — title matches count double.
+    let fields: [(label: String, text: String, weight: Double)]
+    let embedding: [Float]?
+}
+
+struct SearchMatch: Sendable {
+    let videoID: String
+    let score: Double
+    let matchedIn: String
+}
+
+/// The scorer, as a pure function over `SearchEntry` so it can run anywhere and be checked.
+enum SearchIndex {
+    /// Caller's context: the model objects are read here and nowhere else.
+    static func build(_ videos: [Video]) -> [SearchEntry] {
+        videos.map { video in
+            SearchEntry(
+                videoID: video.videoID,
+                bookmarkedAt: video.bookmarkedAt,
+                fields: [
+                    ("title", video.rowTitle.lowercased(), 2),
+                    ("topics", video.topics.joined(separator: " ").lowercased(), 1.5),
+                    ("caption", video.caption.lowercased(), 1),
+                    ("summary", video.summary.lowercased(), 1),
+                    ("transcript", (video.transcript ?? "").lowercased(), 1),
+                    ("on-screen text", (video.ocrText ?? "").lowercased(), 1),
+                ],
+                embedding: video.embedding.map(EmbeddingVector.unpack).flatMap { $0.isEmpty ? nil : $0 })
+        }
+    }
+
+    /// Token overlap across the extracted fields, weighted by field quality, blended with cosine
+    /// distance to the query's embedding once there is one.
+    ///
+    /// The lexical half is unchanged and unconditional: it is what runs per keystroke, what runs
+    /// offline, and what runs for a save the embedding backfill has not reached — a library
+    /// mid-backfill has to stay searchable, not half-searchable. Only a save that has a vector
+    /// gets the blend, which is why one without keeps its lexical-only score rather than being
+    /// pushed down by a semantic term it cannot score. `entries` are newest first.
+    static func score(_ entries: [SearchEntry], query: String, embedding: [Float]?) -> [SearchMatch] {
+        let tokens = query.lowercased().split(separator: " ").map(String.init)
+        guard !tokens.isEmpty else { return [] }
+        let oldest = entries.last?.bookmarkedAt ?? .distantPast
+        let newest = entries.first?.bookmarkedAt ?? .distantPast
+
+        return entries.compactMap { entry in
+            var raw = 0.0
+            var matchedIn: String?
+            for field in entry.fields {
+                let hits = tokens.filter { field.text.contains($0) }
+                if !hits.isEmpty {
+                    raw += Double(hits.count) * field.weight
+                    if matchedIn == nil { matchedIn = field.label }
+                }
+            }
+            // The normalization the percent badge always applied, named because the blend
+            // needs it as a 0...1 term rather than as a badge.
+            let lexical = min(1, raw / (Double(tokens.count) * 2))
+
+            guard let embedding, let stored = entry.embedding else {
+                guard let matchedIn else { return nil }
+                return SearchMatch(videoID: entry.videoID, score: lexical, matchedIn: matchedIn)
+            }
+
+            let cosine = EmbeddingVector.cosine(embedding, stored)
+            let meaning = cosine >= SearchBlend.meaningFloor
+            // A save has to have matched a word or come close enough in meaning; otherwise the
+            // blend's recency term alone would return the entire library for every query.
+            guard matchedIn != nil || meaning else { return nil }
+            let reason: String
+            switch (matchedIn, meaning) {
+            case (let field?, true): reason = "meaning and \(field)"
+            case (let field?, false): reason = field
+            case (nil, _): reason = "meaning"
+            }
+            return SearchMatch(
+                videoID: entry.videoID,
+                score: SearchBlend.score(cosine: cosine, lexical: lexical,
+                                         recency: recency(of: entry.bookmarkedAt, oldest: oldest, newest: newest)),
+                matchedIn: reason)
+        }
+        .sorted { $0.score > $1.score }
+    }
+
+    /// Recency as 0...1 across the library's own span: the oldest save scores 0, the newest 1.
+    /// Relative rather than absolute, so a library imported last month and one imported three
+    /// years ago both get a usable tie-breaker out of the blend's smallest term.
+    private static func recency(of date: Date, oldest: Date, newest: Date) -> Double {
+        let span = newest.timeIntervalSince(oldest)
+        guard span > 0 else { return 1 }
+        return min(1, max(0, date.timeIntervalSince(oldest) / span))
+    }
+
+    #if DEBUG
+    /// The ranking is no longer something a keystroke can be watched doing, so it gets the same
+    /// launch-time check as the grip arithmetic.
+    static func selfTest() -> Bool {
+        func entry(_ id: String, title: String, caption: String = "", embedding: [Float]? = nil,
+                   at: TimeInterval) -> SearchEntry {
+            SearchEntry(videoID: id, bookmarkedAt: Date(timeIntervalSince1970: at),
+                        fields: [("title", title, 2), ("caption", caption, 1)], embedding: embedding)
+        }
+        let entries = [
+            entry("caption", title: "weekend plans", caption: "sourdough bread", at: 300),
+            entry("title", title: "sourdough bread", at: 200),
+            entry("meaning", title: "levain", embedding: [1, 0], at: 100),
+            entry("far", title: "tax return", embedding: [0, 1], at: 0),
+        ]
+        let lexical = score(entries, query: "Bread", embedding: nil)
+        let blended = score(entries, query: "bread", embedding: [1, 0])
+        let ids = blended.map(\.videoID)
+        return score(entries, query: "", embedding: nil).isEmpty
+            && score(entries, query: "zzz", embedding: nil).isEmpty
+            && lexical.map(\.videoID) == ["title", "caption"]           // a title hit outranks a caption hit
+            && lexical.first?.matchedIn == "title"
+            && ids == ["title", "meaning", "caption"]                     // close in meaning, no word in common
+            && blended[1].matchedIn == "meaning"
+            && zip(blended, blended.dropFirst()).allSatisfy { $0.score >= $1.score }
+    }
+    #endif
 }
 
 /// Outlined uppercase chips that wrap onto multiple lines.

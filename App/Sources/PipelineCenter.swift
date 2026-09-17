@@ -1033,7 +1033,7 @@ final class PipelineCenter {
                     let status = try await client.status(importID: importID)
                     let results = try await client.allResults(importID: importID)
                     if let container {
-                        let applied = try CloudImportResultUpserter.apply(results, to: ModelContext(container))
+                        let applied = try await Self.apply(results, to: container)
                         if applied > 0 {
                             refreshThumbnails()
                             backfillEmbeddings()   // a classified save is one there is text to embed
@@ -1078,7 +1078,7 @@ final class PipelineCenter {
             while true {
                 let page = try await client.results(importID: importID, cursor: cursor)
                 if let container {
-                    let applied = try CloudImportResultUpserter.apply(page.results, to: ModelContext(container))
+                    let applied = try await Self.apply(page.results, to: container)
                     if applied > 0 {
                         lastSummary = "Synced \(applied) cloud results"
                         refreshThumbnails()
@@ -1115,6 +1115,15 @@ final class PipelineCenter {
             lastError = message
         }
         return true
+    }
+
+    /// The upsert fetches the whole library to match ids, then writes and saves. On the main
+    /// actor that was a stall every eight-second poll of a running import; its own context on
+    /// a detached task is the pattern every other drain here already follows.
+    private static func apply(_ results: [CloudImportResult], to container: ModelContainer) async throws -> Int {
+        try await Task.detached(priority: .utility) {
+            try CloudImportResultUpserter.apply(results, to: ModelContext(container))
+        }.value
     }
 
     private func scheduleCloudRepoll() {

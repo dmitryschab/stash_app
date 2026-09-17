@@ -51,10 +51,14 @@ struct LibraryView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
-                    if deskIsEmpty {
+                    // Read once per render: each is a pass over the library with a JSON decode
+                    // per save, and the desk used to ask for them five times per body — on
+                    // every save the pipeline wrote while an import was running.
+                    let desked = self.desked, buyPicks = self.buyPicks
+                    if desked.isEmpty && buyPicks.isEmpty {
                         emptyState.padding(.top, 48)
                     } else {
-                        desk
+                        desk(desked, buyPicks)
                     }
 
                     needsLookSection
@@ -93,10 +97,6 @@ struct LibraryView: View {
         return videos.filter { !$0.needsLook }.flatMap { video in
             video.buys.enumerated().map { (video, $1, $0) }
         }
-    }
-
-    private var deskIsEmpty: Bool {
-        desked.isEmpty && buyPicks.isEmpty
     }
 
     /// In-flight shares are excluded: until the fast pass classifies them, the incoming card
@@ -164,7 +164,8 @@ struct LibraryView: View {
     /// Fixed order, not biggest-first: a desk sorts by urgency of use — things to act on
     /// first, the archive last — and a stable order is what makes shelves findable by thumb.
     @ViewBuilder
-    private var desk: some View {
+    private func desk(_ desked: [SaveIntent: [Video]],
+                      _ buyPicks: [(video: Video, pick: BuyPick, index: Int)]) -> some View {
         if let watch = desked[.watch] { watchShelf(watch) }
         if let doable = desked[.tryIt] { rowShelf(.tryIt, doable, badge: "try it") }
         if !buyPicks.isEmpty { buyShelf(buyPicks) }
@@ -264,6 +265,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var needsLookSection: some View {
+        let needsLook = self.needsLook
         if !needsLook.isEmpty {
             Micro(text: "Needs a look", size: 10, tracking: 1.8, color: .categoryOther)
                 .padding(.top, 24)

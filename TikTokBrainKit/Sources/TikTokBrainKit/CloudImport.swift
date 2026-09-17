@@ -416,7 +416,11 @@ private struct ResultPage: Decodable {
 public enum CloudImportResultUpserter {
     @discardableResult
     public static func apply(_ results: [CloudImportResult], to context: ModelContext) throws -> Int {
-        let videos = try context.fetch(FetchDescriptor<Video>())
+        // Only the rows this page names: the whole library was fetched per page before, which
+        // on an 855-save library was most of the cost of every eight-second poll.
+        let ids = results.map(\.videoID)
+        let videos = try context.fetch(FetchDescriptor<Video>(
+            predicate: #Predicate { ids.contains($0.videoID) }))
         let byID = Dictionary(uniqueKeysWithValues: videos.map { ($0.videoID, $0) })
         var applied = 0
 

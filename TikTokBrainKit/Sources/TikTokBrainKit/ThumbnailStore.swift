@@ -51,10 +51,11 @@ public enum ThumbnailStore {
     /// Gives every video without cover bytes a local thumbnail: its stored URL first (still
     /// valid right after an import), oEmbed second (everything older). Best effort per video —
     /// a failure just leaves the category placeholder. Cheap to call on every launch, since a
-    /// cached video costs one file-existence check.
-    @MainActor
+    /// cached video costs one file-existence check — but a whole library of them, plus the fetch
+    /// and the save, is a visible stall when it runs on the main thread every poll of an import,
+    /// so this runs on its own context like the other drains.
     public static func backfill(container: ModelContainer, concurrency: Int = 4) async {
-        let context = container.mainContext
+        let context = ModelContext(container)
         guard let videos = try? context.fetch(FetchDescriptor<Video>()) else { return }
 
         // Split first: relinking is free, fetching is not. A stored file URL that no longer
