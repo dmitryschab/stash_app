@@ -168,6 +168,8 @@ struct TopicChip: View {
     let label: String
     var count: Int? = nil
     var symbol: String? = nil
+    /// What `count` counts, for VoiceOver: recipes on Cook, saves on Films.
+    var unit = "recipes"
     let isOn: Bool
     let action: () -> Void
 
@@ -197,7 +199,7 @@ struct TopicChip: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(count.map { "\(label), \($0) recipes" } ?? label)
+        .accessibilityLabel(count.map { "\(label), \($0) \(unit)" } ?? label)
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : [.isButton])
     }
 
@@ -210,6 +212,8 @@ struct TopicChip: View {
 struct TopicPicker: View {
     let topics: [TopicCount]
     @Binding var focus: String?
+    /// The noun in "All …": recipes on Cook, saves on Films.
+    var unit = "recipes"
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -284,14 +288,14 @@ struct TopicPicker: View {
     private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                row(label: "All recipes", count: nil, isOn: focus == nil) { focus = nil }
+                row(label: "All \(unit)", count: nil, isOn: focus == nil) { focus = nil }
                 ForEach(shown) { topic in
                     row(label: topic.name, count: topic.count, isOn: focus == topic.name) {
                         focus = topic.name
                     }
                 }
                 if trimmed.isEmpty, hiddenCount > 0 {
-                    Text("\(hiddenCount) more topics sit on a single recipe each — search to find them.")
+                    Text("\(hiddenCount) more topics sit on one save each — search to find them.")
                         .font(.archivo(12, .medium))
                         .foregroundStyle(Color.stashInk.opacity(0.45))
                         .padding(.vertical, 18)

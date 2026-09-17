@@ -2,11 +2,12 @@
 //
 // App entry point: registers the bundled Archivo faces, builds the SwiftData container,
 // optionally seeds sample content (the simulator smoke run, or an App Review demo account —
-// see SampleData.swift), and hosts the five-tab
-// Set List shell (Today / Code / Cook / Music / Library) behind a custom ink pill tab bar.
-// Mind map is deliberately not a tab — six slots crowded the pill, so it opens from the
-// Library header instead, next to Import (it is a map of the library after all). Search is
-// not a tab either: hold the pill and push right, and the pill becomes the field (StashTabBar).
+// see SampleData.swift), and hosts the Set List shell (up to seven tabs, chosen in Settings)
+// behind a custom ink pill tab bar. Only the open slot carries its label, which is what lets
+// seven fit where five labelled ones used to crowd. Mind map is deliberately not a tab — it
+// opens from the Library header instead, next to Import (it is a map of the library after
+// all). Search is not a tab either: hold the pill and push right, and the pill becomes the
+// field (StashTabBar).
 //
 // The shell is gated on `StashSession`: signed out, RootView renders SignInView instead. The
 // gate lives inside RootView and not around the Scene on purpose — `.modelContainer` and the
@@ -40,8 +41,9 @@ struct TikTokBrainApp: App {
         #if DEBUG
         assert(MindMapEngine.selfTest(), "MindMapEngine self-test failed")
         assert(SearchGrip.selfTest(), "SearchGrip self-test failed")
-        assert(TabSlots.selfTest(), "TabSlots self-test failed")
         assert(SearchIndex.selfTest(), "SearchIndex self-test failed")
+        assert(TabSlots.selfTest(), "TabSlots self-test failed")
+        assert(FilmWall.selfTest(), "FilmWall self-test failed")
         #endif
     }
 
@@ -68,7 +70,7 @@ struct TikTokBrainApp: App {
 /// Settings offers it and the order slots are drawn in; what is actually on screen is whatever
 /// subset `TabSlots` holds.
 enum StashTab: String, CaseIterable, Identifiable {
-    case today, code, cook, music, haul, library
+    case today, code, cook, music, films, haul, library
 
     var id: String { rawValue }
 
@@ -78,6 +80,7 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .code: "Code"
         case .cook: "Cook"
         case .music: "Music"
+        case .films: "Films"
         case .haul: "Haul"
         case .library: "Library"
         }
@@ -89,6 +92,7 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .code: "chevron.left.forwardslash.chevron.right"
         case .cook: "fork.knife"
         case .music: "music.note"
+        case .films: "movieclapper"
         case .haul: "bag.fill"
         case .library: "square.grid.2x2.fill"
         }
@@ -101,6 +105,7 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .code: "Coding saves, links first."
         case .cook: "Recipes as a photo wall."
         case .music: "Records and recommendation lists."
+        case .films: "Every film your saves named, as a poster wall."
         case .haul: "Everything your saves are selling."
         case .library: "Every shelf, plus Import and Settings."
         }
@@ -114,6 +119,7 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .cook: .recipe
         case .music: .music
         case .code: .coding
+        case .films: .film
         case .today, .haul, .library: nil
         }
     }
@@ -123,11 +129,12 @@ enum StashTab: String, CaseIterable, Identifiable {
 ///
 /// Two rules, both learned the hard way rather than chosen: Library can never be switched off,
 /// because Import and Settings are only reachable from its header — a pill without it is a
-/// configuration that cannot be undone from inside the app. And five is the ceiling; six slots
-/// crowded the pill badly enough that Mind Map was moved off it (see the file header).
+/// configuration that cannot be undone from inside the app. And seven is the ceiling: with only
+/// the open slot labelled, the other six are icon-only at 45pt, which is as narrow as a slot
+/// can honestly go (five labelled slots was the old limit; see the file header).
 enum TabSlots {
     static let key = "tabSlots"
-    static let maximum = 5
+    static let maximum = 7
     /// Library last, and pinned: `decode` puts it back however the stored string was mangled.
     static let pinned: StashTab = .library
     static let fallback: [StashTab] = [.today, .code, .cook, .music, .library]
@@ -158,7 +165,7 @@ enum TabSlots {
             && decode("library") == [.library]
             && decode("music,cook") == [.cook, .music, .library]        // catalogue order, not stored order
             && decode("cook,cook,cook") == [.cook, .library]            // duplicates collapse
-            && decode("today,code,cook,music,haul") == [.code, .cook, .music, .haul, .library]
+            && decode("today,code,cook,music,haul") == [.today, .code, .cook, .music, .haul, .library]
             && encode([.haul, .today]) == "today,haul"
             && decode(encode([.today, .haul, .library])) == [.today, .haul, .library]
     }
@@ -174,7 +181,7 @@ private extension Array {
 }
 
 struct RootView: View {
-    // Simulator smoke runs can open a specific tab: `-initialTab code|cook|music|haul|library`.
+    // Simulator smoke runs can open a specific tab: `-initialTab code|cook|music|films|haul|library`.
     @State private var tab: StashTab = UserDefaults.standard.string(forKey: "initialTab")
         .flatMap(StashTab.init(rawValue:)) ?? .today
 
@@ -306,6 +313,7 @@ struct RootView: View {
                 case .code: CodeView()
                 case .cook: CookView()
                 case .music: MusicView()
+                case .films: FilmsView()
                 case .haul: HaulView()
                 case .library: LibraryView(shelves: libraryShelves(visible: slots),
                                            includeBuyShelf: !slots.contains(.haul))
@@ -410,8 +418,9 @@ private struct ImportSyncPill: View {
     }
 }
 
-/// The solid ink pill: up to five equal slots, cream icons, uppercase micro labels — and the
-/// search field, once you hold it and push right. The pill *is* the field: the slots slide out
+/// The solid ink pill: up to seven slots, cream icons, and an uppercase micro label on the open
+/// one only (it widens to make room; the rest share what is left) — and the search field, once
+/// you hold it and push right. The pill *is* the field: the slots slide out
 /// the right end while the magnifier and the text field slide in from the left, 1:1 with the
 /// finger (`SearchGrip`). A tap is still a tap; the hold has to come first.
 struct StashTabBar: View {
@@ -462,30 +471,43 @@ struct StashTabBar: View {
                 query = ""
             }
         }
-        .padding(.horizontal, 34)
+        .padding(.horizontal, 20)
         .padding(.bottom, 4)
     }
 
     /// Slots are tap gestures, not Buttons: a Button fires on the touch-up that ends a push
     /// (its "still pressed" tolerance is wider than a slot), so every search open also switched
     /// tabs. A tap gesture is cancelled by the drag.
+    /// Only the open slot carries its label: it takes a fixed 80pt and the rest split what is
+    /// left, so seven slots still leave each icon a 45pt target on a 393pt phone.
     private var tabs: some View {
         HStack(spacing: 0) {
             ForEach(slots) { tab in
+                let open = tab == selection
                 VStack(spacing: 3) {
                     Image(systemName: tab.symbol)
                         .font(.system(size: 17, weight: .semibold))
-                    Micro(text: tab.label, size: 8.5, tracking: 0.7, color: color(for: tab))
+                    if open {
+                        Micro(text: tab.label, size: 8.5, tracking: 0.7, color: color(for: tab))
+                            .transition(.opacity)
+                    }
                 }
                 .foregroundStyle(color(for: tab))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: open ? 80 : nil)
+                .background {
+                    if open {
+                        Capsule().fill(Color.stashOnInk.opacity(0.12)).padding(.vertical, 6)
+                    }
+                }
                 .contentShape(Rectangle())
                 .onTapGesture { select(tab) }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(tab.label)
-                .accessibilityAddTraits(tab == selection ? [.isButton, .isSelected] : [.isButton])
+                .accessibilityAddTraits(open ? [.isButton, .isSelected] : [.isButton])
             }
         }
+        .animation(.spring(duration: 0.3, bounce: 0.2), value: selection)
         .opacity(held ? 0.3 : 1)
     }
 
