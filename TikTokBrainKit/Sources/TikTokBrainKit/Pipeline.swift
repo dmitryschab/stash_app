@@ -102,6 +102,19 @@ public actor PipelineRunner {
         return true
     }
 
+    /// Re-runs exactly one save — the detail screen's "Re-run pipeline". `processAll` drains
+    /// every pending video in the library, which on a half-imported library turned one tap
+    /// into hundreds of TikTok fetches and a hot phone.
+    public func process(videoID: String) async {
+        let context = ModelContext(container)
+        guard let video = try? context.fetch(
+            FetchDescriptor<Video>(predicate: #Predicate { $0.videoID == videoID })).first else { return }
+        inFlight.insert(videoID)
+        defer { inFlight.remove(videoID) }
+        await process(video)
+        try? context.save()
+    }
+
     /// Number of videos processed concurrently. The shared Enricher's 1 s throttle
     /// still serializes TikTok page fetches; transcripts and analysis overlap.
     ///

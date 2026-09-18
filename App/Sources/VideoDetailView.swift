@@ -16,9 +16,21 @@ import TikTokBrainKit
 
 struct VideoDetailView: View {
     @Environment(\.modelContext) private var context
-    let video: Video
+    /// The row as pushed. The pipeline writes on its own ModelContext, and an instance this
+    /// context already holds stays stale until it fetches again — so the screen renders the
+    /// queried copy below, which SwiftData refreshes after every save from any context. Before
+    /// this, a re-run finished and the screen showed nothing.
+    private let given: Video
+    @Query private var live: [Video]
+    private var video: Video { live.first ?? given }
 
     @State private var isRerunning = false
+
+    init(video: Video) {
+        given = video
+        let id = video.videoID
+        _live = Query(filter: #Predicate<Video> { $0.videoID == id })
+    }
 
     @AppStorage("boxBaseURL") private var boxBaseURL = BoxDefaults.baseURL
     @AppStorage("chatModel") private var chatModel = BoxDefaults.chatModel
@@ -498,7 +510,9 @@ struct VideoDetailView: View {
         let config = makeBoxConfig(baseURL: boxBaseURL, chatModel: chatModel, whisperModel: whisperModel)
         Task {
             let runner = PipelineRunner(deps: PipelineCenter.makeDeps(config: config), container: container)
-            await runner.processAll { _, _ in }
+            // This one save only. `processAll` drains every pending video in the library — on a
+            // half-imported library that was hundreds of TikTok fetches and a hot phone per tap.
+            await runner.process(videoID: video.videoID)
             await MainActor.run { isRerunning = false }
         }
     }

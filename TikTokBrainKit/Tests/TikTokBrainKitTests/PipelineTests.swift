@@ -861,3 +861,46 @@ private struct RecordingMusicResolver: MusicLinkResolving {
         return picks
     }
 }
+
+final class PipelineRerunTests: XCTestCase {
+    /// The detail screen's "Re-run pipeline" must touch exactly its own video: `processAll`
+    /// drains every pending save in the library, which on a half-imported library is hundreds
+    /// of TikTok fetches for one tap.
+    func testProcessOneVideoLeavesTheRestOfTheQueueAlone() async throws {
+        let container = try ModelContainer(
+            for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let tapped = URL(string: "https://www.tiktok.com/@a/video/7000000000000000011")!
+        let other = URL(string: "https://www.tiktok.com/@b/video/7000000000000000012")!
+        let meta = VideoMeta(caption: "POV 15-minute miso ramen", hashtags: ["recipe"], author: "a")
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [tapped.absoluteString: meta, other.absoluteString: meta]),
+            media: StubMedia(bundle: MediaBundle(audioFileURL: URL(fileURLWithPath: "/tmp/x.m4a"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: "boil"),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+        _ = try await runner.ingest(bookmarks: [
+            Bookmark(id: "7000000000000000011", url: tapped, date: Date(timeIntervalSince1970: 200)),
+            Bookmark(id: "7000000000000000012", url: other, date: Date(timeIntervalSince1970: 100)),
+        ])
+        // The screen's own instance, held before the run — what SwiftUI is looking at.
+        let ui = ModelContext(container)
+        let held = try XCTUnwrap(ui.fetch(FetchDescriptor<Video>(
+            predicate: #Predicate<Video> { $0.videoID == "7000000000000000011" })).first)
+
+        await runner.process(videoID: "7000000000000000011")
+
+        let fresh = ModelContext(container)
+        let all = try fresh.fetch(FetchDescriptor<Video>(sortBy: [SortDescriptor(\.videoID)]))
+        let states = try all.map { try JSONDecoder().decode([String: StageState].self, from: $0.stageStatesJSON) }
+        XCTAssertEqual(states[0]["enrich"], .done)
+        XCTAssertEqual(all[0].recipeJSON != nil, true)
+        XCTAssertEqual(states[1]["enrich"], .pending, "the other pending save must not have been touched")
+        // The runner writes on its own context, so an instance another context already holds
+        // stays stale until that context fetches again — which is what the screen's @Query does.
+        XCTAssertNil(held.recipeJSON)
+        _ = try ui.fetch(FetchDescriptor<Video>(predicate: #Predicate<Video> { $0.videoID == "7000000000000000011" }))
+        XCTAssertNotNil(held.recipeJSON, "a fetch on the holding context refreshes the held instance")
+    }
+}
