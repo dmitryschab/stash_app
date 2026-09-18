@@ -37,9 +37,14 @@ variable "name" {
 }
 
 variable "monthly_budget_usd" {
-  description = "Monthly cost budget in USD. AWS Budgets ALERTS at thresholds; it does not hard-stop spend."
+  description = <<-DESC
+    Hard monthly cap in USD, about €50. Counts gross usage with credits NOT netted off, so it
+    trips on real consumption even while promotional credits pay the bill. At 100% of actual
+    spend the budget actions below stop the box and deny the app's AWS identities everything.
+    Cost data lags by hours, so the stop lands a little past the cap.
+  DESC
   type        = number
-  default     = 20
+  default     = 58
 }
 
 variable "alert_email" {
@@ -324,6 +329,10 @@ resource "aws_budgets_budget" "monthly" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
+  cost_types {
+    include_credit = false
+  }
+
   notification {
     comparison_operator        = "GREATER_THAN"
     threshold                  = 80
@@ -346,6 +355,103 @@ resource "aws_budgets_budget" "monthly" {
     threshold_type             = "PERCENTAGE"
     notification_type          = "FORECASTED"
     subscriber_email_addresses = [var.alert_email]
+  }
+}
+
+# The budget above only emails. These two actions turn its 100% line into a hard stop: the box
+# stops, and the box role plus the `stash-box` user (whose keys call Bedrock) lose every
+# permission. The box is also the only OpenRouter caller, so that spend stops with it.
+# To recover: raise the limit, reverse both actions in the Budgets console, start the instance.
+data "aws_caller_identity" "current" {}
+
+resource "aws_iam_policy" "deny_all" {
+  name   = "${var.name}-deny-all"
+  policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Deny", Action = "*", Resource = "*" }] })
+}
+
+resource "aws_iam_role" "budget_action" {
+  name = "${var.name}-budget-action"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "budgets.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+      Condition = { StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id } }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "budget_action_ssm" {
+  role       = aws_iam_role.budget_action.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSBudgetsActions_RolePolicyForResourceAdministrationWithSSM"
+}
+
+resource "aws_iam_role_policy" "budget_action_iam" {
+  name = "${var.name}-attach-deny-all"
+  role = aws_iam_role.budget_action.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:AttachUserPolicy", "iam:DetachUserPolicy"]
+      Resource  = [aws_iam_role.box.arn, "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/stash-box"]
+      Condition = { ArnEquals = { "iam:PolicyARN" = aws_iam_policy.deny_all.arn } }
+    }]
+  })
+}
+
+resource "aws_budgets_budget_action" "stop_box" {
+  budget_name        = aws_budgets_budget.monthly.name
+  action_type        = "RUN_SSM_DOCUMENTS"
+  approval_model     = "AUTOMATIC"
+  notification_type  = "ACTUAL"
+  execution_role_arn = aws_iam_role.budget_action.arn
+  depends_on         = [aws_iam_role_policy_attachment.budget_action_ssm]
+
+  action_threshold {
+    action_threshold_type  = "PERCENTAGE"
+    action_threshold_value = 100
+  }
+
+  definition {
+    ssm_action_definition {
+      action_sub_type = "STOP_EC2_INSTANCES"
+      region          = var.region
+      instance_ids    = [aws_instance.box.id]
+    }
+  }
+
+  subscriber {
+    address           = var.alert_email
+    subscription_type = "EMAIL"
+  }
+}
+
+resource "aws_budgets_budget_action" "deny_app" {
+  budget_name        = aws_budgets_budget.monthly.name
+  action_type        = "APPLY_IAM_POLICY"
+  approval_model     = "AUTOMATIC"
+  notification_type  = "ACTUAL"
+  execution_role_arn = aws_iam_role.budget_action.arn
+  depends_on         = [aws_iam_role_policy.budget_action_iam]
+
+  action_threshold {
+    action_threshold_type  = "PERCENTAGE"
+    action_threshold_value = 100
+  }
+
+  definition {
+    iam_action_definition {
+      policy_arn = aws_iam_policy.deny_all.arn
+      roles      = [aws_iam_role.box.name]
+      users      = ["stash-box"]
+    }
+  }
+
+  subscriber {
+    address           = var.alert_email
+    subscription_type = "EMAIL"
   }
 }
 
