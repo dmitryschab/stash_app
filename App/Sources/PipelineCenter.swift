@@ -107,6 +107,7 @@ final class PipelineCenter {
             shareImports = imports
         }
         Self.discardLegacyState()
+        MediaFetcher.sweepInterruptedReads()
         Self.startPowerAndPathWatch()
         refreshThumbnails()
     }

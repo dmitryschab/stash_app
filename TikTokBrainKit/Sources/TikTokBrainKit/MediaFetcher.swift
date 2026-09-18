@@ -26,6 +26,19 @@ public struct MediaFetcher: MediaFetching {
         self.keyframeCount = keyframeCount
     }
 
+    /// Deletes what an interrupted read left in `tmp`: the mp4 the OCR pass downloads and the
+    /// frames and audio it samples. Each of those is deleted by a `defer`, which iOS skips when
+    /// it kills a background pass mid-flight — worth ~130 MB on a phone that ran a library pass.
+    /// Call at launch, when nothing is in flight; a running pass would lose the files it holds.
+    public static func sweepInterruptedReads(in tmp: URL = FileManager.default.temporaryDirectory) {
+        let manager = FileManager.default
+        try? manager.removeItem(at: tmp.appendingPathComponent("tiktokbrain-media", isDirectory: true))
+        let leftovers = (try? manager.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
+        for file in leftovers where file.lastPathComponent.hasPrefix("stash-ocr-") {
+            try? manager.removeItem(at: file)
+        }
+    }
+
     /// Downloads `streamURL` to a temporary `.mp4`, exports an `.m4a` audio track,
     /// and samples `keyframeCount` evenly-spaced frames to temporary PNGs.
     ///
