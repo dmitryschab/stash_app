@@ -57,7 +57,7 @@ struct WatchSection: View {
             Color.clear
                 .overlay {
                     if let url = video.thumbnailURL {
-                        AsyncImage(url: url) { image in
+                        StashImage(url: url) { image in
                             image.resizable().scaledToFill()
                         } placeholder: {
                             tint

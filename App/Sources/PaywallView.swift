@@ -244,6 +244,7 @@ struct PaywallView: View {
                 try await session.deleteAccount()
                 try context.delete(model: Video.self)
                 try context.save()
+                LocalImageCache.shared.removeAll()
                 try? FileManager.default.removeItem(at: ThumbnailStore.directory)
                 try? FileManager.default.removeItem(at: AlbumStore.cacheURL)
                 try? FileManager.default.removeItem(at: OfferStore.cacheURL)

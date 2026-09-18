@@ -37,14 +37,11 @@ struct HaulProductArtwork: View {
     var body: some View {
         Color.stashHaul.opacity(0.07)
             .overlay {
-                if let url, url.isFileURL, let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image).resizable().scaledToFill()
-                } else if let url {
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image { image.resizable().scaledToFill() }
-                        else { placeholder }
-                    }
-                } else { placeholder }
+                StashImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    placeholder
+                }
             }
             .clipped()
             // clipped() trims the drawing, not the touches: a portrait frame filled into a

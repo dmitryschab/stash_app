@@ -447,7 +447,7 @@ struct Thumbnail: View {
 
     var body: some View {
         let tint = category?.color ?? Color.stashInk.opacity(0.35)
-        AsyncImage(url: url) { image in
+        StashImage(url: url) { image in
             image.resizable().scaledToFill()
         } placeholder: {
             ZStack {

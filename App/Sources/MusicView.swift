@@ -488,7 +488,7 @@ struct SleeveArt: View {
         if let artwork {
             // The typographic sleeve doubles as the placeholder, so a cover that is still
             // decoding shows the designed cover rather than a hole in the mosaic.
-            AsyncImage(url: artwork) { image in
+            StashImage(url: artwork) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
                 typographic
@@ -575,7 +575,7 @@ struct SleeveStrip: View {
     private func cell(_ url: URL?) -> some View {
         Group {
             if let url {
-                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { blank }
+                StashImage(url: url) { $0.resizable().scaledToFill() } placeholder: { blank }
             } else {
                 blank
             }
@@ -1035,7 +1035,7 @@ struct MusicListDetailView: View {
     private func pickArt(_ url: URL?) -> some View {
         Group {
             if let url {
-                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.stashInk.opacity(0.12) }
+                StashImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.stashInk.opacity(0.12) }
             } else {
                 Color.stashInk.opacity(0.12)
             }

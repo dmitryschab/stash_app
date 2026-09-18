@@ -270,7 +270,9 @@ struct LibraryView: View {
         if !needsLook.isEmpty {
             Micro(text: "Needs a look", size: 10, tracking: 1.8, color: .categoryOther)
                 .padding(.top, 24)
-            VStack(spacing: 0) {
+            // Lazy: this pile runs to hundreds of rows on a synced library, and building every
+            // one of them (each with its own thumbnail) was most of what opening Library cost.
+            LazyVStack(spacing: 0) {
                 ForEach(needsLook, id: \.videoID) { video in
                     NavigationLink { VideoDetailView(video: video) } label: {
                         HStack(spacing: 12) {
@@ -609,7 +611,7 @@ struct FeaturedArt: View {
                 // Overlay on a clear colour: the image never gets a say in the card's size.
                 Color.clear
                     .overlay {
-                        AsyncImage(url: url) { image in
+                        StashImage(url: url) { image in
                             image.resizable().scaledToFill()
                         } placeholder: {
                             Color.clear

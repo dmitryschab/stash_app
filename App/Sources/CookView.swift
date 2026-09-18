@@ -16,8 +16,11 @@ struct CookView: View {
     @State private var focus: String?   // selected topic chip; nil = all
     @State private var browsingTopics = false
 
+    /// Checks for the payload rather than decoding it: `recipe` also runs the metric rewrite over
+    /// every line, and this is read several times per body — on a 233-recipe phone that was most
+    /// of what opening Cook cost.
     private var recipes: [Video] {
-        videos.filter { $0.category == .recipe && $0.recipe != nil }
+        videos.filter { $0.category == .recipe && $0.recipeJSON != nil }
     }
 
     private func matches(_ video: Video) -> Bool {
@@ -344,7 +347,7 @@ private struct WallTile: View {
         // column and shove the whole row off screen.
         Color.clear
             .overlay {
-                AsyncImage(url: video.thumbnailURL) { image in
+                StashImage(url: video.thumbnailURL) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
                     ZStack {
@@ -417,7 +420,7 @@ struct RecipeDetailView: View {
 
     private var hero: some View {
         ZStack(alignment: .top) {
-            AsyncImage(url: video.thumbnailURL) { image in
+            StashImage(url: video.thumbnailURL) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
                 Color.categoryRecipe
