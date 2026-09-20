@@ -19,6 +19,8 @@ META = f"{HERE}/meta.tsv"
 SEED = f"{HERE}/seed.json"
 IDS = f"{HERE}/ids.txt"
 LINKS = f"{HERE}/share_links.txt"
+OLD_LINKS = f"{HERE}/old_links.txt"
+WINDOW_DAYS = 365
 WHISPER = "mlx-community/whisper-large-v3-turbo"
 
 
@@ -42,6 +44,42 @@ def load_meta():
 
 def clean(s):
     return re.sub(r"\s+", " ", (s or "").replace("\t", " ").replace("\n", " ")).strip()
+
+
+# ---------------------------------------------------------------- ids
+def split_export(days=WINDOW_DAYS, now=None):
+    """Export favorites -> (recent, old), each [(id, link, save-date)], newest first.
+
+    'Date' is when you saved it, not when it was posted. Upload time is derivable
+    (TikTok ids are snowflakes: int(id) >> 32 == unix seconds) but saves are what
+    "last year of my library" means, and they need no deriving.
+    """
+    import datetime
+    now = now or datetime.datetime.now()
+    cut = (now - datetime.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    seen, rows = set(), []
+    for it in json.load(open(EXPORT))["Likes and Favorites"]["Favorite Videos"]["FavoriteVideoList"]:
+        m = re.search(r"/(\d{15,})", it.get("Link", ""))
+        d = it.get("Date", "")
+        if not m or not d or m.group(1) in seen:
+            continue                      # same video favorited twice -> keep the first (newest)
+        seen.add(m.group(1))
+        rows.append((m.group(1), it["Link"].strip(), d))
+    rows.sort(key=lambda r: r[2], reverse=True)
+    return [r for r in rows if r[2] >= cut], [r for r in rows if r[2] < cut]
+
+
+def stage_ids(days=WINDOW_DAYS):
+    """Rewrite ids.txt/share_links.txt to the last `days` of saves; park the rest
+    in old_links.txt. Drops nothing already downloaded — stages key off ids.txt,
+    so widening the window and re-running picks the old ones back up."""
+    recent, old = split_export(days)
+    open(IDS, "w").write("".join(f"{r[0]}\n" for r in recent))
+    open(LINKS, "w").write("".join(f"{r[1]}\n" for r in recent))
+    open(OLD_LINKS, "w").write("".join(f"{r[2][:10]}\t{r[1]}\n" for r in old))
+    span = f"{recent[-1][2][:10]}..{recent[0][2][:10]}" if recent else "empty"
+    print(f"ids: {len(recent)} kept ({span}), {len(old)} parked in {os.path.basename(OLD_LINKS)}",
+          flush=True)
 
 
 # ---------------------------------------------------------------- meta
@@ -84,7 +122,9 @@ def stage_meta():
                     f.write(f"{vid}\t{res[0]}\t{res[1]}\t{res[2]}\n"); f.flush()
                 else:
                     print("  STILL-FAILED", vid, flush=True)
-    print(f"meta done: {len(load_meta())}/{len(ids())} have metadata", flush=True)
+    cur = ids()  # meta.tsv outlives narrower id windows -- count only the current ones
+    got = len([i for i in cur if i in load_meta()])
+    print(f"meta done: {got}/{len(cur)} have metadata", flush=True)
 
 
 def as_completed_map(ex, fn, items):
@@ -110,21 +150,39 @@ def stage_dl(shard):
             print(f"  {n}/{len(todo)} {vid} {'ok' if ok else 'FAIL'}", flush=True)
 
 
+def has_audio(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a",
+                        "-show_entries", "stream=codec_type", "-of", "csv", path],
+                       capture_output=True, text=True, timeout=30)
+    return "audio" in r.stdout
+
+
 def download_one(vid, url):
     mp4 = f"{MEDIA}/{vid}.mp4"; wav = f"{MEDIA}/{vid}.wav"
-    # default format is sometimes video-only; prefer a format with audio, else -1 CDN variant
-    subprocess.run(["yt-dlp", "-q", "-f", "bestaudio/best", "-o", mp4, "--no-warnings", url],
-                   capture_output=True, timeout=180)
-    if not os.path.exists(mp4):
-        subprocess.run(["yt-dlp", "-q", "-f", "mp4", "-o", mp4, "--no-warnings", url],
-                       capture_output=True, timeout=180)
+    # TikTok's advertised format list varies between requests, and both `best` and
+    # `best[acodec!=none]` can still hand back a video-only bytevc1 variant. Trust
+    # ffprobe over the selector: download, check for a real audio stream, else retry.
+    # ...and the list differs between requests for the same video, so a pass that
+    # only sees video-only variants can succeed on the next one.
+    for attempt in range(3):
+        for fmt in ("bestaudio", "download", "best[acodec!=none]", "best"):
+            subprocess.run(["yt-dlp", "-q", "-f", fmt, "-o", mp4, "--no-warnings", url],
+                           capture_output=True, timeout=180)
+            if os.path.exists(mp4):
+                if has_audio(mp4):
+                    break
+                os.remove(mp4)  # video-only variant -- next selector
+        if os.path.exists(mp4):
+            break
+        time.sleep(2)
     if not os.path.exists(mp4):
         return False
-    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", mp4, "-ar", "16000", "-ac", "1", wav],
-                       capture_output=True, timeout=120)
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", mp4, "-ar", "16000", "-ac", "1", wav],
+                   capture_output=True, timeout=120)
     ok = os.path.exists(wav) and os.path.getsize(wav) > 2000
-    if ok:
-        os.remove(mp4)  # keep only the 16k wav; mp4s would be ~GBs at scale
+    os.remove(mp4)  # keep only the 16k wav; mp4s would be ~GBs at scale
+    if not ok and os.path.exists(wav):
+        os.remove(wav)  # 0-byte stub from a failed convert would look downloaded
     return ok
 
 
@@ -328,6 +386,11 @@ def stage_finalize():
     import re
     ph = re.compile(r"no (content|transcript|caption|data)|not provided|no speech|untitled", re.I)
     d = json.load(open(SEED))
+    # seed.json accumulates across runs; the library is whatever ids.txt currently holds,
+    # so narrowing the window has to drop the rows that fell out of it.
+    cur = set(ids())
+    dropped = [v for v in d if v["videoID"] not in cur]
+    d = [v for v in d if v["videoID"] in cur]
     n = 0
     for v in d:
         if ph.search(v.get("title", "")) or ph.search(v.get("summary", "")):
@@ -350,7 +413,8 @@ def stage_finalize():
         if os.path.exists(f"{THUMBS}/{v['videoID']}.jpg"):
             v["thumbnail"] = f"thumbs/{v['videoID']}.jpg"; nt += 1
     json.dump(d, open(SEED, "w"), ensure_ascii=False, indent=1)
-    print(f"finalize: {n} placeholders cleaned, {nd} dates set, {nt} thumbnails linked", flush=True)
+    print(f"finalize: {len(d)} kept ({len(dropped)} outside the window dropped), "
+          f"{n} placeholders cleaned, {nd} dates set, {nt} thumbnails linked", flush=True)
 
 
 # ---------------------------------------------------------------- self-test / cli
@@ -367,6 +431,18 @@ def selftest():
     res = filter_transcript(lines)
     assert "chorus line here" not in res.split("\n")
     assert "unique verse number 0 distinct words follow" in res.split("\n")
+    # window split: no id in both halves, no dupes, cut lands where it should
+    if os.path.exists(EXPORT):
+        import datetime
+        now = datetime.datetime(2026, 9, 18)
+        recent, old = split_export(365, now)
+        rid, oid = [r[0] for r in recent], [r[0] for r in old]
+        assert not set(rid) & set(oid)
+        assert len(set(rid + oid)) == len(rid) + len(oid)
+        cut = (now - datetime.timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+        assert all(r[2] >= cut for r in recent) and all(r[2] < cut for r in old)
+        assert recent == sorted(recent, key=lambda r: r[2], reverse=True)
+        print(f"selftest: split {len(recent)} recent / {len(old)} old")
     print("selftest OK")
 
 
@@ -377,7 +453,9 @@ if __name__ == "__main__":
         i, n = sys.argv[sys.argv.index("--shard") + 1].split("/")
         shard = (int(i), int(n))
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
-    {"meta": stage_meta,
+    days = int(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else WINDOW_DAYS
+    {"ids": lambda: stage_ids(days),
+     "meta": stage_meta,
      "dl": lambda: stage_dl(shard),
      "transcribe": lambda: stage_transcribe(shard),
      "analyze": lambda: stage_analyze(only),

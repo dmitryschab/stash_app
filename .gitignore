@@ -45,3 +45,9 @@ services/webhook/.venv-verify/
 
 # Not just .build: a `swift build` inside the package writes here too (135M of artifacts).
 TikTokBrainKit/build/
+
+# build artifacts (App/.build is separate from App/build)
+App/.build/
+
+# jev benchmark: raw whisper segments, regenerable via `jevbench.py segments`
+pipeline-lab/jevbench-raw/
