@@ -57,6 +57,13 @@ extension Color {
     /// tone none of them uses: tanned leather, the colour of a shop rather than a subject.
     static let stashHaul = Color(light: 0x7A4A22, dark: 0xA9713C)        // saddle tan
 
+    /// Lately's two tones. Like Haul these are not category jewels — a Lately card is about a
+    /// relationship across categories, so borrowing one subject's colour would claim the story
+    /// belongs to that subject. The card kind is always named in words as well; nothing here
+    /// depends on telling plum from sage.
+    static let stashLatelyNow = Color(light: 0x6B2D63, dark: 0x92457F)    // plum: what's live
+    static let stashLatelyBack = Color(light: 0x4A6B4A, dark: 0x6B8F6B)   // sage: what returned
+
     // Chrome.
     static let stashBackground = Color(light: 0xF3ECDB, dark: 0x191408) // warm cream / near-black
     static let stashSurface = Color(light: 0xF7F1E1, dark: 0x241D0F)    // raised fields

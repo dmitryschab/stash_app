@@ -76,7 +76,7 @@ enum StashTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .today: "Recents"
+        case .today: "Lately"
         case .code: "Code"
         case .cook: "Cook"
         case .music: "Music"
@@ -88,7 +88,7 @@ enum StashTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .today: "clock.arrow.circlepath"
+        case .today: "point.3.connected.trianglepath.dotted"
         case .code: "chevron.left.forwardslash.chevron.right"
         case .cook: "fork.knife"
         case .music: "music.note"
@@ -101,7 +101,7 @@ enum StashTab: String, CaseIterable, Identifiable {
     /// One line for the Settings picker, so turning a section off is an informed choice.
     var blurb: String {
         switch self {
-        case .today: "Your latest saves, threads and all."
+        case .today: "A few connections in your saves."
         case .code: "Coding saves, links first."
         case .cook: "Recipes as a photo wall."
         case .music: "Records and recommendation lists."
@@ -298,7 +298,8 @@ struct RootView: View {
         #if DEBUG
         // A seeded smoke run has an invented account and no server, so every screenshot pass
         // would otherwise start behind this. `-showWelcome` is how it gets captured on purpose.
-        if CommandLine.arguments.contains("-seedSample") || CommandLine.arguments.contains("-seedFile") {
+        if CommandLine.arguments.contains("-seedSample") || CommandLine.arguments.contains("-seedFile")
+            || CommandLine.arguments.contains("-seedLately") {
             return CommandLine.arguments.contains("-showWelcome")
         }
         #endif
@@ -309,7 +310,7 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             Group {
                 switch tab {
-                case .today: RecentsView()
+                case .today: LatelyView()
                 case .code: CodeView()
                 case .cook: CookView()
                 case .music: MusicView()
@@ -367,6 +368,9 @@ struct RootView: View {
         // pipeline here — this is the first moment there is an authenticated user to work for.
         .task(id: session.userID) {
             discardForeignLibrary()
+            // After the wipe, never before: adopting first would hydrate the incoming account
+            // from a file the line above is about to delete, and a digest describes saves.
+            LatelyStore.shared.adopt(userID: session.userID)
             // App Review has no TikTok export to import, so a demo account brings its own
             // library. Runs after the wipe above, and only ever once per account.
             if session.isDemoAccount, let userID = session.userID {
@@ -390,6 +394,8 @@ struct RootView: View {
         guard let previous, previous != userID else { return }
         try? context.delete(model: Video.self)
         try? context.save()
+        // The digest is a description of the outgoing library, so it goes with it.
+        LatelyStore.discardState(for: previous)
         LocalImageCache.shared.removeAll()
         try? FileManager.default.removeItem(at: ThumbnailStore.directory)
         try? FileManager.default.removeItem(at: AlbumStore.cacheURL)

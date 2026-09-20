@@ -753,12 +753,15 @@ struct SettingsView: View {
         // with it. An unparseable body is carried through as text rather than dropped.
         let server = (try? JSONSerialization.jsonObject(with: serverData))
             ?? ["unparsed": String(decoding: serverData, as: UTF8.self)]
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "exportedAt": Date().ISO8601Format(),
             "userID": session.userID ?? "",
             "server": server,
             "device": ["videos": videos.map(Self.exportRow)],
         ]
+        // Lately is derived from the saves above, but what the user hid is a choice they made
+        // and not reconstructable from anything else here, so it ships with the rest.
+        if let lately = LatelyStore.shared.exportPayload { payload["lately"] = lately }
         let data = try JSONSerialization.data(withJSONObject: payload,
                                               options: [.prettyPrinted, .sortedKeys])
         let url = FileManager.default.temporaryDirectory
@@ -804,6 +807,9 @@ struct SettingsView: View {
     private func deleteAccount() {
         isDeleting = true
         accountError = nil
+        // Captured before the await: `session.deleteAccount` clears authentication, so by the
+        // time it returns there is no `userID` left to name the digest file with.
+        let owner = session.userID
         Task {
             do {
                 try await session.deleteAccount()
@@ -814,6 +820,8 @@ struct SettingsView: View {
             }
             try? context.delete(model: Video.self)
             try? context.save()
+            LatelyStore.shared.adopt(userID: nil)
+            if let owner { LatelyStore.discardState(for: owner) }
             LocalImageCache.shared.removeAll()
             try? FileManager.default.removeItem(at: ThumbnailStore.directory)
             try? FileManager.default.removeItem(at: AlbumStore.cacheURL)

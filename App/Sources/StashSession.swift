@@ -441,6 +441,7 @@ final class StashSession {
     /// `-seedSample` / `-seedFile` runs render the shell against seeded data, no server.
     private static var isSmokeRun: Bool {
         CommandLine.arguments.contains("-seedSample")
+            || CommandLine.arguments.contains("-seedLately")
             || CommandLine.arguments.contains("-seedFile")
     }
 

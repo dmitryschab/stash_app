@@ -30,6 +30,17 @@ enum SampleData {
             try? context.save()
             return
         }
+        // `-seedLately`: the qualifying fixture, for checking Lately's cards render. The
+        // general sample set is a spread of categories and rarely qualifies, which is correct
+        // behaviour and useless for looking at the cards.
+        if CommandLine.arguments.contains("-seedLately") {
+            try? context.delete(model: Video.self)
+            let videos = latelyPreviewVideos()
+            SampleCovers.draw(for: videos)
+            for video in videos { context.insert(video) }
+            try? context.save()
+            return
+        }
         guard CommandLine.arguments.contains("-seedSample") else { return }
         let existing = (try? context.fetchCount(FetchDescriptor<Video>())) ?? 0
         guard existing == 0 else { return }
@@ -644,5 +655,51 @@ extension SampleData {
         )
         for video in makeSampleVideos() { container.mainContext.insert(video) }
         return container
+    }
+
+    /// A library built to qualify. The general sample set is a spread of categories, which is
+    /// the right shape for Library and the wrong shape for Lately — its rules need three saves
+    /// on one topic, a rare topic on both sides of the window, and a real gap, none of which a
+    /// varied demo library reliably contains. Preview this to see all three cards at once; a
+    /// real library showing fewer is the rules working, not a bug.
+    @MainActor
+    static var latelyPreviewContainer: ModelContainer {
+        let container = try! ModelContainer(
+            for: Video.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let videos = latelyPreviewVideos()
+        SampleCovers.draw(for: videos)
+        for video in videos { container.mainContext.insert(video) }
+        return container
+    }
+
+    private static func latelyPreviewVideos() -> [Video] {
+        func save(_ index: Int, daysAgo: Int, _ title: String, _ topics: [String],
+                  _ category: Category) -> Video {
+            make(id: "90000000000000000\(index)",
+                 url: "https://www.tiktok.com/@stashpreview/video/90000000000000000\(index)",
+                 daysAgo: daysAgo, author: "stashpreview", caption: title, hashtags: [],
+                 category: category, title: title, summary: title, topics: topics,
+                 transcript: nil)
+        }
+        return [
+            // Current interest: three saves on one topic inside the window.
+            save(1, daysAgo: 1, "Sourdough starter, day 7", ["sourdough", "baking"], .recipe),
+            save(2, daysAgo: 3, "Why your crumb is tight", ["sourdough", "baking"], .recipe),
+            save(3, daysAgo: 6, "Scoring patterns that work", ["sourdough"], .recipe),
+            // Returning interest: four recent, two from before a long gap.
+            save(4, daysAgo: 2, "Running a 7B model on a laptop", ["local models"], .coding),
+            save(5, daysAgo: 4, "Quantization, plainly", ["local models"], .coding),
+            save(6, daysAgo: 5, "Local models and privacy", ["local models"], .coding),
+            save(7, daysAgo: 8, "A local model that writes SQL", ["local models"], .coding),
+            save(8, daysAgo: 96, "First look at running models offline", ["local models"], .coding),
+            save(9, daysAgo: 140, "Offline inference on a Mac", ["local models"], .coding),
+            // Connection: one recent and one old save sharing two topics nothing else uses.
+            save(10, daysAgo: 7, "Resin minis without the mess",
+                 ["resin printing", "miniatures"], .home),
+            save(11, daysAgo: 120, "Curing resin prints properly",
+                 ["resin printing", "miniatures"], .home),
+        ]
     }
 }
