@@ -198,13 +198,20 @@ def keep_segment(seg: dict) -> bool:
 
 
 # Whisper repetition filter — port of the validated pipeline filter (PROMPT.md).
+# A 3-gram appearing TWICE is ordinary English, not a loop: "I'm going to",
+# "a teaspoon of", "I know, I know". At >= 2 this dropped real speech, and
+# recipe steps worst of all — the one category whose screen is empty without
+# the transcript. Measured over 751 segments: >= 2 dropped 12 (1.6%), >= 3
+# drops 4 (0.5%), and the four genuine Whisper loops in that sample are still
+# caught, three here and "Going back to Going back Going back" by
+# _low_diversity. A real loop repeats a gram many times, not twice.
 def _ngram_loops(line: str) -> bool:
     words = line.split()
     for n in (3, 4):
         if len(words) < n * 2:
             continue
         grams = [tuple(words[i:i + n]) for i in range(len(words) - n + 1)]
-        if grams and max(Counter(grams).values()) >= 2:
+        if grams and max(Counter(grams).values()) >= 3:
             return True
     return False
 
@@ -659,6 +666,13 @@ def selftest():
     assert filter_transcript(["Thanks for watching, don't forget to subscribe"]) == ""
     # Short but real speech now survives (floor lowered from 12 to 4 words).
     assert filter_transcript(["add two eggs then mix"]) != ""
+    # Ordinary English repeats a 3-gram twice; only a real loop repeats it more.
+    # These were all dropped when _ngram_loops fired at >= 2.
+    assert filter_transcript(["So i'm using a teaspoon of oil a teaspoon of butter"]) != ""
+    assert filter_transcript(["I know, I know, I know that you hate me"]) != ""
+    assert filter_transcript(["What I'm going to do now is I'm going to put some oil"]) != ""
+    assert filter_transcript(["And we'll see you tomorrow tomorrow tomorrow tomorrow tomorrow"]) == ""
+    assert filter_transcript(["Going back to Going back Going back Going back"]) == ""
     # Segment gate: non-speech / low-confidence / gibberish segments are dropped;
     # a clean speech segment is kept; missing fields default to keep.
     assert keep_segment({"text": "here is the recipe", "no_speech_prob": 0.02, "avg_logprob": -0.3})
