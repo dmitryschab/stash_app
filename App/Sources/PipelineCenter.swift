@@ -43,6 +43,12 @@ final class PipelineCenter {
     var lastSummary: String?
     var cloudStatus: CloudImportStatus?
     var cloudSyncing = false
+    /// Set when the shell's status pill is tapped; the Library reads it, pushes Import and clears
+    /// it again. The pill and the Import screen have no other owner in common.
+    var importRouteRequested = false
+    /// The finished import the user has already waved away, so "N videos sorted" does not come
+    /// back on the next launch. Loaded in `configure`, like the rest of the persisted state.
+    private var dismissedImportID: String?
 
     /// A share surfaced to the UI from the moment the inbox is peeked until the fast pass
     /// classifies it (or the attempt fails) — what the Library's incoming card and the sync
@@ -106,11 +112,106 @@ final class PipelineCenter {
            let imports = try? JSONDecoder().decode([ShareImport].self, from: data) {
             shareImports = imports
         }
+        dismissedImportID = UserDefaults.standard.string(forKey: Self.dismissedImportKey)
         Self.discardLegacyState()
         MediaFetcher.sweepInterruptedReads()
         Self.startPowerAndPathWatch()
         refreshThumbnails()
     }
+
+    // MARK: - Shell status
+
+    private static let dismissedImportKey = "shellStatusDismissedImport"
+
+    /// What the shell's one status pill says. Pure, so it can be checked without a pipeline.
+    ///
+    /// There used to be two channels and neither covered the common case: the pill read the
+    /// on-device `progress` only, while the cloud import — the only Release path — reported on
+    /// the Import screen alone, so a thousand-video import looked like nothing anywhere else.
+    enum ShellStatus: Equatable {
+        case reading                          // an export was picked; nothing submitted yet
+        case syncing(done: Int, total: Int)   // on-device drain or the box's sorting pass
+        case shares(Int)                      // shared TikToks in flight
+        case finished(sorted: Int)            // a finished import from the last 24 h, not dismissed
+        case failed(String)                   // a failed share, or `lastError`
+    }
+
+    var shellStatus: ShellStatus? {
+        Self.shellStatus(isImporting: isImporting, progress: progress, cloud: cloudStatus,
+                         pendingShares: pendingShares, lastError: lastError,
+                         dismissedImportID: dismissedImportID, now: Date())
+    }
+
+    /// Clears what the pill is holding on to: the error it is showing, and — for a finished
+    /// import — its id, so the same "N videos sorted" cannot come back.
+    func dismissShellStatus() {
+        lastError = nil
+        dismissedImportID = cloudStatus?.importID
+        UserDefaults.standard.set(dismissedImportID, forKey: Self.dismissedImportKey)
+    }
+
+    /// The pill's whole decision as one function over values, first match wins: a share that died
+    /// is louder than a sync still running, and a finished import is the quietest of all.
+    static func shellStatus(isImporting: Bool, progress: (done: Int, total: Int)?,
+                            cloud: CloudImportStatus?, pendingShares: [PendingShare],
+                            lastError: String?, dismissedImportID: String?, now: Date) -> ShellStatus? {
+        // A failed share carries its own words (out of imports, signed out), so it must never be
+        // painted over by a "Syncing" that is about some other piece of work.
+        for share in pendingShares {
+            if case .failed(let message) = share.stage { return .failed(message) }
+        }
+        if isImporting {
+            if let progress, progress.total > 0 { return .syncing(done: progress.done, total: progress.total) }
+            return .reading   // parsing the export: counted work has not started yet
+        }
+        if let cloud, cloud.state == .accepted || cloud.state == .fastPass {
+            return .syncing(done: cloud.fastPass.done, total: cloud.fastPass.total)
+        }
+        if !pendingShares.isEmpty { return .shares(pendingShares.count) }
+        if let lastError { return .failed(lastError) }
+        if let cloud, cloud.state == .completed,
+           now.timeIntervalSince(cloud.updatedAt) < 86_400,
+           cloud.importID != dismissedImportID {
+            // Clamped like `notifyLibraryReady`: an import that resolved nothing must not read
+            // as a negative count.
+            return .finished(sorted: max(0, cloud.fastPass.done - cloud.unavailable))
+        }
+        return nil
+    }
+
+    #if DEBUG
+    /// The order of precedence above is not visible from any single call site, and the pill is
+    /// the only place most of these states are ever seen, so the table gets checked on launch.
+    static func shellStatusSelfTest() -> Bool {
+        let now = Date()
+        func box(_ state: CloudImportState, _ done: Int, _ total: Int, unavailable: Int = 0,
+                 ago: TimeInterval = 0, id: String = "imp-1") -> CloudImportStatus {
+            CloudImportStatus(importID: id, state: state,
+                              fastPass: CloudImportProgress(done: done, total: total),
+                              unavailable: unavailable, partialFailures: 0, estimatedCostUSD: 0,
+                              updatedAt: now.addingTimeInterval(-ago))
+        }
+        func pill(importing: Bool = false, progress: (done: Int, total: Int)? = nil,
+                  cloud: CloudImportStatus? = nil, shares: [PendingShare] = [],
+                  error: String? = nil, dismissed: String? = nil) -> ShellStatus? {
+            Self.shellStatus(isImporting: importing, progress: progress, cloud: cloud,
+                             pendingShares: shares, lastError: error,
+                             dismissedImportID: dismissed, now: now)
+        }
+        let finished = box(.completed, 941, 941, unavailable: 12, ago: 3_600)
+        return pill() == nil
+            && pill(importing: true) == .reading
+            && pill(importing: true, progress: (3, 40)) == .syncing(done: 3, total: 40)
+            && pill(cloud: box(.fastPass, 412, 941)) == .syncing(done: 412, total: 941)
+            && pill(cloud: finished) == .finished(sorted: 929)
+            && pill(cloud: box(.completed, 941, 941, unavailable: 12, ago: 25 * 3_600)) == nil
+            && pill(cloud: finished, dismissed: "imp-1") == nil
+            && pill(importing: true, progress: (3, 40),
+                    shares: [PendingShare(id: "share.json", stage: .failed("Out of imports"))])
+                == .failed("Out of imports")
+            && pill(error: "Could not reach the box.") == .failed("Could not reach the box.")
+    }
+    #endif
 
     // MARK: - Cover art
 
@@ -291,6 +392,12 @@ final class PipelineCenter {
             return
         }
         lastError = nil
+        // Parsing, the quota call and up to 1200 inserts all happen before anything is submitted,
+        // and the flag used to be claimed only afterwards — so for those seconds nothing moved
+        // and the button stayed tappable. Claim it on the way in; the defer covers every exit.
+        isImporting = true
+        defer { isImporting = false }
+        lastSummary = "Reading your export…"
 
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -309,7 +416,10 @@ final class PipelineCenter {
         }
 
         guard !bookmarks.isEmpty else {
-            lastError = "The export contains no bookmarked videos."
+            // Names the cause that actually produces this: TXT was picked two days ago, and the
+            // old wording sent people looking for the mistake in their favourites instead.
+            lastError = "No favourites found. If you chose TXT when you asked TikTok for the "
+                + "export, ask again with the format set to JSON."
             return
         }
         guard bookmarks.count <= CloudImportLimits.maxVideosPerImport else {
@@ -350,12 +460,11 @@ final class PipelineCenter {
             }
             cloudState.videoIDsFingerprint = fingerprint
             persistCloudState()
-            isImporting = true
-            defer { isImporting = false }
             let submission = try await client.submit(bookmarks: submitting, clientImportID: clientImportID)
             cloudState.importID = submission.importID
             persistCloudState()
             UserDefaults.standard.removeObject(forKey: Self.exportRequestedKey)
+            cancelExportReminders()   // the export is in — stop nagging about downloading it
             // Asked here, where the answer buys something visible: the "library is ready" ping.
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             if submitting.count < bookmarks.count, let quota {
@@ -404,6 +513,37 @@ final class PipelineCenter {
         await runner.processAll { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
+    }
+
+    // MARK: - Export reminders
+
+    private static let exportReminderIDs = ["export-reminder-1h", "export-reminder-24h"]
+
+    /// TikTok takes anywhere from an hour to a couple of days to build an export, and nothing
+    /// tells you when it lands — "I've requested it" used to schedule nothing at all, leaving
+    /// the whole wait to the user's memory. Idempotent: calling it again just restarts the pair.
+    func scheduleExportReminders() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: Self.exportReminderIDs)
+        Task {
+            // Same ask `notifyLibraryReady` depends on, moved to the first moment it buys
+            // something; an unauthorized center drops the requests silently.
+            _ = try? await center.requestAuthorization(options: [.alert, .sound])
+            for (identifier, delay) in zip(Self.exportReminderIDs, [3_600.0, 86_400.0]) {
+                let content = UNMutableNotificationContent()
+                content.title = "Your TikTok export may be ready"
+                content.body = "Download it from TikTok and bring it into Stash."
+                content.sound = .default
+                try? await center.add(UNNotificationRequest(
+                    identifier: identifier, content: content,
+                    trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)))
+            }
+        }
+    }
+
+    func cancelExportReminders() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: Self.exportReminderIDs)
     }
 
     // MARK: - Shared links (share extension)
