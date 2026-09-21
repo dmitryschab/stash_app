@@ -96,12 +96,12 @@ struct SearchOverlay: View {
                         // The answer is only final once the scorer has caught up with the
                         // field, the index exists, and the meaning half has landed. Until
                         // then the rows below are a first pass, and the line above says so.
-                        if isSettling { settlingRow.padding(.top, 14) }
-                        if results.isEmpty, scoredQuery == trimmedQuery, !index.isEmpty {
+                        if let label = settlingLabel { settlingRow(label).padding(.top, 14) }
+                        if results.isEmpty, !isSettling {
                             Text("No saves matched.")
                                 .font(.archivo(14, .semibold))
                                 .foregroundStyle(Color.stashInk.opacity(0.62))
-                                .padding(.top, isSettling ? 10 : 24)
+                                .padding(.top, 24)
                         } else {
                             resultRows.padding(.top, 8)
                         }
@@ -138,6 +138,19 @@ struct SearchOverlay: View {
         guard !Task.isCancelled else { return }
 
         let client = BoxEmbeddingClient(config: PipelineCenter.currentConfig())
+        // The Kit gives this request 30 seconds (`boxRequestTimeout`), plus a 401 refresh
+        // retry on top — far too long to sit on a verdict the lexical half already has. The
+        // deadline stamps the same query the run itself would stamp, so a late answer is
+        // still applied and still rescores; only the waiting stops.
+        // ponytail: a fixed 6 s, not a measured p95 of the box. It is the number that keeps
+        // "No saves matched." honest on a working box and unblocked on a hung one.
+        let deadline = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            embeddedQuery = text
+        }
+        defer { deadline.cancel() }
+
         let vectors = try? await client.embed([text])
         guard !Task.isCancelled else { return }
         queryEmbedding = vectors?.first
@@ -151,15 +164,23 @@ struct SearchOverlay: View {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Whether the rows on screen are still provisional: the scorer has not caught up with the
-    /// field, the index has not been built yet, or the query's vector is still in the air.
+    /// Why the rows on screen are still provisional, or nil once they are the answer. Three
+    /// waits, two of which the user has no reason to tell apart: the scorer catching up with
+    /// the field and the index being built are both just "searching", while the round trip to
+    /// the box is the one worth naming — it is the wait that can add results after a screen
+    /// has already settled into looking empty.
     ///
     /// All three used to read as "No saves matched." — an answer, and a wrong one, for the
-    /// second or so an index build plus a 400 ms debounce plus a round trip takes.
-    private var isSettling: Bool {
-        !trimmedQuery.isEmpty
-            && (scoredQuery != trimmedQuery || index.isEmpty || embeddedQuery != trimmedQuery)
+    /// second or so an index build plus a 400 ms debounce plus a round trip takes. A
+    /// meaning-only hit (no word in common) arrives on exactly that last step.
+    private var settlingLabel: String? {
+        guard !trimmedQuery.isEmpty else { return nil }
+        if scoredQuery != trimmedQuery || index.isEmpty { return "Searching…" }
+        if embeddedQuery != trimmedQuery { return "Also checking by meaning…" }
+        return nil
     }
+
+    private var isSettling: Bool { settlingLabel != nil }
 
     private struct Hit: Identifiable {
         let video: Video
@@ -236,15 +257,15 @@ struct SearchOverlay: View {
 
     /// The one line the screen shows while it is still working. No percentage, no stage name —
     /// the results underneath are already usable, this only says more may arrive.
-    private var settlingRow: some View {
+    private func settlingRow(_ label: String) -> some View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.mini)
                 .tint(.stashInk.opacity(0.62))
-            Micro(text: "Also checking by meaning…", size: 10, tracking: 1.4)
+            Micro(text: label, size: 10, tracking: 1.4)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Also checking by meaning")
+        .accessibilityLabel(label.replacingOccurrences(of: "…", with: ""))
     }
 
     /// What an empty field offers: the queries that went somewhere, then the words this library
