@@ -3,11 +3,11 @@
 // App entry point: registers the bundled Archivo faces, builds the SwiftData container,
 // optionally seeds sample content (the simulator smoke run, or an App Review demo account —
 // see SampleData.swift), and hosts the Set List shell (up to seven tabs, chosen in Settings)
-// behind a custom ink pill tab bar. Only the open slot carries its label, which is what lets
-// seven fit where five labelled ones used to crowd. Mind map is deliberately not a tab — it
-// opens from the Library header instead, next to Import (it is a map of the library after
-// all). Search is not a tab either: hold the pill and push right, and the pill becomes the
-// field (StashTabBar).
+// behind a custom ink pill tab bar. Five slots or fewer are all labelled; past five only the
+// open one is, which is what lets seven fit where five labelled ones used to crowd. Mind map
+// is deliberately not a tab — it opens from the Library header instead, next to Import (it is
+// a map of the library after all). Search is not a tab either: a magnifier sits at the pill's
+// right end, and holding the pill and pushing right is the accelerator (StashTabBar).
 //
 // The shell is gated on `StashSession`: signed out, RootView renders SignInView instead. The
 // gate lives inside RootView and not around the Scene on purpose — `.modelContainer` and the
@@ -130,9 +130,9 @@ enum StashTab: String, CaseIterable, Identifiable {
 ///
 /// Two rules, both learned the hard way rather than chosen: Library can never be switched off,
 /// because Import and Settings are only reachable from its header — a pill without it is a
-/// configuration that cannot be undone from inside the app. And seven is the ceiling: with only
-/// the open slot labelled, the other six are icon-only at 45pt, which is as narrow as a slot
-/// can honestly go (five labelled slots was the old limit; see the file header).
+/// configuration that cannot be undone from inside the app. And seven is the ceiling: past five
+/// the labels go away and the slots are icon-only at ~43pt, which is as narrow as a slot can
+/// honestly go.
 enum TabSlots {
     static let key = "tabSlots"
     static let maximum = 7
@@ -156,11 +156,29 @@ enum TabSlots {
         StashTab.allCases.filter(tabs.contains).map(\.rawValue).joined(separator: ",")
     }
 
+    /// Which slot sits under `x`, for a touch on a strip `stripWidth` wide holding `count` slots
+    /// of equal width. The grip gesture needs this: it is attached to the whole pill, so when a
+    /// hold turns out to have been a slow tap the only record of where the finger was is the
+    /// drag's start point (`StashTabBar.gripGesture`). Nil past the strip — the pill's far end
+    /// is the search button, and that is not a slot.
+    static func slotIndex(x: CGFloat, stripWidth: CGFloat, count: Int) -> Int? {
+        guard count > 0, stripWidth > 0, x < stripWidth else { return nil }
+        return min(count - 1, max(0, Int(x / (stripWidth / CGFloat(count)))))
+    }
+
     #if DEBUG
     /// The rules above are three lines of set arithmetic that decide whether the user can reach
     /// Settings at all, so they get a check that runs on every debug launch.
     static func selfTest() -> Bool {
-        decode("") == fallback
+        slotIndex(x: 0, stripWidth: 300, count: 5) == 0
+            && slotIndex(x: 59, stripWidth: 300, count: 5) == 0
+            && slotIndex(x: 60, stripWidth: 300, count: 5) == 1
+            && slotIndex(x: 299, stripWidth: 300, count: 5) == 4
+            && slotIndex(x: -3, stripWidth: 300, count: 5) == 0      // touch slop off the left edge
+            && slotIndex(x: 310, stripWidth: 300, count: 5) == nil   // the search button's end
+            && slotIndex(x: 10, stripWidth: 0, count: 5) == nil      // before the first layout pass
+            && slotIndex(x: 10, stripWidth: 300, count: 0) == nil
+            && decode("") == fallback
             && decode("garbage") == fallback
             && decode("cook") == [.cook, .library]
             && decode("library") == [.library]
@@ -195,14 +213,14 @@ struct RootView: View {
     /// Bumped when the tab already on screen is tapped again; each section watches it.
     @State private var reselect = TabReselect()
 
-    /// Search has no tab. The pill opens it (hold, push right — StashTabBar) and this is the
-    /// open state; `-openSearch` lets a smoke run land in it.
+    /// Search has no tab. The pill's magnifier opens it — as does hold-and-push, for the people
+    /// who learn it (StashTabBar) — and this is the open state; `-openSearch` lets a smoke run
+    /// land in it.
     @State private var searchOpen = CommandLine.arguments.contains("-openSearch")
     @State private var query = ""
     @State private var tabBarHidden = false
-    /// Nobody finds hold-and-push on their own: a caption over the pill teaches it until the
-    /// first time search opens.
-    @AppStorage("searchGripHintDone") private var gripHintDone = false
+    /// The splash has been up long enough that it is no longer a beat; see `splash`.
+    @State private var splashStalled = false
     /// Set when the welcome is dismissed. Separate from the UserDefaults flag `needsWelcome`
     /// reads, because a plain `UserDefaults.set` does not invalidate a SwiftUI body — without
     /// this the screen would still be there after Continue.
@@ -263,6 +281,10 @@ struct RootView: View {
             }
         }
         .task { subscription.start() }
+        // `quota == nil` is one of the two things the last branch waits for, and nothing else
+        // on this path asks for it: a restored session that came back without a quota would
+        // sit on the splash until something unrelated happened to fetch one.
+        .task { if session.quota == nil { await session.refreshQuota() } }
     }
 
     /// `-showPaywall` renders the checkout with no account and no receipt — the only way to
@@ -278,10 +300,32 @@ struct RootView: View {
 
     /// Shown for the moment it takes to read the Keychain — flashing the sign-in gate at an
     /// already-signed-in user on every cold launch would be worse than a blank beat.
+    ///
+    /// A beat is all it is meant to be. Eight seconds in it is not a beat any more, it is the
+    /// one screen in the app with no way out, so it says what it is waiting for and offers the
+    /// only move there is.
     private var splash: some View {
-        ProgressView()
-            .tint(.stashInk)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: StashSpacing.group) {
+            ProgressView()
+                .tint(.stashInk)
+            if splashStalled {
+                VStack(spacing: StashSpacing.item) {
+                    Micro(text: "Still checking your account…", size: 10, tracking: 1.4)
+                    StashPrimaryButton(title: "Try again") {
+                        Task { await session.refreshQuota() }
+                    }
+                }
+                .padding(.horizontal, 24)
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            splashStalled = false   // a splash shown again (sign-out, sign-in) gets its own beat
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { splashStalled = true }
+        }
     }
 
     /// Shown once, the first time an account reaches the shell: what the fifty free videos
@@ -333,22 +377,18 @@ struct RootView: View {
 
             if !tabBarHidden {
             VStack(spacing: 8) {
-                if center.isImporting, let progress = center.progress, progress.total > 0 {
-                    ImportSyncPill(text: "Syncing \(progress.done) of \(progress.total)")
-                } else if !center.pendingShares.isEmpty {
-                    // A shared TikTok has no done/total — the pill just says one is in flight.
-                    // A failure carries its own words (out of imports, signed out) so the pill
-                    // never claims "Syncing" over a share that already died.
-                    ImportSyncPill(text: {
-                        if case .failed(let message) = center.pendingShares[0].stage { return message }
-                        return center.pendingShares.count == 1
-                            ? "Syncing 1 share" : "Syncing \(center.pendingShares.count) shares"
-                    }())
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                if !gripHintDone && !searchOpen {
-                    Micro(text: "Hold the bar · push right to search", size: 9, tracking: 1.4, color: .stashInk.opacity(0.5))
-                        .transition(.opacity)
+                // One channel for the whole pipeline: which of these is showing, and in what
+                // order they beat each other, is `PipelineCenter.shellStatus`'s decision — a
+                // failed share carries its own words, so the pill never claims "Syncing" over
+                // a share that already died.
+                if let status = center.shellStatus {
+                    ImportSyncPill(status: status) {
+                        tab = .library
+                        center.importRouteRequested = true
+                    } dismiss: {
+                        center.dismissShellStatus()
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 StashTabBar(slots: slots, selection: $tab, reselect: $reselect,
                             searchOpen: $searchOpen, query: $query)
@@ -361,10 +401,7 @@ struct RootView: View {
             if !slots.contains(tab) { tab = slots.first ?? .library }
         }
         .animation(.easeOut(duration: 0.25), value: searchOpen)
-        .animation(.spring(duration: 0.4, bounce: 0.2), value: center.pendingShares.isEmpty)
-        .onChange(of: searchOpen) { _, open in
-            if open { gripHintDone = true }
-        }
+        .animation(.spring(duration: 0.4, bounce: 0.2), value: center.shellStatus)
         // The scenePhase watcher already fired by the time sign-in completes, so kick the
         // pipeline here — this is the first moment there is an authenticated user to work for.
         .task(id: session.userID) {
@@ -406,31 +443,117 @@ struct RootView: View {
     }
 }
 
-/// Slim status pill above the tab bar, shown on every tab while an import or a shared
-/// TikTok is still syncing in the background — so no screen ever hides that it's running.
+/// Slim status pill above the tab bar, shown on every tab for whatever the pipeline is doing —
+/// reading an export, syncing, a shared TikTok in flight, a finished import, or the error that
+/// stopped one — so no screen ever hides that it is running, or that it stopped.
+///
+/// It is a button: the detail lives on Import, and a status you cannot follow up on is half a
+/// status. The ones that will not clear themselves (`finished`, `failed`) carry an ✕.
 private struct ImportSyncPill: View {
-    let text: String
+    let status: PipelineCenter.ShellStatus
+    let open: () -> Void
+    let dismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 0) {
+            Button(action: open) {
+                HStack(spacing: 9) {
+                    leading
+                    Micro(text: text, size: 9.5, tracking: 0.9, color: .stashOnInk)
+                        .lineLimit(1)
+                    if case .syncing(let done, let total) = status {
+                        track(done: done, total: total)
+                    }
+                }
+                .padding(.leading, 16)
+                .padding(.trailing, isDismissible ? 2 : 16)
+                // A thumb around a 34pt look: `minTapTarget` would grow the capsule itself,
+                // and the pill is meant to stay a hairline over the tab bar.
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(text)
+            .accessibilityHint("Opens Import")
+
+            if isDismissible {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.stashOnInk.opacity(0.75))
+                        .minTapTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
+            }
+        }
+        .background {
+            Capsule()
+                .fill(Color.stashInk)
+                .frame(height: 34)
+                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+        }
+        .padding(.horizontal, 60)
+    }
+
+    private var text: String {
+        switch status {
+        case .reading: "Reading your export…"
+        case .syncing(let done, let total): "Syncing \(done) of \(total)"
+        // A shared TikTok has no done/total — the pill just says one is in flight.
+        case .shares(let count): count == 1 ? "Syncing 1 share" : "Syncing \(count) shares"
+        case .finished(let sorted): "\(sorted) videos sorted"
+        case .failed(let message): message
+        }
+    }
+
+    /// Spinner for work still moving, a mark for the two that have stopped.
+    @ViewBuilder private var leading: some View {
+        switch status {
+        case .reading, .syncing, .shares:
             ProgressView()
                 .controlSize(.mini)
                 .tint(.stashOnInk)
-            Micro(text: text, size: 9.5, tracking: 0.9, color: .stashOnInk)
+        case .finished:
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.stashOnInk)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.stashOnInk)
         }
-        .padding(.horizontal, 16)
-        .frame(height: 32)
-        .background(Color.stashInk, in: Capsule())
-        .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
-        .padding(.horizontal, 60)
+    }
+
+    /// The count says how far along; the track says how far there is to go.
+    private func track(done: Int, total: Int) -> some View {
+        let fraction = total > 0 ? min(1, max(0, Double(done) / Double(total))) : 0
+        return Capsule()
+            .fill(Color.stashOnInk.opacity(0.25))
+            .frame(width: 48, height: 3)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Color.stashOnInk)
+                    .frame(width: 48 * fraction, height: 3)
+            }
+    }
+
+    /// Nothing else will clear these two: a finished import and an error both sit there until
+    /// they are waved away (`PipelineCenter.dismissShellStatus`).
+    private var isDismissible: Bool {
+        switch status {
+        case .finished, .failed: true
+        case .reading, .syncing, .shares: false
+        }
     }
 }
 
-/// The solid ink pill: up to seven slots, cream icons, and an uppercase micro label on the open
-/// one only (it widens to make room; the rest share what is left) — and the search field, once
-/// you hold it and push right. The pill *is* the field: the slots slide out
-/// the right end while the magnifier and the text field slide in from the left, 1:1 with the
-/// finger (`SearchGrip`). A tap is still a tap; the hold has to come first.
+/// The solid ink pill: up to seven slots, cream icons, uppercase micro labels, and a magnifier
+/// at the right end — and the search field, once you hold the pill and push right. The pill
+/// *is* the field: the slots slide out the right end while the magnifier and the text field
+/// slide in from the left, 1:1 with the finger (`SearchGrip`). The gesture is the accelerator,
+/// not the entrance; the button at the end is the entrance. A tap is still a tap, and since
+/// the grip owns the touch, a hold that never moved is one too.
 struct StashTabBar: View {
     /// Which sections have a slot, left to right. Chosen in Settings (`TabSlots`).
     var slots: [StashTab] = TabSlots.fallback
@@ -445,6 +568,13 @@ struct StashTabBar: View {
     /// A slot's tap lands on the same touch-up that ends a grip, in whichever order SwiftUI
     /// likes; a grip that just ended is not a tab change.
     @State private var gripEndedAt = Date.distantPast
+    /// …unless the grip never moved, which is a slow tap and *is* a tab change. Then both the
+    /// release and the slot's own tap gesture ask for the same selection, and whichever arrives
+    /// second is dropped — it would otherwise read as "tapped the tab you are on" and bump.
+    @State private var selectedAt = Date.distantPast
+    /// How wide the slots actually are, which is no longer the pill: the search button takes
+    /// the right end. Read by the grip's release (`TabSlots.slotIndex`).
+    @State private var slotStripWidth: CGFloat = 0
     @FocusState private var fieldFocused: Bool
 
     private var morph: CGFloat { searchOpen ? 1 : grip }
@@ -486,41 +616,91 @@ struct StashTabBar: View {
     /// Slots are tap gestures, not Buttons: a Button fires on the touch-up that ends a push
     /// (its "still pressed" tolerance is wider than a slot), so every search open also switched
     /// tabs. A tap gesture is cancelled by the drag.
-    /// Only the open slot carries its label: it takes a fixed 80pt and the rest split what is
-    /// left, so seven slots still leave each icon a 45pt target on a 393pt phone.
+    ///
+    /// Five slots or fewer are all labelled and split the strip evenly — `point.3.connected`
+    /// and a grid of squares are not words, and a bar the user has to decode is not a bar.
+    /// Past five there is no room for six or seven labels, so only the open slot keeps one and
+    /// widens to hold it; at seven that widening has to come down to 64pt or the icon-only
+    /// slots drop under a thumb.
     private var tabs: some View {
         HStack(spacing: 0) {
-            ForEach(slots) { tab in
-                let open = tab == selection
-                VStack(spacing: 3) {
-                    Image(systemName: tab.symbol)
-                        .font(.system(size: 17, weight: .semibold))
-                    if open {
-                        Micro(text: tab.label, size: 8.5, tracking: 0.7, color: color(for: tab))
-                            .transition(.opacity)
+            HStack(spacing: 0) {
+                ForEach(slots) { tab in
+                    let open = tab == selection
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 17, weight: .semibold))
+                        if labelsAlwaysOn || open {
+                            Micro(text: tab.label, size: 8.5, tracking: 0.7, color: labelColor(for: tab))
+                                .lineLimit(1)
+                                .transition(.opacity)
+                        }
                     }
-                }
-                .foregroundStyle(color(for: tab))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(width: open ? 80 : nil)
-                .background {
-                    if open {
-                        Capsule().fill(Color.stashOnInk.opacity(0.12)).padding(.vertical, 6)
+                    .foregroundStyle(color(for: tab))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(width: open ? openSlotWidth : nil)
+                    .background {
+                        if open {
+                            Capsule().fill(Color.stashOnInk.opacity(0.12)).padding(.vertical, 6)
+                        }
                     }
+                    .contentShape(Rectangle())
+                    .onTapGesture { select(tab) }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(tab.label)
+                    .accessibilityAddTraits(open ? [.isButton, .isSelected] : [.isButton])
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { select(tab) }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(tab.label)
-                .accessibilityAddTraits(open ? [.isButton, .isSelected] : [.isButton])
             }
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { slotStripWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, width in slotStripWidth = width }
+                }
+            }
+
+            Rectangle()
+                .fill(Color.stashOnInk.opacity(0.18))
+                .frame(width: 1, height: 28)
+                .padding(.horizontal, 8)
+
+            // The entrance to search, as plain as Cook's and Haul's fields: hold-and-push is
+            // faster once you know it, and nobody knows it on the first launch.
+            Button { open() } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.stashOnInk)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().strokeBorder(Color.stashOnInk.opacity(0.4), lineWidth: 1.5))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Search")
+            .padding(.trailing, 6)
         }
         .animation(.spring(duration: 0.3, bounce: 0.2), value: selection)
         .opacity(held ? 0.3 : 1)
     }
 
+    /// Whether every slot carries its label, or only the open one (see `tabs`).
+    private var labelsAlwaysOn: Bool { slots.count <= 5 }
+
+    /// How wide the open slot is when it is the only labelled one. Nil while all of them are:
+    /// then they share the strip evenly and nothing is special about the one you are on.
+    private var openSlotWidth: CGFloat? {
+        guard !labelsAlwaysOn else { return nil }
+        return slots.count == 7 ? 64 : 80
+    }
+
     private func select(_ tab: StashTab) {
         guard !held, Date().timeIntervalSince(gripEndedAt) > 0.3 else { return }
+        choose(tab)
+    }
+
+    /// One selection per touch-up, whichever gesture reports it first (see `selectedAt`).
+    private func choose(_ tab: StashTab) {
+        guard Date().timeIntervalSince(selectedAt) > 0.2 else { return }
+        selectedAt = Date()
         // Tapping the tab you are on is not a no-op: it means "take me back up".
         if selection == tab { reselect.bump(tab) } else { selection = tab }
     }
@@ -562,6 +742,11 @@ struct StashTabBar: View {
 
     /// Hold, then push right. The long press has to succeed before the drag counts, and a
     /// release short of `SearchGrip.commitTravel` springs the pill back.
+    ///
+    /// A release that never travelled is the third case, and the one that used to be a dead
+    /// end: the grip takes the touch from the slot the moment the hold succeeds, so a finger
+    /// that rests for four tenths of a second and lifts fired the haptic, dimmed the bar and
+    /// then did nothing at all. A slow tap is a tap — the slot it started over is the slot.
     private var gripGesture: some Gesture {
         LongPressGesture(minimumDuration: SearchGrip.holdDuration, maximumDistance: 30)
             .sequenced(before: DragGesture(minimumDistance: 0))
@@ -572,14 +757,33 @@ struct StashTabBar: View {
             }
             .onEnded { value in
                 held = false
-                gripEndedAt = Date()
-                if case .second(true, let drag) = value, SearchGrip.commits(dx: drag?.translation.width ?? 0) {
-                    open()
-                } else {
+                guard case .second(true, let drag) = value else {
+                    gripEndedAt = Date()
                     withAnimation(.spring(duration: 0.35, bounce: 0.3)) { grip = 0 }
+                    return
+                }
+                let translation = drag?.translation ?? .zero
+                if SearchGrip.commits(dx: translation.width) {
+                    gripEndedAt = Date()
+                    open()
+                    return
+                }
+                withAnimation(.spring(duration: 0.35, bounce: 0.3)) { grip = 0 }
+                if hypot(translation.width, translation.height) < Self.tapTravel,
+                   let index = TabSlots.slotIndex(x: drag?.startLocation.x ?? 0,
+                                                  stripWidth: slotStripWidth, count: slots.count) {
+                    // No swallow: this touch-up meant something, and the slot's own tap gesture
+                    // reporting it too is handled by `choose`.
+                    choose(slots[index])
+                } else {
+                    gripEndedAt = Date()
                 }
             }
     }
+
+    /// How far a release may have travelled and still count as a tap rather than an abandoned
+    /// push. Roughly a finger's roll on the glass.
+    private static let tapTravel: CGFloat = 10
 
     private func open() {
         withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
@@ -595,6 +799,13 @@ struct StashTabBar: View {
 
     private func color(for tab: StashTab) -> Color {
         tab == selection ? .stashOnInk : .stashOnInk.opacity(0.45)
+    }
+
+    /// Labels do not dim as far as their glyphs. A shape at 45% still reads as a shape; 8.5pt
+    /// type at 45% is the smallest thing in the app and would fall under the floor the design
+    /// sets for it.
+    private func labelColor(for tab: StashTab) -> Color {
+        tab == selection ? .stashOnInk : .stashOnInk.opacity(0.62)
     }
 }
 
