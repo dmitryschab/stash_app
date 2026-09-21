@@ -433,9 +433,14 @@ private struct FilmPageView: View {
         .task {
             do {
                 ref = .some(try await FilmResolver.shared.film(for: FilmPick(title: film.title, year: film.year)))
+            } catch is CancellationError {
+                // Left the page mid-lookup; nothing to draw for.
             } catch {
-                // Offline or cancelled: leave it unresolved rather than claim a miss (see
-                // `FilmsView.resolve`).
+                // Offline. Unlike the wall — whose cells re-run `.task(id:)` as they recycle —
+                // this `.task` runs once per appearance, so leaving it unresolved would promise
+                // a hero poster that never arrives. Draw the sleeve instead. The state dies
+                // with the view, so coming back to the page asks again.
+                ref = .some(nil)
             }
         }
     }

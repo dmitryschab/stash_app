@@ -821,7 +821,9 @@ enum CookedLog {
 /// is the words: strip the amount off "100 g pecorino romano, grated" and look for what is
 /// left in the step's own text.
 ///
-/// ponytail: substring match, swap for the recipe model's own step↔ingredient links if it grows them.
+/// ponytail: whole-word phrase match with regular plurals — it reads words, not cooking, so a
+/// synonym ("scallion" for "spring onion") is a miss. Swap for the recipe model's own
+/// step↔ingredient links if it grows them.
 enum CookMatcher {
     /// Units as recipes write them, so "2 tbsp olive oil" loses both the 2 and the tbsp.
     private static let units: Set<String> = [
@@ -849,11 +851,40 @@ enum CookMatcher {
     /// The ingredients this step names, in the recipe's own order and in its own words — the
     /// line is shown with its amount, which is the whole point of showing it here.
     static func ingredients(in step: String, from ingredients: [String]) -> [String] {
-        let text = step.lowercased()
+        let text = words(in: step)
         return ingredients.filter { ingredient in
             let name = name(of: ingredient)
             // Two letters is noise, not a name: "1 l water" would leave "l" to match anything.
-            return name.count >= 3 && text.contains(name)
+            return name.count >= 3 && mentions(words(in: name), in: text)
+        }
+    }
+
+    /// Lowercased words, punctuation and hyphens dropped, each folded to its singular. Matching
+    /// on these rather than on the raw string is what keeps "oil" out of "bring to the boil"
+    /// and "egg" out of "eggplant", while "flat-leaf parsley" still meets "the flat leaf parsley".
+    private static func words(in text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .map(singular)
+    }
+
+    /// The regular plurals, and only those: "eggs" → "egg", "tomatoes" → "tomato". An irregular
+    /// one simply has to be written the same way in both lists.
+    private static func singular(_ word: String) -> String {
+        guard word.count > 3 else { return word }
+        for ending in ["oes", "ses", "xes", "zes", "ches", "shes"] where word.hasSuffix(ending) {
+            return String(word.dropLast(2))
+        }
+        if word.hasSuffix("ss") { return word }
+        return word.hasSuffix("s") ? String(word.dropLast()) : word
+    }
+
+    /// The name as a consecutive run of the step's words, so a two-word name stays a phrase.
+    private static func mentions(_ name: [String], in text: [String]) -> Bool {
+        guard !name.isEmpty, name.count <= text.count else { return false }
+        return (0...(text.count - name.count)).contains { start in
+            zip(name, text[start...]).allSatisfy { $0 == $1 }
         }
     }
 
@@ -886,6 +917,13 @@ enum CookMatcher {
             && ingredients(in: step, from: list) == ["100g pecorino romano, finely grated", "2 tsp black pepper"]
             && ingredients(in: "Bring a large pan of water to the boil.", from: list).isEmpty
             && ingredients(in: step, from: []).isEmpty
+            // Whole words only: a name inside a longer word is a different ingredient.
+            && ingredients(in: "Bring to the boil.", from: ["1 tbsp oil"]).isEmpty
+            && ingredients(in: "Slice the eggplant.", from: ["1 egg"]).isEmpty
+            // A regular plural is the same ingredient, and a two-word name is still a phrase.
+            && ingredients(in: "Beat the eggs.", from: ["1 egg"]) == ["1 egg"]
+            && ingredients(in: "Stir in the pecorino romano.", from: ["100g pecorino romano, finely grated"])
+                == ["100g pecorino romano, finely grated"]
     }
     #endif
 }
