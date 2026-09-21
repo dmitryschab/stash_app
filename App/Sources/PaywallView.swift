@@ -127,7 +127,7 @@ struct PaywallView: View {
                         .font(.archivo(20, .heavy))
                         .foregroundStyle(Color.stashInk)
                     Micro(text: "Cancel any time", size: 10, tracking: 1.8,
-                          color: .stashInk.opacity(0.5))
+                          color: .stashInk.opacity(0.62))
                 }
             }
         }
@@ -173,7 +173,8 @@ struct PaywallView: View {
             Task { error = await store.restore() }
         } label: {
             Micro(text: "Restore purchases", size: 10, tracking: 1.8,
-                  color: .stashInk.opacity(0.55))
+                  color: .stashInk.opacity(0.62))
+                .minTapTarget()
         }
         .buttonStyle(.plain)
         .disabled(store.isWorking)
@@ -202,13 +203,15 @@ struct PaywallView: View {
     private var accountLinks: some View {
         HStack(spacing: 18) {
             Button { session.signOut() } label: {
-                Micro(text: "Sign out", size: 10, tracking: 1.8, color: .stashInk.opacity(0.45))
+                Micro(text: "Sign out", size: 10, tracking: 1.8, color: .stashInk.opacity(0.62))
+                    .minTapTarget()
             }
             .buttonStyle(.plain)
             Text("·").foregroundStyle(Color.stashInk.opacity(0.3))
             Button { confirmingDelete = true } label: {
                 Micro(text: "Delete account", size: 10, tracking: 1.8,
-                      color: .stashInk.opacity(0.45))
+                      color: .stashInk.opacity(0.62))
+                    .minTapTarget()
             }
             .buttonStyle(.plain)
         }

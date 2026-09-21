@@ -16,9 +16,11 @@
 // and lands in an empty app.
 //
 // This is also where the two disclosures live, because it is the last screen before any data
-// moves: who processes the saves (Groq, AWS Bedrock — guideline 5.1.2(i)) and what pressing
-// the button agrees to (guideline 5.1.1(i)). Consent is by continuation, not a checkbox, so
-// the "By continuing…" line sits directly above the Apple button with both documents linked.
+// moves: who sees the saves (Apple's anonymous ID, then Groq and AWS Bedrock — guideline
+// 5.1.2(i)) and what pressing the button agrees to (guideline 5.1.1(i)). Consent is by
+// continuation, not a checkbox, so the "By continuing…" line sits directly above the Apple
+// button with both documents linked — the code field, on the rare run where it is open, is
+// the only thing that ever comes between them, and it is there because that button submits it.
 
 import AuthenticationServices
 import SwiftUI
@@ -42,6 +44,9 @@ struct SignInView: View {
                 }
             }
             .padding(.top, 16)
+            // Decoration: one dot per library category. VoiceOver reading five unnamed
+            // circles before the headline is noise, not information.
+            .accessibilityHidden(true)
 
             Text("Your saves, sorted")
                 .font(.archivo(27, .heavy))
@@ -56,16 +61,16 @@ struct SignInView: View {
                 .frame(maxWidth: 300)
                 .padding(.top, 10)
 
-            if showsCodeField { inviteField.padding(.top, 24) } else { codeToggle.padding(.top, 20) }
+            if !showsCodeField { codeToggle.padding(.top, 20) }
             if let error { errorLine(error).padding(.top, 18) }
 
             Spacer()
 
-            InfoChip(text: "Apple shares only an anonymous ID", systemImage: "lock.fill")
-                .padding(.bottom, 16)
-
             cloudNote
             consentLine.padding(.top, 12).padding(.bottom, 16)
+
+            // Opened, the field sits on the button it submits through, not a screenful above it.
+            if showsCodeField { inviteField.padding(.bottom, 16) }
 
             SignInWithAppleButton(.signIn, onRequest: { request in
                 request.requestedScopes = []
@@ -89,8 +94,12 @@ struct SignInView: View {
     /// Guideline 5.1.2(i): the two third parties that see the user's saves, named before the
     /// account exists rather than in a policy page nobody opens. Deliberately the same two names
     /// the privacy policy lists as sub-processors — Groq gets the audio, Bedrock gets the text.
+    ///
+    /// What Apple hands over leads, because it is the first thing that moves. It used to be its
+    /// own `InfoChip` above this paragraph, which made three stacked grey blocks out of one
+    /// subject: who sees your data.
     private var cloudNote: some View {
-        Text("To sort your saves, Stash sends their audio to Groq for speech-to-text and their text to AWS Bedrock for analysis.")
+        Text("Apple shares only an anonymous ID. To sort your saves, Stash sends their audio to Groq for speech-to-text and their text to AWS Bedrock for analysis.")
             .font(.archivo(12))
             .foregroundStyle(Color.stashInk.opacity(0.55))
             .multilineTextAlignment(.center)
@@ -127,7 +136,7 @@ struct SignInView: View {
     private var codeToggle: some View {
         Button { showsCodeField = true } label: {
             Micro(text: "Have a code?", size: 10, tracking: 1.8,
-                  color: .stashInk.opacity(0.45))
+                  color: .stashInk.opacity(0.62))
         }
         .buttonStyle(.plain)
     }

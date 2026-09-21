@@ -82,7 +82,7 @@ struct LatelyView: View {
             HStack {
                 Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
                 Spacer()
-                Micro(text: period, size: 11, tracking: 1.4, color: .stashInk.opacity(0.5))
+                Micro(text: period, size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
             }
             Text("Lately.")
                 .font(.archivo(33, .heavy))
@@ -132,13 +132,15 @@ struct LatelyView: View {
     // MARK: - Cards
 
     private func cards(_ snapshot: LatelyDigestState.Snapshot) -> some View {
-        VStack(spacing: 14) {
+        // A gap wider than the cards' own 18pt padding, so the stack reads as separate
+        // stories rather than one ruled block.
+        VStack(spacing: StashSpacing.group) {
             ForEach(snapshot.cards, id: \.signature) { card in
                 view(for: card, historical: snapshot.isHistorical(at: Date()))
             }
             if let undoable = store.undoable { undoBar(undoable) }
             Micro(text: "You're caught up", size: 10, tracking: 1.6,
-                  color: .stashInk.opacity(0.4))
+                  color: .stashInk.opacity(0.62))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 10)
                 .accessibilityLabel("You're caught up. That's the whole digest.")

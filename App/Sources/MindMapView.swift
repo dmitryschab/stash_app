@@ -29,9 +29,12 @@ struct MindMapView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
 
-            StashHeader(title: "Mind map", trailing: "\(videos.count) saves")
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+            HStack(alignment: .bottom, spacing: 12) {
+                StashHeader(title: "Mind map", trailing: "\(videos.count) saves")
+                if !categories.isEmpty { fitButton }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
 
             if categories.isEmpty {
                 emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -41,6 +44,23 @@ struct MindMapView: View {
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    /// The way back. The camera has no bounds, so a pan can carry the whole graph off-screen
+    /// and leave a blank canvas with nothing to aim a gesture at — which is why this sits in
+    /// the fixed header rather than over the canvas it re-frames.
+    private var fitButton: some View {
+        Button { rebuild() } label: {
+            Micro(text: "Fit", size: 9.5, tracking: 1.2, color: .stashInk)
+                .padding(.horizontal, 14)
+                .frame(height: 30)
+                .background(Color.stashSurface, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                .minTapTarget()
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel("Fit the map on screen")
     }
 
     // MARK: - Graph
