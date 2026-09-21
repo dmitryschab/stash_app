@@ -46,6 +46,10 @@ struct TikTokBrainApp: App {
         assert(PipelineCenter.shellStatusSelfTest(), "PipelineCenter shell status self-test failed")
         assert(SearchSuggestions.selfTest(), "SearchSuggestions self-test failed")
         assert(ImportView.selfTest(), "ImportView self-test failed")
+        assert(MusicView.selfTest(), "MusicView self-test failed")
+        assert(HaulDetailView.selfTest(), "HaulDetailView self-test failed")
+        assert(CookedLog.selfTest(), "CookedLog self-test failed")
+        assert(CookMatcher.selfTest(), "CookMatcher self-test failed")
         assert(FilmWall.selfTest(), "FilmWall self-test failed")
         #endif
     }
