@@ -202,24 +202,42 @@ struct ImportView: View {
         .stashCard(fill: .categoryCoding)
     }
 
+    /// Both halves of the spent badge are pinned across themes, the same trick the guide's
+    /// callout uses. `stashOnAccent` is cream in light and near-black in dark, so a capsule
+    /// filled with it would swallow the dark text it is there to carry.
+    private static let spentBadgeFill = Color(light: 0xF7F1E1, dark: 0xF7F1E1)
+    private static let spentBadgeInk = Color(light: 0x201A12, dark: 0x1D0E06)
+
     /// The screen's one budget number. Settings counts the same allowance out bucket by bucket;
-    /// here it is the single figure spending is measured against. A spent budget keeps the
-    /// treatment the old budget card gave "All spent" — the amber and the hourglass, never red:
-    /// nothing broke and nothing is lost, the month simply has to turn over.
+    /// here it is the single figure spending is measured against.
+    ///
+    /// Spent, it inverts out of the jewel card instead of tinting itself: amber on forest green
+    /// was about 1.8:1, and this is the number the user is looking for when nothing imports.
+    /// Still the hourglass rather than a warning glyph — nothing broke and nothing is lost, the
+    /// month simply has to turn over.
+    @ViewBuilder
     private func budgetBadge(_ quota: Quota) -> some View {
-        let empty = quota.remaining == 0
-        return HStack(spacing: 6) {
-            if empty {
+        let text = Self.budgetBadge(remaining: quota.remaining)
+        if quota.remaining == 0 {
+            HStack(spacing: 6) {
                 Image(systemName: "hourglass").font(.system(size: 10, weight: .bold))
+                Micro(text: text, size: 9.5, tracking: 1.6, color: Self.spentBadgeInk)
             }
-            Micro(text: Self.budgetBadge(remaining: quota.remaining), size: 9.5, tracking: 1.6,
-                  color: empty ? .categoryOther : .stashOnAccent.opacity(0.7))
+            .foregroundStyle(Self.spentBadgeInk)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Self.spentBadgeFill))
+        } else {
+            Micro(text: text, size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
         }
-        .foregroundStyle(empty ? Color.categoryOther : Color.stashOnAccent.opacity(0.7))
     }
 
     static func budgetBadge(remaining: Int) -> String {
-        remaining == 0 ? "No videos left" : "\(remaining) videos left"
+        switch remaining {
+        case 0: "No videos left"
+        case 1: "1 video left"
+        default: "\(remaining) videos left"
+        }
     }
 
     #if DEBUG
@@ -352,8 +370,9 @@ struct ImportView: View {
                 == "Sorted 4 of 9 · you can close the app, Stash pings you when it is done"
             && heroSubtitle(.idle, box(.completed, 20, 20, ago: 25 * 3_600)) == nil
             && heroSubtitle(.idle, nil) == nil
-            // A spent budget has to say so in words, not only in amber.
+            // A spent budget has to say so in words, not only in the badge's colour.
             && budgetBadge(remaining: 120) == "120 videos left"
+            && budgetBadge(remaining: 1) == "1 video left"
             && budgetBadge(remaining: 0) == "No videos left"
     }
     #endif
