@@ -142,10 +142,17 @@ final class PipelineCenter {
                          dismissedImportID: dismissedImportID, now: Date())
     }
 
-    /// Clears what the pill is holding on to: the error it is showing, and — for a finished
-    /// import — its id, so the same "N videos sorted" cannot come back.
+    /// Clears what the pill is holding on to: the error it is showing, the placeholders of any
+    /// share that died — those outrank everything in `shellStatus`, so without this the ✕ would
+    /// recompute straight back to the same caption — and, for a finished import, its id, so the
+    /// same "N videos sorted" cannot come back.
+    ///
+    /// Dismissing loses nothing: a share whose failure is worth retrying was written back to the
+    /// inbox before the caption went up, and the next foreground picks it up again with a fresh
+    /// placeholder.
     func dismissShellStatus() {
         lastError = nil
+        retireFailedShares()
         dismissedImportID = cloudStatus?.importID
         UserDefaults.standard.set(dismissedImportID, forKey: Self.dismissedImportKey)
     }
@@ -205,6 +212,9 @@ final class PipelineCenter {
             && pill(cloud: box(.fastPass, 412, 941)) == .syncing(done: 412, total: 941)
             && pill(cloud: box(.accepted, 0, 941)) == .syncing(done: 0, total: 941)
             && pill(shares: [PendingShare(id: "a"), PendingShare(id: "b")]) == .shares(2)
+            // What `dismissShellStatus` leaves behind once it has retired the failed placeholder:
+            // a share still in flight keeps the pill, and it must not read as a failure again.
+            && pill(shares: [PendingShare(id: "b", stage: .reading)]) == .shares(1)
             && pill(cloud: finished) == .finished(sorted: 929)
             && pill(cloud: box(.completed, 941, 941, unavailable: 12, ago: 25 * 3_600)) == nil
             && pill(cloud: finished, dismissed: "imp-1") == nil
@@ -365,12 +375,7 @@ final class PipelineCenter {
 
         let bookmarks: [Bookmark]
         do {
-            let parser = ExportParser()
-            if url.hasDirectoryPath {
-                bookmarks = try parser.parse(zipAt: url)
-            } else {
-                bookmarks = try parser.parse(jsonData: Data(contentsOf: url))
-            }
+            bookmarks = try ExportParser().parse(zipAt: url)
         } catch {
             lastError = "Could not read the export: \(error.localizedDescription)"
             return
@@ -414,12 +419,10 @@ final class PipelineCenter {
 
         let bookmarks: [Bookmark]
         do {
-            let parser = ExportParser()
-            if url.hasDirectoryPath {
-                bookmarks = try parser.parse(zipAt: url)
-            } else {
-                bookmarks = try parser.parse(jsonData: Data(contentsOf: url))
-            }
+            // One entry point on purpose: `parse(zipAt:)` sorts out a folder, a .json, a .zip and
+            // raw zip magic bytes. Routing on `hasDirectoryPath` handed every picked .zip to
+            // JSONSerialization — and the .zip is the file people actually have.
+            bookmarks = try ExportParser().parse(zipAt: url)
         } catch {
             lastError = "Could not read the export: \(error.localizedDescription)"
             return
@@ -708,8 +711,15 @@ final class PipelineCenter {
         setPendingShares(stage: .failed(message))
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: holdSeconds * 1_000_000_000)
-            self?.pendingShares.removeAll { if case .failed = $0.stage { true } else { false } }
+            self?.retireFailedShares()
         }
+    }
+
+    /// Drops the placeholders that are showing a failure, leaving anything still in flight alone.
+    /// One definition for both ways a failure caption goes away: the hold above running out, and
+    /// the user dismissing the shell's pill before it does.
+    private func retireFailedShares() {
+        pendingShares.removeAll { if case .failed = $0.stage { true } else { false } }
     }
 
     private func persistShareImports() {
