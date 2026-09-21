@@ -278,3 +278,57 @@ enum ZipReader {
 - At 7 slots the bar's search button leaves each slot about 43 pt on a 393 pt phone (40 pt on 375 pt). The default is 5; "Reset to recommended" is one tap.
 - The TikTok settings link is a best-effort universal link; it must be tried on a device.
 - Zip support has no zip64. TikTok exports are far below that ceiling.
+
+---
+
+## Execution record (2026-09-21)
+
+All ten tasks were implemented by Opus subagents in separate worktrees, each task-reviewed, then one whole-branch review and one fix wave. Branch `feat/ux-laws-rework`, 24 commits ahead of `main`, nothing pushed.
+
+### Verification
+
+- `cd TikTokBrainKit && swift test`: 200 XCTest + 99 Swift Testing, 0 failures (on 3e2f28a).
+- `xcodebuild … build`: BUILD SUCCEEDED (on 3e2f28a).
+- Headless simulator (iPhone 17 Pro Max, `-seedSample`): the app launches, so all twelve registered debug self-tests pass. Seen on screen: five labelled tabs and the search button; the status pill, its route into Import and its dismissal; the new Import screen; Library’s labelled actions and "All N" links; Search opened by tap with own-topic chips; Music’s filter chips and sort menu; Cook Mode’s ingredients capsule, per-step quantities and the "Cooked." ending.
+- After the fix wave: the pill reads "Could not check on your import…"; dismissed at 10:53, it was still gone at 13:32 with the same error recurring (the inline line on Import still shows it); the header Import button and the pill share one route.
+- Not opened on the simulator: the export guide sheet, Haul, the Film page, Search with a query typed, Code, Sign-in, Paywall, Mind map.
+- Needs a device: the TikTok settings link, real reminder notifications, a real TikTok zip (including a multi-GB "All data" export).
+
+### Rulings made during execution
+
+- run implementers in parallel waves of 3, each in its own git worktree with exclusive file ownership — the user asked for Opus subagents and the plan's file table makes conflicts impossible — if wrong, a merge conflict costs one manual merge.
+- one task review per task (spec + quality) stays; final whole-branch review at the end — unchanged from the skill.
+- F39 (Lately emptiness on the sample library) has no task — it is sample-data specific — if wrong, one follow-up card design.
+- T3 must skip AppleDouble members (`__MACOSX/`, basename starting `._`) — a Mac re-zipped export would otherwise fail the whole parse — costs one fix round; if wrong, one line to delete.
+- keep requestAuthorization inside scheduleExportReminders — a reminder scheduled without permission is silently dropped, and asking at "I've requested it" is in context — costs an earlier permission prompt; if wrong, delete one call.
+- T6 Step 6 — the spec's F32 ("no false 'No saves matched'") beats the brief's literal 3-clause condition: show the negative only when `!isSettling`, with a bounded wait so a hung embed cannot hide the verdict forever — costs one fix round; if wrong, revert one condition.
+- promote T4 minor "pill tap while search is open routes behind the overlay" to the fix round — it is a broken interaction, one line (`searchOpen = false`) — if wrong, nothing lost.
+- cross-task gaps found by reviewers go to the PipelineCenter owner (T2 implementer) as T2 fix round 2: (a) `dismissShellStatus()` must also drop `.failed` pending shares or the pill's ✕ is inert; (b) `runCloudImport`/`runLocalImport` must route every picked URL through `parser.parse(zipAt:)` or a picked .zip still fails — both are load-bearing for T4/T5.
+- glyph rule on Import option rows — the paste row acts in place and gets NO trailing glyph; the guide row presents a screen and keeps `chevron.right` — if wrong, two glyphs to change.
+- guide callout text on amber uses a fixed dark ink `Color(light: 0x201A12, dark: 0x1D0E06)` — `stashInk` flips to cream in dark mode (~2.5:1) — deviates from the brief's "ink text" to keep contrast.
+- T5 fix round 1 carries four controller rulings — callout fixed dark ink; paste row no trailing glyph; zero-budget badge regains its warning treatment (promoted minor 7); paste success notice (promoted minor 5) — each is a one-to-three line change.
+- zero-budget badge inverts (cream fill, fixed dark ink, hourglass) instead of amber-on-green (~1.8:1) — a design call made for contrast; if wrong, one style to change. Plural "1 video left".
+- the Global Constraint "Haul keeps its approved visual design" beats plan Step 6 — REVERT the whole Haul-detail spacing pass to BASE values (F18 is dropped for Haul) — costs the proximity fix on that one screen; if wrong, re-run Step 6 with StashSpacing.item.
+- T9 Step 2 reverts to `status != .all` — with the Category section gone the sheet only holds the shortlist, so the original condition is now the truthful one (the audit's F8 sub-point is satisfied by Step 1).
+- T9 Step 5 — the button says "Buy the cheapest — price" only when the cheapest offer is NOT offers.first; otherwise it stays "View at merchant" exactly as approved. F21's duplicate remains in that case, because removing it would redraw the approved screen.
+- T9 Step 3 stays (`arrow.up.arrow.down`) — a glyph that lies about sort direction is a logic bug; one-glyph departure from the mock ("Recent ↓") — flagged to the user.
+- T9 cheapest requires a non-empty shared currency (promoted minor F5).
+- ratify T7's placement of the sort menu at the trailing end of the chip row — Music's wall has no section header to hang it on — if wrong, move one view.
+- promote the matcher's inside-word hits to the fix round — showing "oil" under "bring to the boil" is wrong output, not polish.
+- ONE fix dispatch takes C1 I1 I2 I3 I4 I5 I6 M1 M3 plus simulator finding S1 (dismissed error re-fires every poll). M2 deferred — a stray unparseable JSON inside TikTok's own export is unlikely; if wrong, skip-bad-members is a 5-line follow-up.
+- I4(b) observed on the simulator — pill tap from Lately switched to Library and pushed Import once, back returned to Library, second tap worked — so the flag is written back on pop; (a) still fixed structurally via the single route.
+
+### Deferred minors (not fixed)
+
+- Task 1: — Theme.swift:100 duplicate doc comment above minTapTarget
+- Task 3: — M1 merge-loop duplication in ExportParser; M2 no test for magic-bytes path; M3 no tests for truncated/unsupported-method/encrypted/zip64; M4 Int-relative Data subscripting in ZipReader; M5 no CRC-32 check
+- Task 2: — max(0,…) clamp on finished count (kept, mirrors notifyLibraryReady); zip() over parallel literals for reminder IDs; schedule/cancel race during auth round-trip; dismissShellStatus writes nil when cloudStatus is nil
+- Task 3: — 256 MB cap reports as corrupt, not "too large"
+- Task 5: — category tiles vanish 24 h after an import (brief-mandated; design confirmation owed to the user); force-local DEBUG build never shows the tiles; dismissing an unrelated error also silences the "N videos sorted" pill (dismissShellStatus semantics, PipelineCenter); sharedVideoCost = 3 is a client-only constant; guide link label uppercased
+- Task 4: — 0.2 s choose() debounce also drops fast double taps; "Try again" on splash is wrong for a stalled Keychain restore; redundant accessibilityAction("Search"); missing ponytail notes on the debounce
+- Task 6: — 6 s embed deadline is an unstructured Task (harmless); recordSearch drops multi-line queries; VoiceOver phrasing on the Needs-a-look header; elective opacity bumps
+- Task 5: — paste success notice renders in the amber warning tone
+- Task 10: — PaywallView renewalTerms 11 pt at ink 0.5 (under the 0.62 floor); SignInView "Have a code?" is a ~13 pt target; Menu budget-note row styling unverified; hand-rolled Fit capsule
+- Task 9: — a11y idiom on the primary button; pre-existing Swift 6 'explicit self' warnings at HaulDetailView.swift:778
+- Task 7: — F4 invariant written twice (chips + offered); trailing(...) not self-tested; `meta` shadowing in CodeView; tracklist number 11 pt at 0.45 ink; 9 pt link glyph; music pick arrow shows before the service chooser; focus not written back
+- Final: — lastSummary "Synced N cloud results" (PipelineCenter ~:1361) same register as the banned jargon; ZipReader ceiling comment understates the mapped archive; runLocalImport never shows .reading (debug-only path)
