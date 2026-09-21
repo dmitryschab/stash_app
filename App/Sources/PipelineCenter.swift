@@ -203,6 +203,8 @@ final class PipelineCenter {
             && pill(importing: true) == .reading
             && pill(importing: true, progress: (3, 40)) == .syncing(done: 3, total: 40)
             && pill(cloud: box(.fastPass, 412, 941)) == .syncing(done: 412, total: 941)
+            && pill(cloud: box(.accepted, 0, 941)) == .syncing(done: 0, total: 941)
+            && pill(shares: [PendingShare(id: "a"), PendingShare(id: "b")]) == .shares(2)
             && pill(cloud: finished) == .finished(sorted: 929)
             && pill(cloud: box(.completed, 941, 941, unavailable: 12, ago: 25 * 3_600)) == nil
             && pill(cloud: finished, dismissed: "imp-1") == nil
@@ -396,7 +398,15 @@ final class PipelineCenter {
         // and the flag used to be claimed only afterwards — so for those seconds nothing moved
         // and the button stayed tappable. Claim it on the way in; the defer covers every exit.
         isImporting = true
-        defer { isImporting = false }
+        // Six exits below set `lastError` and return, and the Import card renders the error and
+        // the summary independently — so without this the reading line sits under the error for
+        // good. Keyed on the submit rather than on `lastError`, because the poll that follows a
+        // good submit can set an error of its own and must not take the summary down with it.
+        var submitted = false
+        defer {
+            isImporting = false
+            if !submitted { lastSummary = nil }
+        }
         lastSummary = "Reading your export…"
 
         let accessed = url.startAccessingSecurityScopedResource()
@@ -474,6 +484,7 @@ final class PipelineCenter {
             } else {
                 lastSummary = "Submitted \(submission.accepted) videos · \(newCount) new"
             }
+            submitted = true
             await syncCloudImport()
         } catch let error as StashError {
             // Quota and session failures already read as sentences; prefixing them would not help.
