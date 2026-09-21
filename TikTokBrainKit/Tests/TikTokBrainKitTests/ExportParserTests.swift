@@ -65,6 +65,27 @@ final class ExportParserTests: XCTestCase {
         XCTAssertEqual(try ExportParser().parse(zipAt: zipFixture("export-txt")), [])
     }
 
+    func testMacRezippedZipSkipsAppleDoubleMembers() throws {
+        let bookmarks = try ExportParser().parse(zipAt: zipFixture("export-mac-rezipped"))
+        XCTAssertEqual(bookmarks, try ExportParser().parse(jsonData: fixtureData()))
+    }
+
+    /// A central directory can promise any size it likes; believing a 4 GB one would allocate it.
+    func testOversizedMemberThrows() throws {
+        var archive = try Data(contentsOf: zipFixture("export-deflated"))
+        let central = try XCTUnwrap(archive.range(of: Data([0x50, 0x4B, 0x01, 0x02])))
+        let size = (central.lowerBound + 24)..<(central.lowerBound + 28)
+        archive.replaceSubrange(size, with: Data([0xFE, 0xFF, 0xFF, 0xFF]))  // 0xFFFF_FFFE
+        let zip = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-\(UUID().uuidString).zip")
+        try archive.write(to: zip)
+        defer { try? FileManager.default.removeItem(at: zip) }
+
+        XCTAssertThrowsError(try ExportParser().parse(zipAt: zip)) { error in
+            XCTAssertEqual(error as? CocoaError, CocoaError(.fileReadCorruptFile))
+        }
+    }
+
     func testGarbageZipThrows() throws {
         let zip = FileManager.default.temporaryDirectory
             .appendingPathComponent("export-\(UUID().uuidString).zip")

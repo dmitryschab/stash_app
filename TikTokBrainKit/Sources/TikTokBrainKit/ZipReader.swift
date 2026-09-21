@@ -12,8 +12,9 @@ import Compression
 import Foundation
 
 /// Reads the JSON members of a zip without unpacking it to disk.
-/// ponytail: no zip64, no encryption, whole member in memory — fine for TikTok exports
-/// (tens of MB); swap for a streaming reader if one ever exceeds a few hundred MB.
+/// ponytail: no zip64, no encryption, whole member in memory and no larger than
+/// `maxMemberBytes` — fine for TikTok exports (tens of MB); swap for a streaming reader if one
+/// ever exceeds a few hundred MB.
 enum ZipReader {
     private static let localHeaderSignature = 0x0403_4b50
     private static let centralHeaderSignature = 0x0201_4b50
@@ -22,6 +23,12 @@ enum ZipReader {
     /// The most an End of Central Directory record can sit from the end of the file: its own
     /// 22 bytes plus the 65 535-byte comment that may follow it.
     private static let maxEndOfCentralDirectoryScan = 65_557
+
+    /// The largest member the reader will hold. A central directory can promise any uncompressed
+    /// size up to 4 GB, and nothing in a small file stops it lying: without this, a few hundred
+    /// bytes of deflated zeros would reach `Data(count:)` and get the app jetsam-killed. 256 MB
+    /// is an order of magnitude past the largest JSON a TikTok export has been seen to carry.
+    private static let maxMemberBytes = 256 << 20
 
     /// Anything the reader cannot make sense of — truncated, encrypted, zip64, or compressed
     /// with a method we do not implement. One error for all of them: the caller's only move is
@@ -50,13 +57,22 @@ enum ZipReader {
                   let name = archive.string(at: cursor + 46, count: nameLength) else { throw corrupt }
             cursor += 46 + nameLength + extraLength + commentLength
 
-            guard !name.hasSuffix("/"), name.lowercased().hasSuffix(".json") else { continue }
+            // Re-zipping an export on a Mac adds an AppleDouble sidecar per file, under
+            // `__MACOSX/` and named `._<original>`. Those end in `.json` but hold resource-fork
+            // binary, so reading one would fail the whole import over a file nobody asked for.
+            let lastComponent = name.split(separator: "/").last ?? ""
+            guard !name.hasSuffix("/"), name.lowercased().hasSuffix(".json"),
+                  !name.hasPrefix("__MACOSX/"), !lastComponent.hasPrefix("._") else { continue }
             // Bit 0 of the general purpose flag is the (unsupported) traditional encryption; a
             // 0xFFFFFFFF size or offset means the real value lives in a zip64 extra field.
             guard flags & 1 == 0,
                   compressedSize != 0xFFFF_FFFF,
                   uncompressedSize != 0xFFFF_FFFF,
                   localHeader != 0xFFFF_FFFF else { throw corrupt }
+            // Checked before either branch can allocate, so a lying size costs nothing. The
+            // stored branch is covered too, though its size is pinned to the file by the
+            // `compressedSize == uncompressedSize` check below.
+            guard uncompressedSize <= maxMemberBytes else { throw corrupt }
 
             // Sizes and method come from the central directory, because an entry written from a
             // stream leaves them zeroed in the local header and in a data descriptor instead.
