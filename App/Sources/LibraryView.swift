@@ -37,7 +37,9 @@ struct LibraryView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     @State private var showSettings = false
     // Drives the incoming-share card; observed the same way RootView observes the sync pill.
-    private var center = PipelineCenter.shared
+    // `@Bindable` because the shell's status pill routes here through `importRouteRequested`,
+    // and `.navigationDestination(isPresented:)` needs that flag as a two-way binding.
+    @Bindable private var center = PipelineCenter.shared
 
     var body: some View {
         NavigationStack {
@@ -69,6 +71,10 @@ struct LibraryView: View {
             }
             .background(Color.stashBackground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            // The shell's status pill has no screen of its own to push from, so it raises a
+            // flag and the tab that owns Import answers it. SwiftUI writes the binding back to
+            // false when the push is popped, which is what keeps it from firing twice.
+            .navigationDestination(isPresented: $center.importRouteRequested) { ImportView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
         }
     }
@@ -110,54 +116,61 @@ struct LibraryView: View {
 
     // MARK: - Header
 
+    /// The three doors out of the desk, as one labelled row under the title.
+    ///
+    /// They were 38 pt unlabelled circles in the top-right corner: under the thumb's reach,
+    /// under the 44 pt floor, and — for Import, the app's core action — legible only to
+    /// whoever already knew the glyph. A capsule that says its own name costs one row.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
                 Spacer()
-                Micro(text: "\(videos.count) saves", size: 11, tracking: 1.4, color: .stashInk.opacity(0.5))
+                Micro(text: "\(videos.count) saves", size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
             }
-            HStack(alignment: .center) {
-                Text("Library")
-                    .font(.archivo(40, .heavy))
-                    .foregroundStyle(Color.stashInk)
-                Spacer()
-                HStack(spacing: 10) {
-                    NavigationLink { ImportView() } label: {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.stashInk)
-                            .frame(width: 38, height: 38)
-                            .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-                    }
-                    .accessibilityLabel("Import")
-                    // Mind map lives here rather than in the tab bar — it is a view of this library.
-                    NavigationLink { MindMapView() } label: {
-                        Image(systemName: "circle.hexagongrid.fill")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.stashInk)
-                            .frame(width: 38, height: 38)
-                            .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-                    }
-                    .accessibilityLabel("Mind map")
-                    // Delete account and Export my data live in Settings, and guideline
-                    // 5.1.1(v) asks for a deletion path the user can actually find. Behind
-                    // the Import screen's gear it was two unlabelled icons deep, on a screen
-                    // called "Import" — present, but not findable. This is the only top-level
-                    // entry point; the Import one stays where the box config already is.
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.stashInk)
-                            .frame(width: 38, height: 38)
-                            .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Settings")
+            Text("Library")
+                .font(.archivo(40, .heavy))
+                .foregroundStyle(Color.stashInk)
+            HStack(spacing: 8) {
+                NavigationLink { ImportView() } label: {
+                    headerAction("Import", symbol: "square.and.arrow.down")
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Import")
+                // Mind map lives here rather than in the tab bar — it is a view of this library.
+                NavigationLink { MindMapView() } label: {
+                    headerAction("Map", symbol: "circle.hexagongrid.fill")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Mind map")
+                // Delete account and Export my data live in Settings, and guideline
+                // 5.1.1(v) asks for a deletion path the user can actually find. Behind
+                // the Import screen's gear it was two unlabelled icons deep, on a screen
+                // called "Import" — present, but not findable. This is the only top-level
+                // entry point; the Import one stays where the box config already is.
+                Button { showSettings = true } label: {
+                    headerAction("Settings", symbol: "gearshape")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
+                Spacer(minLength: 0)
             }
+            .padding(.top, 4)
         }
         .padding(.top, 8)
+    }
+
+    private func headerAction(_ label: String, symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+            Micro(text: label, size: 10, tracking: 1.2, color: .stashInk)
+        }
+        .foregroundStyle(Color.stashInk)
+        .padding(.horizontal, 13)
+        .frame(height: 44)
+        .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+        .contentShape(Capsule())
     }
 
     // MARK: - The desk
@@ -174,18 +187,34 @@ struct LibraryView: View {
         if let reference = desked[.reference] { rowShelf(.reference, reference) }
     }
 
+    /// The shelf's name, its size, and the only door past its cap.
+    ///
+    /// That door used to be the word "all ›" — about 35×11 pt of hit area for the one control
+    /// that reaches the other eight hundred saves. It is now a capsule that says how many are
+    /// behind it, in a 44 pt row; the row gives back the height the capsule takes, so the
+    /// header's top gap drops from 24 to 16 and the desk's rhythm is unchanged.
     private func shelfHeader(_ title: String, count: Int, tint: Color,
                              @ViewBuilder destination: @escaping () -> some View) -> some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center) {
             Micro(text: "\(title) · \(count)", size: 10, tracking: 2, color: tint)
             Spacer()
             NavigationLink { destination() } label: {
-                Micro(text: "all ›", size: 9, tracking: 1.4, color: .stashInk.opacity(0.45))
+                HStack(spacing: 4) {
+                    Micro(text: "All \(count)", size: 9.5, tracking: 1.4)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
+                }
+                .padding(.horizontal, 11)
+                .frame(height: 28)
+                .background(Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2))
+                .minTapTarget()
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("All \(title.lowercased()) saves")
+            .accessibilityLabel("All \(count) \(title.lowercased()) saves")
         }
-        .padding(.top, 24)
+        .frame(height: 44)
+        .padding(.top, 16)
     }
 
     /// The watchable, as a poster rail — the one shelf whose saves are chosen by look.
@@ -268,12 +297,15 @@ struct LibraryView: View {
     private var needsLookSection: some View {
         let needsLook = self.needsLook
         if !needsLook.isEmpty {
-            Micro(text: "Needs a look", size: 10, tracking: 1.8, color: .categoryOther)
-                .padding(.top, 24)
-            // Lazy: this pile runs to hundreds of rows on a synced library, and building every
-            // one of them (each with its own thumbnail) was most of what opening Library cost.
-            LazyVStack(spacing: 0) {
-                ForEach(needsLook, id: \.videoID) { video in
+            shelfHeader("Needs a look", count: needsLook.count, tint: .categoryOther) {
+                IntentListView(title: "Needs a look", tint: .categoryOther, videos: needsLook)
+            }
+            // Five, like every other shelf: this pile runs to hundreds of rows on a synced
+            // library, and building every one of them (each with its own thumbnail) was most
+            // of what opening Library cost — under five capped shelves, at that. The rest is
+            // behind "All N", where the list builds its rows lazily.
+            VStack(spacing: 0) {
+                ForEach(needsLook.prefix(5), id: \.videoID) { video in
                     NavigationLink { VideoDetailView(video: video) } label: {
                         HStack(spacing: 12) {
                             Thumbnail(url: video.thumbnailURL, category: nil, size: 44)
@@ -335,7 +367,8 @@ extension SaveIntent {
         case .watch: .categoryFilm
         case .tryIt: .categoryCoding
         case .mood: .categoryStyle
-        case .reference: .stashInk.opacity(0.6)
+        // 0.62 is the floor for the micro type this tints, not a taste call.
+        case .reference: .stashInk.opacity(0.62)
         }
     }
 }
@@ -353,7 +386,9 @@ private struct PosterCard: View {
                 .allowsHitTesting(false)
             VStack(alignment: .leading, spacing: 0) {
                 if let topic = video.topics.first {
-                    Micro(text: topic, size: 6.5, tracking: 1.2, color: .stashOnAccent.opacity(0.75))
+                    // One line: the card's frame is fixed, so a wrapped topic eats the title.
+                    Micro(text: topic, size: 9.5, tracking: 1.2, color: .stashOnAccent.opacity(0.85))
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Text(video.rowTitle)
@@ -424,9 +459,9 @@ private struct BuyShelfRow: View {
                 }
                 Spacer(minLength: 0)
                 if !price.isEmpty {
-                    Micro(text: price, size: 8, tracking: 0.8, color: .stashHaul)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
+                    Micro(text: price, size: 9.5, tracking: 0.8, color: .stashHaul)
+                        .padding(.horizontal, 9)
+                        .frame(height: 28)
                         .background(Capsule().strokeBorder(Color.stashHaul, lineWidth: 1.2))
                 } else {
                     Image(systemName: "bag")
@@ -464,7 +499,7 @@ private struct LibraryRow: View {
                     .lineLimit(2)
                 HStack(spacing: 4) {
                     if let topic = video.topics.first {
-                        Micro(text: topic, size: 9, tracking: 1, color: tint)
+                        Micro(text: topic, size: 9.5, tracking: 1, color: tint)
                     }
                     Text(meta)
                         .font(.archivo(11.5))
@@ -474,15 +509,20 @@ private struct LibraryRow: View {
             }
             Spacer(minLength: 0)
             if let badge {
-                Micro(text: badge, size: 7.5, tracking: 1, color: badgeTint)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                // A label, not a control — the row behind it is the target. It only has to be
+                // readable, which at 7.5 pt it was not.
+                Micro(text: badge, size: 9.5, tracking: 1, color: badgeTint)
+                    .padding(.horizontal, 9)
+                    .frame(height: 28)
                     .background(Capsule().strokeBorder(badgeTint, lineWidth: 1.2))
             } else if let link = video.soleMusicPick?.link {
+                // This one is a control, and it leaves Stash. The 52 pt row has the height to
+                // spare, so it gets the full 44 pt rather than the glyph's own 14.
                 Link(destination: link) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Color.categoryMusic)
+                        .minTapTarget()
                 }
                 .accessibilityLabel("Open in your music app")
             } else {
@@ -523,7 +563,7 @@ private struct IntentListView: View {
                         StashBackButton()
                         Spacer()
                         Micro(text: "\(videos.count) saves", size: 10, tracking: 1.4,
-                              color: .stashInk.opacity(0.5))
+                              color: .stashInk.opacity(0.62))
                     }
                     .padding(.top, 8)
                     Text(title)
@@ -532,7 +572,7 @@ private struct IntentListView: View {
                         .padding(.top, 16)
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(sections, id: \.id) { section in
-                            Micro(text: section.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
+                            Micro(text: section.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
                                 .padding(.top, 18)
                                 .padding(.bottom, 4)
                                 .id(section.id)
@@ -572,7 +612,7 @@ private struct BuyListView: View {
                     StashBackButton()
                     Spacer()
                     Micro(text: "\(picks.count) picks", size: 10, tracking: 1.4,
-                          color: .stashInk.opacity(0.5))
+                          color: .stashInk.opacity(0.62))
                 }
                 .padding(.top, 8)
                 Text("To buy")
