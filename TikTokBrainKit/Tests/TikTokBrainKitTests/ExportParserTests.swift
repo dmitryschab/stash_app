@@ -16,6 +16,10 @@ final class ExportParserTests: XCTestCase {
         return try Data(contentsOf: url)
     }
 
+    private func zipFixture(_ name: String) -> URL {
+        Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "zip")!
+    }
+
     func testParsesFavoritesOnly() throws {
         let url = Bundle.module.url(forResource: "Fixtures/export-user_data", withExtension: "json")!
         let bookmarks = try ExportParser().parse(jsonData: Data(contentsOf: url))
@@ -47,14 +51,28 @@ final class ExportParserTests: XCTestCase {
         XCTAssertEqual(bookmarks.count, 2)
     }
 
-    func testActualZipThrows() throws {
+    func testParsesDeflatedZip() throws {
+        let bookmarks = try ExportParser().parse(zipAt: zipFixture("export-deflated"))
+        XCTAssertEqual(bookmarks, try ExportParser().parse(jsonData: fixtureData()))
+    }
+
+    func testParsesStoredZip() throws {
+        let bookmarks = try ExportParser().parse(zipAt: zipFixture("export-stored"))
+        XCTAssertEqual(bookmarks, try ExportParser().parse(jsonData: fixtureData()))
+    }
+
+    func testTxtOnlyZipYieldsNoBookmarks() throws {
+        XCTAssertEqual(try ExportParser().parse(zipAt: zipFixture("export-txt")), [])
+    }
+
+    func testGarbageZipThrows() throws {
         let zip = FileManager.default.temporaryDirectory
             .appendingPathComponent("export-\(UUID().uuidString).zip")
-        try Data("PK\u{03}\u{04}".utf8).write(to: zip)
+        try Data([0x9F, 0x2C, 0x04, 0xE1]).write(to: zip)
         defer { try? FileManager.default.removeItem(at: zip) }
 
         XCTAssertThrowsError(try ExportParser().parse(zipAt: zip)) { error in
-            XCTAssertEqual(error as? CocoaError, CocoaError(.fileReadUnknown))
+            XCTAssertEqual(error as? CocoaError, CocoaError(.fileReadCorruptFile))
         }
     }
 }
