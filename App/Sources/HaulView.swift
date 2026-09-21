@@ -169,7 +169,7 @@ struct HaulView: View {
                         category = category == item ? nil : item
                     }
                 }
-                chip("More", selected: filtering, symbol: "slider.horizontal.3") {
+                chip("More", selected: status != .all, symbol: "slider.horizontal.3") {
                     searching = false
                     showingFilters = true
                 }
@@ -228,7 +228,8 @@ struct HaulView: View {
             .navigationTitle("Filter finds").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Reset") { category = nil; status = .all }
+                    // Only what this sheet shows: the chip row owns the category.
+                    Button("Reset") { status = .all }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { showingFilters = false }

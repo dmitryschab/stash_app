@@ -23,11 +23,6 @@ struct HaulDetailView: View {
     private var shoppingState: HaulPickState? { video.haulState(for: pick) }
     private var isRefreshing: Bool { offerStore.isRefreshing(name: pick.name, country: country) }
 
-    /// One gap inside a group. The page is three groups — the product, what you have decided
-    /// about it, where to buy it — and only those are `StashSpacing.group` apart, so nothing
-    /// in between needs a number of its own.
-    private static let innerGap: CGFloat = 6
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -125,23 +120,23 @@ struct HaulDetailView: View {
                 .frame(height: 210)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .accessibilityLabel(artworkSource)
-                .padding(.top, Self.innerGap)
+                .padding(.top, 14)
             Text(artworkSource)
                 .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.6))
                 .frame(maxWidth: .infinity)
-                .padding(.top, Self.innerGap)
+                .padding(.top, 6)
             Text(pick.name)
                 .font(.archivo(28, .heavy))
                 .foregroundStyle(Color.stashInk)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Self.innerGap)
+                .padding(.top, 12)
                 .accessibilityAddTraits(.isHeader)
             if !pick.kind.isEmpty {
                 Text(pick.kind.prefix(1).uppercased() + pick.kind.dropFirst())
                     .font(.archivo(16))
                     .foregroundStyle(Color.stashInk.opacity(0.7))
-                    .padding(.top, Self.innerGap)
+                    .padding(.top, 4)
             }
         }
     }
@@ -166,7 +161,7 @@ struct HaulDetailView: View {
                     .accessibilityLabel(saveError)
             }
         }
-        .padding(.top, StashSpacing.group)
+        .padding(.top, 14)
     }
 
     private var wantButton: some View {
@@ -253,18 +248,18 @@ struct HaulDetailView: View {
                 countryButton
             }
         }
-        .padding(.top, StashSpacing.group)
+        .padding(.top, 12)
 
         switch offerStore.state(name: pick.name, country: country) {
         case .checking:
             VStack(spacing: 10) {
                 ForEach(0..<2, id: \.self) { _ in ShimmerBlock().frame(height: 48) }
             }
-            .padding(.top, Self.innerGap)
+            .padding(.top, 6)
             Text("Checking stores in \(countryName)…")
                 .font(.archivo(12))
                 .foregroundStyle(Color.stashInk.opacity(0.6))
-                .padding(.top, Self.innerGap)
+                .padding(.top, 8)
             mentionedPrice
         case .offers(let offers, let checkedAt) where !offers.isEmpty:
             offerCard(offers)
@@ -272,7 +267,7 @@ struct HaulDetailView: View {
                 .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Self.innerGap)
+                .padding(.top, 8)
             refreshStatus
             if let primary = Self.primaryOffer(offers) {
                 Link(destination: primary.offer.url) {
@@ -290,7 +285,7 @@ struct HaulDetailView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(primary.spoken)
-                .padding(.top, Self.innerGap)
+                .padding(.top, 12)
             }
         case .offers(_, let checkedAt):
             miss(title: "No offers found in \(countryName)",
@@ -298,7 +293,7 @@ struct HaulDetailView: View {
             Text(priceNote(checkedAt: checkedAt))
                 .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.6))
-                .padding(.top, Self.innerGap)
+                .padding(.top, 8)
             retryButton
         case .unavailable:
             miss(title: "Couldn’t check prices right now",
@@ -321,7 +316,7 @@ struct HaulDetailView: View {
                 Text("Mentioned in video: \(pick.price)")
                     .font(.archivo(12))
                     .foregroundStyle(Color.stashInk.opacity(0.6))
-                    .padding(.top, Self.innerGap)
+                    .padding(.top, 8)
             }
         }
     }
@@ -337,12 +332,12 @@ struct HaulDetailView: View {
             Text("Refreshing prices…")
                 .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.6))
-                .padding(.top, Self.innerGap)
+                .padding(.top, 5)
         } else if offerStore.refreshFailed(name: pick.name, country: country) {
             Text("Couldn’t refresh prices. The last offers are still available.")
                 .font(.archivo(12))
                 .foregroundStyle(Color.stashInk.opacity(0.7))
-                .padding(.top, Self.innerGap)
+                .padding(.top, 8)
             retryButton
         }
     }
@@ -350,25 +345,26 @@ struct HaulDetailView: View {
     /// Where the page's one filled button goes, what it says, and what VoiceOver hears.
     ///
     /// The server ranks the country's own Amazon or the brand's own store first, which is not
-    /// the same thing as cheapest — a button repeating row 0 is the second copy of a link the
-    /// user is already looking at. So when the list can honestly be compared, the button names
-    /// the cheapest offer and its price; otherwise it stays the ranked first offer, unchanged.
-    /// The spoken label puts the merchant back, because the visible one spends its words on
-    /// the price.
+    /// always the cheapest — and when it is not, a button repeating row 0 sends the user to a
+    /// price they could have beaten one row down. So the button names the cheapest offer only
+    /// when that offer is not the one already ranked first; the ordinary case, cheapest pinned
+    /// at the top, keeps "View at" exactly as it was.
     static func primaryOffer(_ offers: [HaulOffer]) -> (offer: HaulOffer, label: String, spoken: String)? {
         guard let first = offers.first else { return nil }
-        guard let cheapest = comparableCheapest(offers) else {
+        guard let cheapest = comparableCheapest(offers), cheapest != first else {
             return (first, "View at \(first.merchant)", "View at \(first.merchant)")
         }
+        // The visible label spends its words on the price, so the spoken one names the shop.
         return (cheapest, "Buy the cheapest — \(cheapest.price)",
                 "Buy the cheapest, \(cheapest.price), at \(cheapest.merchant)")
     }
 
     /// The cheapest offer, or nil when "cheapest" would be a claim the numbers do not support:
-    /// one offer only, two currencies in the same list, or a price the search could not put a
-    /// number on. `amount` is the server's own number — nothing here parses a price string.
+    /// one offer only, two currencies in the same list, no currency at all, or a price the
+    /// search could not put a number on. `amount` is the server's own number — nothing here
+    /// parses a price string.
     private static func comparableCheapest(_ offers: [HaulOffer]) -> HaulOffer? {
-        guard offers.count > 1, let currency = offers.first?.currency,
+        guard offers.count > 1, let currency = offers.first?.currency, !currency.isEmpty,
               offers.allSatisfy({ $0.currency == currency && $0.amount > 0 })
         else { return nil }
         return offers.min { $0.amount < $1.amount }   // a tie keeps the server's order
@@ -407,7 +403,7 @@ struct HaulDetailView: View {
         .padding(.horizontal, 14)
         .background(Color.stashSurface.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.stashHaul, lineWidth: 1.2))
-        .padding(.top, Self.innerGap)
+        .padding(.top, 3)
     }
 
     private func merchantMark(_ offer: HaulOffer) -> some View {
@@ -459,7 +455,7 @@ struct HaulDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(Color.stashSurface, in: RoundedRectangle(cornerRadius: 16))
-        .padding(.top, Self.innerGap)
+        .padding(.top, 6)
     }
 
     private var retryButton: some View {
@@ -493,7 +489,7 @@ struct HaulDetailView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
         }
-        .padding(.top, Self.innerGap)
+        .padding(.top, 4)
     }
 
     // MARK: - Source
@@ -528,7 +524,7 @@ struct HaulDetailView: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Watch \(video.rowTitle)\(video.author.isEmpty ? "" : " by @\(video.author)")")
-        .padding(.top, StashSpacing.group)
+        .padding(.top, 8)
     }
 
     #if DEBUG
@@ -540,18 +536,22 @@ struct HaulDetailView: View {
             HaulOffer(merchant: merchant, url: URL(string: "https://\(merchant).example")!,
                       price: "\(currency) \(amount)", amount: amount, currency: currency)
         }
-        let ranked = [offer("Amazon", 99), offer("Logitech", 94.99)]
+        let cheaperBelow = [offer("Amazon", 99), offer("Logitech", 94.99)]
+        let cheapestFirst = [offer("Amazon", 94.99), offer("Logitech", 99)]
         let mixed = [offer("Amazon", 99), offer("Logitech", 80, "USD")]
         let unpriced = [offer("Amazon", 99), offer("Logitech", 0)]
+        let noCurrency = [offer("Amazon", 99, ""), offer("Logitech", 80, "")]
         let tied = [offer("Amazon", 94.99), offer("Logitech", 94.99)]
         return primaryOffer([]) == nil
             && primaryOffer([offer("Amazon", 99)])?.label == "View at Amazon"
-            && primaryOffer(ranked)?.offer.merchant == "Logitech"
-            && primaryOffer(ranked)?.label == "Buy the cheapest — EUR 94.99"
-            && primaryOffer(ranked)?.spoken == "Buy the cheapest, EUR 94.99, at Logitech"
-            && primaryOffer(mixed)?.label == "View at Amazon"        // two currencies do not compare
-            && primaryOffer(unpriced)?.label == "View at Amazon"     // a price with no number behind it
-            && primaryOffer(tied)?.offer.merchant == "Amazon"        // a tie keeps the server's order
+            && primaryOffer(cheaperBelow)?.offer.merchant == "Logitech"
+            && primaryOffer(cheaperBelow)?.label == "Buy the cheapest — EUR 94.99"
+            && primaryOffer(cheaperBelow)?.spoken == "Buy the cheapest, EUR 94.99, at Logitech"
+            && primaryOffer(cheapestFirst)?.label == "View at Amazon"  // ranked first is already cheapest
+            && primaryOffer(mixed)?.label == "View at Amazon"          // two currencies do not compare
+            && primaryOffer(unpriced)?.label == "View at Amazon"       // a price with no number behind it
+            && primaryOffer(noCurrency)?.label == "View at Amazon"     // no currency to compare in
+            && primaryOffer(tied)?.offer.merchant == "Amazon"          // a tie keeps the server's order
     }
     #endif
 }
