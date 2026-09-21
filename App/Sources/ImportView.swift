@@ -682,7 +682,7 @@ struct SettingsView: View {
                 // fail, and re-analyze would spend budget rewriting the curated sample.
                 if StashSession.shared.isDemoAccount {
                     Section("Library") {
-                        Text("This is a demo library, so the pipeline actions are off. Import your own TikTok export to enable them.")
+                        Text("This is a demo library, so the analysis actions are off. Import your own TikTok export to enable them.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

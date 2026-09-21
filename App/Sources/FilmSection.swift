@@ -140,11 +140,14 @@ struct FilmSection: View {
         await withTaskGroup(of: (Int, FilmRef??).self) { group in
             for (index, pick) in films.enumerated() {
                 group.addTask {
-                    // The outer optional says whether Wikipedia answered at all: a throw
-                    // (offline, cancelled) is not a miss, so it leaves the key absent and the
-                    // card shimmering rather than freezing a title tile onto a real film.
+                    // The outer optional says whether Wikipedia answered at all. Leaving the
+                    // page mid-lookup records nothing — there is nothing left to draw for.
+                    // Offline does record a miss, the same as the film page: this runs once per
+                    // appearance, so an absent key would shimmer for as long as the strip is on
+                    // screen. The sleeve is the honest answer, and coming back asks again.
                     do { return (index, .some(try await FilmResolver.shared.film(for: pick))) }
-                    catch { return (index, nil) }
+                    catch is CancellationError { return (index, nil) }
+                    catch { return (index, .some(nil)) }
                 }
             }
             for await (index, outcome) in group {

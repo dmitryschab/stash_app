@@ -137,6 +137,7 @@ struct SignInView: View {
         Button { showsCodeField = true } label: {
             Micro(text: "Have a code?", size: 10, tracking: 1.8,
                   color: .stashInk.opacity(0.62))
+                .minTapTarget()
         }
         .buttonStyle(.plain)
     }

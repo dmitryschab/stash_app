@@ -329,10 +329,12 @@ struct LatelyView: View {
         }
     }
 
+    /// `chevron.right`, not `arrow.up.right`: every card here pushes `LatelyEvidenceView`, and
+    /// the outbound arrow is reserved for the taps that actually leave Stash.
     private func cta(_ title: String, on tint: Color) -> some View {
         HStack(spacing: 6) {
             Text(title).font(.archivo(12.5, .bold))
-            Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .bold))
+            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
         }
         .foregroundStyle(tint.opacity(0.9))
         .padding(.top, 14)

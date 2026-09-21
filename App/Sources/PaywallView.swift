@@ -184,7 +184,7 @@ struct PaywallView: View {
     private var renewalTerms: some View {
         Text("Payment is charged to your Apple ID at confirmation of purchase. The subscription renews each month unless you cancel at least 24 hours before the period ends. Manage or cancel it in your App Store account settings.")
             .font(.archivo(11))
-            .foregroundStyle(Color.stashInk.opacity(0.5))
+            .foregroundStyle(Color.stashInk.opacity(0.62))
             .multilineTextAlignment(.center)
             .lineSpacing(3)
             .frame(maxWidth: 320)

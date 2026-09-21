@@ -71,9 +71,11 @@ struct LibraryView: View {
             }
             .background(Color.stashBackground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            // The shell's status pill has no screen of its own to push from, so it raises a
-            // flag and the tab that owns Import answers it. SwiftUI writes the binding back to
-            // false when the push is popped, which is what keeps it from firing twice.
+            // The one way into Import: the shell's status pill has no screen of its own to push
+            // from, so it raises a flag and the tab that owns Import answers it — and the header
+            // capsule raises the same flag, so the pill cannot stack a second Import on the
+            // first. SwiftUI writes the binding back to false when the push is popped, which is
+            // what keeps it from firing twice.
             .navigationDestination(isPresented: $center.importRouteRequested) { ImportView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
         }
@@ -132,7 +134,10 @@ struct LibraryView: View {
                 .font(.archivo(40, .heavy))
                 .foregroundStyle(Color.stashInk)
             HStack(spacing: 8) {
-                NavigationLink { ImportView() } label: {
+                // Raises the same flag the shell's status pill does rather than pushing on its
+                // own: two doors into one stack meant tapping the pill while Import was already
+                // showing pushed a second copy over the first.
+                Button { center.importRouteRequested = true } label: {
                     headerAction("Import", symbol: "square.and.arrow.down")
                 }
                 .buttonStyle(.plain)

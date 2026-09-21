@@ -36,7 +36,11 @@ enum ZipReader {
     private static var corrupt: CocoaError { CocoaError(.fileReadCorruptFile) }
 
     static func jsonMembers(of url: URL) throws -> [Data] {
-        let archive = try Data(contentsOf: url)
+        // Mapped, not read: the "All data" export runs to several GB of video, and reading it
+        // whole was multiple GB resident before the first member was even inflated. The walk
+        // below touches the central directory and the JSON members only, so the pages of
+        // everything else are never faulted in.
+        let archive = try Data(contentsOf: url, options: .mappedIfSafe)
         let directory = try endOfCentralDirectory(in: archive)
 
         guard let entryCount = archive.le16(directory + 10),

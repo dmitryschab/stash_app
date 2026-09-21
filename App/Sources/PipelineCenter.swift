@@ -49,6 +49,11 @@ final class PipelineCenter {
     /// The finished import the user has already waved away, so "N videos sorted" does not come
     /// back on the next launch. Loaded in `configure`, like the rest of the persisted state.
     private var dismissedImportID: String?
+    /// The error message the user has already waved away. Every poll re-sets the same
+    /// `lastError` — a dead session, a dead network — so clearing it alone put the pill back up
+    /// seconds after the ✕. Deliberately not persisted: an error that survives a relaunch has
+    /// earned the right to be said once more.
+    private var dismissedError: String?
 
     /// A share surfaced to the UI from the moment the inbox is peeked until the fast pass
     /// classifies it (or the attempt fails) — what the Library's incoming card and the sync
@@ -139,29 +144,41 @@ final class PipelineCenter {
     var shellStatus: ShellStatus? {
         Self.shellStatus(isImporting: isImporting, progress: progress, cloud: cloudStatus,
                          pendingShares: pendingShares, lastError: lastError,
+                         dismissedError: dismissedError,
                          dismissedImportID: dismissedImportID, now: Date())
     }
 
-    /// Clears what the pill is holding on to: the error it is showing, the placeholders of any
-    /// share that died — those outrank everything in `shellStatus`, so without this the ✕ would
-    /// recompute straight back to the same caption — and, for a finished import, its id, so the
-    /// same "N videos sorted" cannot come back.
+    /// Clears what the pill is holding on to: the error it is showing — remembered as dismissed,
+    /// because the poll that produced it will produce it again — and the placeholders of any
+    /// share that died. Those outrank everything in `shellStatus`, so without this the ✕ would
+    /// recompute straight back to the same caption.
+    ///
+    /// The finished import's id is recorded only when a finished import is what is on screen.
+    /// Recording it on every dismissal meant waving away an error also buried the "N videos
+    /// sorted" line the import had earned — the one moment the pill exists for.
     ///
     /// Dismissing loses nothing: a share whose failure is worth retrying was written back to the
     /// inbox before the caption went up, and the next foreground picks it up again with a fresh
     /// placeholder.
     func dismissShellStatus() {
+        let dismissing = shellStatus
+        // Only when there is one to remember: dismissing a finished import must not forget the
+        // error that was waved away a minute ago.
+        if let lastError { dismissedError = lastError }
         lastError = nil
         retireFailedShares()
-        dismissedImportID = cloudStatus?.importID
-        UserDefaults.standard.set(dismissedImportID, forKey: Self.dismissedImportKey)
+        if case .finished = dismissing {
+            dismissedImportID = cloudStatus?.importID
+            UserDefaults.standard.set(dismissedImportID, forKey: Self.dismissedImportKey)
+        }
     }
 
     /// The pill's whole decision as one function over values, first match wins: a share that died
     /// is louder than a sync still running, and a finished import is the quietest of all.
     static func shellStatus(isImporting: Bool, progress: (done: Int, total: Int)?,
                             cloud: CloudImportStatus?, pendingShares: [PendingShare],
-                            lastError: String?, dismissedImportID: String?, now: Date) -> ShellStatus? {
+                            lastError: String?, dismissedError: String?,
+                            dismissedImportID: String?, now: Date) -> ShellStatus? {
         // A failed share carries its own words (out of imports, signed out), so it must never be
         // painted over by a "Syncing" that is about some other piece of work.
         for share in pendingShares {
@@ -175,7 +192,10 @@ final class PipelineCenter {
             return .syncing(done: cloud.fastPass.done, total: cloud.fastPass.total)
         }
         if !pendingShares.isEmpty { return .shares(pendingShares.count) }
-        if let lastError { return .failed(lastError) }
+        // The same sentence, already waved away, stays away; a different one is news and shows.
+        // Only this branch is suppressible — a failed share above carries its own words and was
+        // never the thing that got dismissed.
+        if let lastError, lastError != dismissedError { return .failed(lastError) }
         if let cloud, cloud.state == .completed,
            now.timeIntervalSince(cloud.updatedAt) < 86_400,
            cloud.importID != dismissedImportID {
@@ -200,9 +220,11 @@ final class PipelineCenter {
         }
         func pill(importing: Bool = false, progress: (done: Int, total: Int)? = nil,
                   cloud: CloudImportStatus? = nil, shares: [PendingShare] = [],
-                  error: String? = nil, dismissed: String? = nil) -> ShellStatus? {
+                  error: String? = nil, dismissedError: String? = nil,
+                  dismissed: String? = nil) -> ShellStatus? {
             Self.shellStatus(isImporting: importing, progress: progress, cloud: cloud,
                              pendingShares: shares, lastError: error,
+                             dismissedError: dismissedError,
                              dismissedImportID: dismissed, now: now)
         }
         let finished = box(.completed, 941, 941, unavailable: 12, ago: 3_600)
@@ -222,6 +244,18 @@ final class PipelineCenter {
                     shares: [PendingShare(id: "share.json", stage: .failed("Out of imports"))])
                 == .failed("Out of imports")
             && pill(error: "Could not reach the box.") == .failed("Could not reach the box.")
+            // What the ✕ buys: the sentence the poll keeps re-setting stays down, and anything
+            // it has not said before still gets through.
+            && pill(error: "Your session expired.", dismissedError: "Your session expired.") == nil
+            && pill(error: "You're offline.", dismissedError: "Your session expired.")
+                == .failed("You're offline.")
+            // A dead share is never what was dismissed — it outranks the error branch entirely.
+            && pill(shares: [PendingShare(id: "share.json", stage: .failed("Out of imports"))],
+                    error: "Out of imports", dismissedError: "Out of imports")
+                == .failed("Out of imports")
+            // And a dismissed error does not take the finished import down with it (I1's other half).
+            && pill(cloud: finished, error: "You're offline.", dismissedError: "You're offline.")
+                == .finished(sorted: 929)
     }
     #endif
 
@@ -366,7 +400,25 @@ final class PipelineCenter {
         }
     }
 
+    /// Reads the picked export, off this actor.
+    ///
+    /// One entry point on purpose: `parse(zipAt:)` sorts out a folder, a .json, a .zip and raw
+    /// zip magic bytes. Routing on `hasDirectoryPath` handed every picked .zip to
+    /// JSONSerialization — and the .zip is the file people actually have.
+    ///
+    /// Detached because it is seconds of archive walking and JSON decoding for a big export, and
+    /// on the main actor those seconds came straight out of the run loop: "Reading your export…"
+    /// was assigned and then never painted, so the pill and the disabled button both arrived
+    /// after the work they were describing had finished. Only `url` crosses over; the parser is
+    /// built on the other side.
+    private static func parseExport(at url: URL) async throws -> [Bookmark] {
+        try await Task.detached(priority: .userInitiated) {
+            try ExportParser().parse(zipAt: url)
+        }.value
+    }
+
     private func runLocalImport(url: URL) async {
+        dismissedError = nil   // a new import is a new chance to be told what went wrong
         guard !isImporting, let runner = makeRunner() else { return }
         lastError = nil
 
@@ -375,7 +427,7 @@ final class PipelineCenter {
 
         let bookmarks: [Bookmark]
         do {
-            bookmarks = try ExportParser().parse(zipAt: url)
+            bookmarks = try await Self.parseExport(at: url)
         } catch {
             lastError = "Could not read the export: \(error.localizedDescription)"
             return
@@ -394,8 +446,9 @@ final class PipelineCenter {
     }
 
     private func runCloudImport(url: URL) async {
+        dismissedError = nil   // a new import is a new chance to be told what went wrong
         guard !isImporting, let runner = makeRunner(), let client = Self.makeCloudClient() else {
-            lastError = "Cloud import isn't configured — check the base URL in Settings."
+            lastError = "Stash isn't configured — check the base URL in Settings."
             return
         }
         lastError = nil
@@ -419,10 +472,7 @@ final class PipelineCenter {
 
         let bookmarks: [Bookmark]
         do {
-            // One entry point on purpose: `parse(zipAt:)` sorts out a folder, a .json, a .zip and
-            // raw zip magic bytes. Routing on `hasDirectoryPath` handed every picked .zip to
-            // JSONSerialization — and the .zip is the file people actually have.
-            bookmarks = try ExportParser().parse(zipAt: url)
+            bookmarks = try await Self.parseExport(at: url)
         } catch {
             lastError = "Could not read the export: \(error.localizedDescription)"
             return
@@ -493,7 +543,7 @@ final class PipelineCenter {
             // Quota and session failures already read as sentences; prefixing them would not help.
             lastError = error.localizedDescription
         } catch {
-            var message = "Could not submit the cloud import: \(error.localizedDescription)"
+            var message = "Could not send your import: \(error.localizedDescription)"
             if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
             lastError = message
         }
@@ -591,7 +641,7 @@ final class PipelineCenter {
         guard let runner = makeRunner(), let client = Self.makeCloudClient() else {
             links.forEach { _ = try? inbox.write($0) }
             pendingShares.removeAll()
-            lastError = "Cloud import isn't configured — check the base URL in Settings."
+            lastError = "Stash isn't configured — check the base URL in Settings."
             return
         }
         isImporting = true
@@ -1154,6 +1204,9 @@ final class PipelineCenter {
         cloudStatus = nil
         shareImports = []
         pendingShares = []
+        // The pill's route flag is part of that record: left raised, the next Library render
+        // pushes Import at an account that no longer has an import to look at.
+        importRouteRequested = false
         UserDefaults.standard.removeObject(forKey: Self.cloudStateKey)
         UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetriesKey)
@@ -1323,9 +1376,9 @@ final class PipelineCenter {
                 cloudState.nextResultsCursor = nextCursor
                 persistCloudState()
             }
-            if status.state == .completed {
-                lastSummary = "Cloud import complete · \(status.unavailable) unavailable · \(status.partialFailures) partial failures"
-            }
+            // No completion line written here: the Import hero derives its own from `cloudStatus`
+            // and the "library is ready" notification says it in words a person uses. What stood
+            // here counted "unavailable" and "partial failures" at whoever happened to be looking.
         } catch is CancellationError {
             return true
         } catch let error as StashError {
@@ -1335,7 +1388,7 @@ final class PipelineCenter {
             lastError = error.localizedDescription
             return false
         } catch {
-            var message = "Could not sync the cloud import: \(error.localizedDescription)"
+            var message = "Could not check on your import: \(error.localizedDescription)"
             if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
             lastError = message
         }
