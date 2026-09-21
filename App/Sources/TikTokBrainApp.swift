@@ -131,8 +131,8 @@ enum StashTab: String, CaseIterable, Identifiable {
 /// Two rules, both learned the hard way rather than chosen: Library can never be switched off,
 /// because Import and Settings are only reachable from its header — a pill without it is a
 /// configuration that cannot be undone from inside the app. And seven is the ceiling: past five
-/// the labels go away and the slots are icon-only at ~43pt, which is as narrow as a slot can
-/// honestly go.
+/// the labels go away and the slots are icon-only at ~37pt beside the open one, which is as
+/// narrow as a slot can honestly go.
 enum TabSlots {
     static let key = "tabSlots"
     static let maximum = 7
@@ -156,28 +156,65 @@ enum TabSlots {
         StashTab.allCases.filter(tabs.contains).map(\.rawValue).joined(separator: ",")
     }
 
-    /// Which slot sits under `x`, for a touch on a strip `stripWidth` wide holding `count` slots
-    /// of equal width. The grip gesture needs this: it is attached to the whole pill, so when a
-    /// hold turns out to have been a slow tap the only record of where the finger was is the
-    /// drag's start point (`StashTabBar.gripGesture`). Nil past the strip — the pill's far end
-    /// is the search button, and that is not a slot.
-    static func slotIndex(x: CGFloat, stripWidth: CGFloat, count: Int) -> Int? {
+    /// Which slot sits under `x`, on a strip `stripWidth` wide holding `count` of them. The grip
+    /// gesture needs this: it is attached to the whole pill, so when a hold turns out to have
+    /// been a slow tap the only record of where the finger was is the drag's start point
+    /// (`StashTabBar.gripGesture`). Nil past the strip — the pill's far end is the search
+    /// button, and that is not a slot.
+    ///
+    /// The strip is only evenly divided while every slot is labelled. Past five, the open slot
+    /// takes a fixed `openWidth` and the rest share what is left, so the arithmetic is two
+    /// segments with a wide one wedged between them — dividing by an average width instead
+    /// lands one slot off for every touch to the left of the open one.
+    ///
+    /// `openWidth` nil (or an `openIndex` that is not on the pill) means the even strip.
+    static func slotIndex(x: CGFloat, stripWidth: CGFloat, count: Int,
+                          openIndex: Int?, openWidth: CGFloat?) -> Int? {
         guard count > 0, stripWidth > 0, x < stripWidth else { return nil }
-        return min(count - 1, max(0, Int(x / (stripWidth / CGFloat(count)))))
+        let touch = max(0, x)
+        guard let openWidth, let openIndex, count > 1,
+              openIndex >= 0, openIndex < count, openWidth < stripWidth else {
+            return min(count - 1, Int(touch / (stripWidth / CGFloat(count))))
+        }
+        let narrow = (stripWidth - openWidth) / CGFloat(count - 1)
+        let openStart = narrow * CGFloat(openIndex)
+        if touch < openStart { return min(openIndex - 1, Int(touch / narrow)) }
+        if touch < openStart + openWidth { return openIndex }
+        return min(count - 1, openIndex + 1 + Int((touch - openStart - openWidth) / narrow))
     }
 
     #if DEBUG
-    /// The rules above are three lines of set arithmetic that decide whether the user can reach
-    /// Settings at all, so they get a check that runs on every debug launch.
+    /// Two things that are invisible from any single call site: the set arithmetic above, which
+    /// decides whether the user can reach Settings at all, and the slot geometry, which decides
+    /// which tab a slow tap lands on. Both get checked on every debug launch.
     static func selfTest() -> Bool {
-        slotIndex(x: 0, stripWidth: 300, count: 5) == 0
-            && slotIndex(x: 59, stripWidth: 300, count: 5) == 0
-            && slotIndex(x: 60, stripWidth: 300, count: 5) == 1
-            && slotIndex(x: 299, stripWidth: 300, count: 5) == 4
-            && slotIndex(x: -3, stripWidth: 300, count: 5) == 0      // touch slop off the left edge
-            && slotIndex(x: 310, stripWidth: 300, count: 5) == nil   // the search button's end
-            && slotIndex(x: 10, stripWidth: 0, count: 5) == nil      // before the first layout pass
-            && slotIndex(x: 10, stripWidth: 300, count: 0) == nil
+        // Five slots or fewer: all labelled, all the same width.
+        slotIndex(x: 0, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 0
+            && slotIndex(x: 59, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 0
+            && slotIndex(x: 60, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 1
+            && slotIndex(x: 299, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 4
+            // touch slop off the left edge is still the first slot
+            && slotIndex(x: -3, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 0
+            // the search button's end
+            && slotIndex(x: 310, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == nil
+            // before the first layout pass
+            && slotIndex(x: 10, stripWidth: 0, count: 5, openIndex: 2, openWidth: nil) == nil
+            && slotIndex(x: 10, stripWidth: 300, count: 0, openIndex: 0, openWidth: nil) == nil
+            // Seven slots on a 393pt phone: six 37pt slots, then Library open at 64pt.
+            && slotIndex(x: 0, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 0
+            && slotIndex(x: 200, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 5
+            && slotIndex(x: 221, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 5
+            && slotIndex(x: 230, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 6
+            && slotIndex(x: 285, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 6
+            // Six slots with the open one in the middle: 41.2pt either side of an 80pt wedge.
+            && slotIndex(x: 10, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 0
+            && slotIndex(x: 50, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 1
+            && slotIndex(x: 100, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 2  // inside the wedge
+            && slotIndex(x: 161, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 2
+            && slotIndex(x: 200, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 3
+            && slotIndex(x: 285, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 5
+            // An open tab that is no longer on the pill falls back on the even strip.
+            && slotIndex(x: 200, stripWidth: 286, count: 7, openIndex: nil, openWidth: 64) == 4
             && decode("") == fallback
             && decode("garbage") == fallback
             && decode("cook") == [.cook, .library]
@@ -383,6 +420,9 @@ struct RootView: View {
                 // a share that already died.
                 if let status = center.shellStatus {
                     ImportSyncPill(status: status) {
+                        // Search is an overlay over the tab, so routing under it would push
+                        // Import behind the results and look like nothing happened.
+                        searchOpen = false
                         tab = .library
                         center.importRouteRequested = true
                     } dismiss: {
@@ -771,7 +811,9 @@ struct StashTabBar: View {
                 withAnimation(.spring(duration: 0.35, bounce: 0.3)) { grip = 0 }
                 if hypot(translation.width, translation.height) < Self.tapTravel,
                    let index = TabSlots.slotIndex(x: drag?.startLocation.x ?? 0,
-                                                  stripWidth: slotStripWidth, count: slots.count) {
+                                                  stripWidth: slotStripWidth, count: slots.count,
+                                                  openIndex: slots.firstIndex(of: selection),
+                                                  openWidth: openSlotWidth) {
                     // No swallow: this touch-up meant something, and the slot's own tap gesture
                     // reporting it too is handled by `choose`.
                     choose(slots[index])
