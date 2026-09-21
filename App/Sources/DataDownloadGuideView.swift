@@ -77,18 +77,24 @@ struct DataDownloadGuideView: View {
         }
     }
 
+    /// Ink that stays ink. `categoryOther` is the one jewel that does not change between
+    /// themes, so text on it must not either: `stashInk` flips to cream in dark mode and all
+    /// but disappears against the amber.
+    private static let calloutInk = Color(light: 0x201A12, dark: 0x1D0E06)
+
     /// The one step that costs two days when it is missed: TXT parses into nothing, and the
     /// user only finds out after the wait. Promoted out of the numbered list, where it was
     /// step 3 of 4 and read like any other.
     private var formatCallout: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Micro(text: "The one setting that matters", size: 10, tracking: 1.8, color: .stashInk.opacity(0.7))
+            Micro(text: "The one setting that matters", size: 10, tracking: 1.8,
+                  color: Self.calloutInk.opacity(0.7))
             Text("Choose JSON, not TXT")
                 .font(.archivo(22, .heavy))
-                .foregroundStyle(Color.stashInk)
+                .foregroundStyle(Self.calloutInk)
             Text("Stash cannot read a TXT export, and you would wait two days to find out.")
                 .font(.archivo(13, .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.75))
+                .foregroundStyle(Self.calloutInk.opacity(0.75))
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         }

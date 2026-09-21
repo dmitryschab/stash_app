@@ -175,12 +175,7 @@ struct ImportView: View {
             HStack {
                 Micro(text: "TikTok", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
                 Spacer()
-                // The screen's one budget number. Settings counts the same allowance out
-                // bucket by bucket; here it is the single figure spending is measured against.
-                if let quota = session.quota {
-                    Micro(text: "\(quota.remaining) videos left",
-                          size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
-                }
+                if let quota = session.quota { budgetBadge(quota) }
             }
             Text(heroTitleLine)
                 .font(.archivo(23, .heavy))
@@ -205,6 +200,26 @@ struct ImportView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .stashCard(fill: .categoryCoding)
+    }
+
+    /// The screen's one budget number. Settings counts the same allowance out bucket by bucket;
+    /// here it is the single figure spending is measured against. A spent budget keeps the
+    /// treatment the old budget card gave "All spent" — the amber and the hourglass, never red:
+    /// nothing broke and nothing is lost, the month simply has to turn over.
+    private func budgetBadge(_ quota: Quota) -> some View {
+        let empty = quota.remaining == 0
+        return HStack(spacing: 6) {
+            if empty {
+                Image(systemName: "hourglass").font(.system(size: 10, weight: .bold))
+            }
+            Micro(text: Self.budgetBadge(remaining: quota.remaining), size: 9.5, tracking: 1.6,
+                  color: empty ? .categoryOther : .stashOnAccent.opacity(0.7))
+        }
+        .foregroundStyle(empty ? Color.categoryOther : Color.stashOnAccent.opacity(0.7))
+    }
+
+    static func budgetBadge(remaining: Int) -> String {
+        remaining == 0 ? "No videos left" : "\(remaining) videos left"
     }
 
     #if DEBUG
@@ -337,6 +352,9 @@ struct ImportView: View {
                 == "Sorted 4 of 9 · you can close the app, Stash pings you when it is done"
             && heroSubtitle(.idle, box(.completed, 20, 20, ago: 25 * 3_600)) == nil
             && heroSubtitle(.idle, nil) == nil
+            // A spent budget has to say so in words, not only in amber.
+            && budgetBadge(remaining: 120) == "120 videos left"
+            && budgetBadge(remaining: 0) == "No videos left"
     }
     #endif
 
@@ -385,10 +403,13 @@ struct ImportView: View {
     /// text — a way in nobody knows about is not a way in.
     private var optionCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // No chevron: this row acts where it stands. `chevron.right` is reserved for the
+            // rows that put another screen in front of you, like the guide below.
             optionRow(
                 title: "Paste a TikTok link",
                 subtitle: "Costs \(Self.sharedVideoCost) of your budget: the save, its transcript "
                     + "and the words on screen.",
+                pushes: false,
                 action: pasteLink
             )
             if let pasteNotice {
@@ -412,10 +433,11 @@ struct ImportView: View {
         .stashOutlineCard(padding: 0)
     }
 
-    /// One row of `optionCard`: a title, the cost or the wait underneath, and the chevron that
-    /// means "this pushes a screen". 56pt tall before the text wraps, so the whole row is the
-    /// target rather than the glyph at its edge.
-    private func optionRow(title: String, subtitle: String, action: @escaping () -> Void) -> some View {
+    /// One row of `optionCard`: a title, the cost or the wait underneath, and — only where the
+    /// tap puts another screen in front of you — the chevron that says so. 56pt tall before the
+    /// text wraps, so the whole row is the target rather than the glyph at its edge.
+    private func optionRow(title: String, subtitle: String, pushes: Bool = true,
+                           action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -428,9 +450,11 @@ struct ImportView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color.stashInk.opacity(0.62))
+                if pushes {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -462,6 +486,9 @@ struct ImportView: View {
             return
         }
         controller.drainSharedInbox()
+        // The drain is a round trip; without a word here a good paste and a dead button look
+        // identical until the save lands in the Library.
+        pasteNotice = "Saved — Stash is fetching it."
     }
 
     private func errorLine(_ error: String) -> some View {
