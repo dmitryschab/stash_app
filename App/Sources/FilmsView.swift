@@ -142,8 +142,10 @@ struct FilmsView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     @State private var focus: Filter = .all
     @State private var browsingTopics = false
-    /// Resolved posters, keyed by `FilmWall.Film.id`, so scrolling back does not re-resolve.
-    @State private var refs: [String: FilmRef] = [:]
+    /// Poster lookups, keyed by `FilmWall.Film.id`, so scrolling back does not re-resolve.
+    /// An absent key is "still asking Wikipedia"; a `nil` value is a recorded miss. The tile
+    /// draws those differently — a poster that will never arrive should not shimmer (F34).
+    @State private var refs: [String: FilmRef?] = [:]
 
     /// One more state than Cook's `String?`: "lists" is a filter that is not a topic.
     private enum Filter: Equatable { case all, lists, topic(String) }
@@ -269,7 +271,7 @@ struct FilmsView: View {
     private func wall(runs: [MonthRun<FilmWall.Film>], savesByID: [String: Video]) -> some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
+                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
                     .padding(.top, 14)
                     .padding(.bottom, 8)
                     .id(run.id)
@@ -293,9 +295,14 @@ struct FilmsView: View {
     /// One lookup per film, once. `FilmResolver` caches too, so a cell that reappears never
     /// leaves the actor either way — this just keeps the poster on screen across scrolls.
     private func resolve(_ film: FilmWall.Film) async {
-        guard refs[film.id] == nil else { return }
-        if let ref = try? await FilmResolver.shared.film(for: FilmPick(title: film.title, year: film.year)) {
-            refs[film.id] = ref
+        guard !refs.keys.contains(film.id) else { return }
+        do {
+            let ref = try await FilmResolver.shared.film(for: FilmPick(title: film.title, year: film.year))
+            refs.updateValue(ref, forKey: film.id)
+        } catch {
+            // Offline, or cancelled by scrolling away mid-lookup. Neither is a verdict on the
+            // film, so the key stays absent: the tile keeps shimmering and the next appearance
+            // asks again. Only a returned no-match is recorded as one.
         }
     }
 
@@ -317,7 +324,9 @@ struct FilmsView: View {
 /// so "one of ten" reads before the caption does.
 private struct FilmTile: View {
     let film: FilmWall.Film
-    var ref: FilmRef?
+    /// The lookup in one value: `nil` while it is in flight, `.some(nil)` once it came back
+    /// without an unambiguous match, `.some(ref)` when it found one.
+    var ref: FilmRef??
     /// Off on the film page, where the title block carries the year.
     var caption = true
 
@@ -334,7 +343,7 @@ private struct FilmTile: View {
             }
             .aspectRatio(2.0 / 3.0, contentMode: .fit)
             if caption, !film.microLine.isEmpty {
-                Micro(text: film.microLine, size: 10, tracking: 1.2, color: .stashInk.opacity(0.45))
+                Micro(text: film.microLine, size: 10, tracking: 1.2, color: .stashInk.opacity(0.62))
                     .lineLimit(1)
             }
         }
@@ -342,11 +351,24 @@ private struct FilmTile: View {
 
     /// Overlaid on a clear colour so the image never gets a say in the tile's size, and clipped
     /// for touches as well as drawing — the same two traps WallTile documents on Cook.
+    ///
+    /// Shimmer means "coming"; the sleeve means "this is the poster". A lookup still in flight
+    /// and one that came back with nothing used to draw the same tile (F34).
     private var poster: some View {
         Color.clear
             .overlay {
-                AsyncImage(url: ref?.posterURL) { $0.resizable().scaledToFill() } placeholder: {
-                    sleeve
+                switch ref {
+                case .none:
+                    ShimmerBlock(cornerRadius: 12)
+                case .some(let resolved):
+                    // A match without portrait art is as final as no match at all.
+                    if let url = resolved?.posterURL {
+                        AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: {
+                            ShimmerBlock(cornerRadius: 12)
+                        }
+                    } else {
+                        sleeve
+                    }
                 }
             }
             .clipped()
@@ -371,7 +393,18 @@ private struct FilmPageView: View {
     let film: FilmWall.Film
     let saves: [String: Video]
 
-    @State private var ref: FilmRef?
+    @Environment(\.openURL) private var openURL
+    /// Same three states as the wall's tiles: absent while resolving, `nil` for a recorded miss.
+    @State private var ref: FilmRef??
+
+    /// The resolved match, if the lookup has produced one. Only this is a link.
+    private var match: FilmRef? { ref ?? nil }
+
+    /// The clip to watch: the newest save that named this film, which is also the first of
+    /// the "Saved in" rows below.
+    private var newestSave: Video? {
+        film.marks.lazy.compactMap { saves[$0.sourceID] }.first
+    }
 
     var body: some View {
         ScrollView {
@@ -386,16 +419,10 @@ private struct FilmPageView: View {
                     .foregroundStyle(Color.stashInk)
                     .padding(.top, 20)
                 if let year = film.year {
-                    Micro(text: String(year), size: 10, tracking: 1.8, color: .stashInk.opacity(0.5))
+                    Micro(text: String(year), size: 10, tracking: 1.8, color: .stashInk.opacity(0.62))
                         .padding(.top, 6)
                 }
-                // Only a resolved title is a link; a guess would be a link to the wrong movie.
-                if let ref {
-                    Link("Open on Wikipedia", destination: ref.detailURL)
-                        .font(.archivo(13, .semibold))
-                        .foregroundStyle(Color.categoryFilm)
-                        .padding(.top, 10)
-                }
+                actions.padding(.top, 18)
                 savesSection.padding(.top, 24)
             }
             .padding(.horizontal, 20)
@@ -403,7 +430,44 @@ private struct FilmPageView: View {
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .task { ref = try? await FilmResolver.shared.film(for: FilmPick(title: film.title, year: film.year)) }
+        .task {
+            do {
+                ref = .some(try await FilmResolver.shared.film(for: FilmPick(title: film.title, year: film.year)))
+            } catch {
+                // Offline or cancelled: leave it unresolved rather than claim a miss (see
+                // `FilmsView.resolve`).
+            }
+        }
+    }
+
+    /// One primary, one secondary — the grammar every other vertical's detail already uses
+    /// (F22). The film page used to have neither: a Wikipedia text link was the whole of it.
+    private var actions: some View {
+        VStack(spacing: 10) {
+            if let newestSave {
+                StashPrimaryButton(title: "Watch the clip", systemImage: "play.fill") {
+                    openURL(newestSave.url)
+                }
+            }
+            // Only a resolved title is a link; a guess would be a link to the wrong movie.
+            if let match {
+                Link(destination: match.detailURL) {
+                    HStack(spacing: 8) {
+                        Text("Wikipedia".uppercased())
+                            .font(.archivo(13, .heavy))
+                            .tracking(0.8)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .foregroundStyle(Color.stashInk)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open on Wikipedia")
+            }
+        }
     }
 
     private var topBar: some View {
@@ -447,6 +511,11 @@ private struct FilmPageView: View {
                 Micro(text: "\(mark.position) of \(mark.outOf)", size: 9.5, tracking: 1.2,
                       color: .categoryFilm)
             }
+            // The row pushes the save's own screen. Music's identical-looking rows leave the
+            // app and wear the arrow; nothing else may (F5).
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.stashInk.opacity(0.4))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
