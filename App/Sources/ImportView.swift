@@ -1,17 +1,20 @@
 // ImportView.swift
 //
 // The Import screen (pushed from Library), which doubles as pipeline status/history. It
-// imports an extracted TikTok export (JSON file or folder), runs the pipeline via
-// `PipelineRunner`, shows live progress and model-box reachability, and hosts the
-// box-config settings sheet. Set List style: sync card, outlined status card, count grid.
+// imports a TikTok export (the zip as downloaded, an extracted folder, or the JSON file),
+// runs the pipeline via `PipelineRunner`, shows live progress and model-box reachability,
+// and hosts the box-config settings sheet.
 //
-// This is the screen where a library leaves the phone, so it is also where the third-party
-// processing is disclosed — named providers, in the card directly above the submit button.
+// One thing is primary: the hero card only reports, the black pill only picks a file, and
+// everything else is a row in the options card below it. This is also the screen where a
+// library leaves the phone, so the third-party processing is disclosed on it — named
+// providers, in their own card between the options and the error line.
 // The `ConnectFlowView` mockup is reachable from here in DEBUG only; see `connectPrototype`.
 
 import SwiftUI
 import SwiftData
 import Observation
+import UIKit
 import UniformTypeIdentifiers
 import TikTokBrainKit
 
@@ -80,19 +83,26 @@ struct ImportView: View {
     @State private var showImporter = false
     @State private var showSettings = false
     @State private var showGuide = false
+    /// Set when the clipboard held nothing importable, cleared by the next paste.
+    @State private var pasteNotice: String?
     #if DEBUG
     @State private var showConnect = false
     #endif
 
     private var usesCloudImport: Bool { PipelineCenter.cloudImportEnabled }
 
+    /// What one shared TikTok spends: the save, its transcript, and reading the words burned
+    /// into its frames. Named so the paste row and the budget copy cannot drift apart.
+    static let sharedVideoCost = 3
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
                 syncCard.padding(.top, 16)
-                if let quota = session.quota { quotaCard(quota).padding(.top, 12) }
-                importSection.padding(.top, 12)
+                primaryAction.padding(.top, StashSpacing.group)
+                optionCard.padding(.top, 16)
+                cloudDisclosure.padding(.top, StashSpacing.group)
                 if !usesCloudImport {
                     boxCard.padding(.top, 12)
                 }
@@ -100,15 +110,13 @@ struct ImportView: View {
                 connectPrototype.padding(.top, 12)
                 #endif
                 if let error = controller.lastError {
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 13, weight: .bold))
-                        Text(error).font(.archivo(13, .semibold))
-                    }
-                    .foregroundStyle(Color.categoryRecipe)
-                    .padding(.top, 14)
+                    errorLine(error).padding(.top, StashSpacing.group)
                 }
-                librarySection.padding(.top, 24)
+                // Only once there is a finished library to count. Before that the tiles are a
+                // grid of zeroes under a screen that is asking for a file.
+                if heroState == .ready {
+                    librarySection.padding(.top, StashSpacing.group)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.bottom, stashTabBarClearance)
@@ -117,7 +125,7 @@ struct ImportView: View {
         .toolbar(.hidden, for: .navigationBar)
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: [.json, .folder],
+            allowedContentTypes: [.json, .folder, .zip],
             allowsMultipleSelection: false
         ) { handleImport($0) }
         .sheet(isPresented: $showSettings) { SettingsView() }
@@ -157,49 +165,46 @@ struct ImportView: View {
         .padding(.top, 8)
     }
 
-    /// The headline card: live sync state with the progress bar, and the screen's biggest tap
-    /// target. It opens the file importer — the only thing this screen can actually do. It used
-    /// to open `ConnectFlowView`, the OAuth mockup, which made the most prominent control on the
-    /// screen a promise the app cannot keep (guideline 2.2).
+    /// The headline card: where the library stands, and nothing else. It used to be a button
+    /// opening the same file picker as the black pill below it, so the screen had two primaries
+    /// competing for the same tap — and before that it opened `ConnectFlowView`, the OAuth
+    /// mockup, a promise the app cannot keep (guideline 2.2). Now it only reports: the state,
+    /// the budget left, the progress bar.
     private var syncCard: some View {
-        Button { showImporter = true } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Micro(text: "TikTok", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
-                    Spacer()
-                    Micro(
-                        text: usesCloudImport ? "Cloud import" : (controller.isImporting ? "Syncing" : "On this iPhone"),
-                        size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7)
-                    )
-                }
-                Text(usesCloudImport ? "Cloud import" : (controller.isImporting ? "Syncing favorites" : "Import your saves"))
-                    .font(.archivo(23, .heavy))
-                    .foregroundStyle(Color.stashOnAccent)
-                    .padding(.top, 9)
-                Text(subtitleLine)
-                    .font(.archivo(13, .semibold))
-                    .foregroundStyle(Color.stashOnAccent.opacity(0.8))
-                    .padding(.top, 4)
-                if let progress = localProgress, progress.total > 0 {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.stashOnAccent.opacity(0.25))
-                            Capsule().fill(Color.stashOnAccent)
-                                .frame(width: geo.size.width * CGFloat(progress.done) / CGFloat(progress.total))
-                        }
-                    }
-                    .frame(height: 8)
-                    .padding(.top, 14)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Micro(text: "TikTok", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
+                Spacer()
+                // The screen's one budget number. Settings counts the same allowance out
+                // bucket by bucket; here it is the single figure spending is measured against.
+                if let quota = session.quota {
+                    Micro(text: "\(quota.remaining) videos left",
+                          size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .stashCard(fill: .categoryCoding)
+            Text(heroTitleLine)
+                .font(.archivo(23, .heavy))
+                .foregroundStyle(Color.stashOnAccent)
+                .padding(.top, 9)
+            Text(subtitleLine)
+                .font(.archivo(13, .semibold))
+                .foregroundStyle(Color.stashOnAccent.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+            if let progress = localProgress, progress.total > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.stashOnAccent.opacity(0.25))
+                        Capsule().fill(Color.stashOnAccent)
+                            .frame(width: geo.size.width * CGFloat(progress.done) / CGFloat(progress.total))
+                    }
+                }
+                .frame(height: 8)
+                .padding(.top, 14)
+            }
         }
-        .buttonStyle(.plain)
-        // Both import paths already `guard !isImporting`, so a tap mid-run would be a dead one.
-        // Deliberately without the `.opacity` dim the primary button pairs with its `.disabled`:
-        // this card is also the progress readout, and fading the bar as it fills reads backwards.
-        .disabled(controller.isImporting)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .stashCard(fill: .categoryCoding)
     }
 
     #if DEBUG
@@ -217,24 +222,78 @@ struct ImportView: View {
     }
     #endif
 
+    /// What the hero is reporting right now. Three states, one of which expires.
+    enum HeroState { case idle, syncing, ready }
+
+    private var heroState: HeroState {
+        Self.heroState(cloud: controller.cloudStatus, isImporting: controller.isImporting, now: Date())
+    }
+
+    private var heroTitleLine: String {
+        guard usesCloudImport else {
+            return controller.isImporting ? "Syncing favorites" : "Import your saves"
+        }
+        return Self.heroTitle(heroState)
+    }
+
+    /// The hero's state as a function of values, so the day-long expiry and the reading case can
+    /// be checked without a pipeline — the same shape as `PipelineCenter.shellStatus`.
+    ///
+    /// `lastSummary` is deliberately not an input: it is also written the moment a file is
+    /// picked ("Reading your export…"), so a card reading it would announce a finished library
+    /// while it is still parsing one.
+    static func heroState(cloud: CloudImportStatus?, isImporting: Bool, now: Date) -> HeroState {
+        guard let cloud else { return .idle }
+        switch cloud.state {
+        case .accepted, .fastPass:
+            return .syncing
+        case .completed:
+            // A finished import stops being news after a day, and an export being read right
+            // now must not still read as "ready".
+            guard !isImporting, now.timeIntervalSince(cloud.updatedAt) < 86_400 else { return .idle }
+            return .ready
+        case .cancelled:
+            return .idle
+        }
+    }
+
+    static func heroTitle(_ state: HeroState) -> String {
+        switch state {
+        case .idle: "Import your saves"
+        case .syncing: "Syncing your saves"
+        case .ready: "Library ready"
+        }
+    }
+
+    /// The line under the title, or nil when the card should fall through to whatever the
+    /// controller last said. Counts the win first: the old copy read "Complete · 12 unavailable
+    /// · 3 partial failures", which named only what went wrong and in words nobody owns.
+    static func heroSubtitle(_ state: HeroState, _ cloud: CloudImportStatus?) -> String? {
+        guard let cloud else { return nil }
+        switch state {
+        case .syncing:
+            return "Sorted \(cloud.fastPass.done) of \(cloud.fastPass.total) "
+                + "· you can close the app, Stash pings you when it is done"
+        case .ready:
+            // Clamped like `notifyLibraryReady`: an import that resolved nothing must not read
+            // as a negative count.
+            let sorted = max(0, cloud.fastPass.done - cloud.unavailable)
+            let missed = cloud.unavailable + cloud.partialFailures
+            return "\(sorted) videos sorted onto your shelves"
+                + (missed > 0 ? " · \(missed) could not be read — private or deleted on TikTok" : "")
+        case .idle:
+            guard cloud.state == .cancelled else { return nil }
+            return "Cancelled · \(cloud.fastPass.done) of \(cloud.fastPass.total) sorted"
+        }
+    }
+
     private var subtitleLine: String {
         if usesCloudImport {
-            if let status = controller.cloudStatus {
-                switch status.state {
-                case .accepted:
-                    return "Queued for cloud processing · \(status.fastPass.total) videos — close the app if you like, Stash pings you when it is done"
-                case .fastPass:
-                    return "Fast pass \(status.fastPass.done) of \(status.fastPass.total) · \(status.unavailable) unavailable · \(status.partialFailures) partial failures — cloud keeps going if you close the app, and pings you when it is done"
-                case .completed:
-                    return "Complete · \(status.unavailable) unavailable · \(status.partialFailures) partial failures"
-                case .cancelled:
-                    return "Cancelled · \(status.fastPass.done) of \(status.fastPass.total) processed"
-                }
-            }
-            if controller.cloudSyncing { return "Refreshing cloud results…" }
+            if let line = Self.heroSubtitle(heroState, controller.cloudStatus) { return line }
+            if controller.cloudSyncing { return "Checking with Stash…" }
             if let summary = controller.lastSummary { return summary }
-            // Reached on a fresh account, so it says what tapping the card does rather than
-            // what the build is configured for — this is the first line a reviewer reads.
+            // Reached on a fresh account, and once a finished import is a day old, so it says
+            // what to do next rather than what the build is configured for.
             return "Pick your TikTok data export and Stash builds the library."
         }
         if let progress = controller.progress {
@@ -243,6 +302,43 @@ struct ImportView: View {
         if let summary = controller.lastSummary { return summary }
         return "Sync the videos you favorite — or import an export below."
     }
+
+    #if DEBUG
+    /// The hero is the first thing on this screen and its three states hang on a timestamp and a
+    /// flag, neither of them visible from any single call site — so the table gets checked.
+    static func selfTest() -> Bool {
+        let now = Date()
+        func box(_ state: CloudImportState, _ done: Int, _ total: Int, unavailable: Int = 0,
+                 partial: Int = 0, ago: TimeInterval = 0) -> CloudImportStatus {
+            CloudImportStatus(importID: "imp-1", state: state,
+                              fastPass: CloudImportProgress(done: done, total: total),
+                              unavailable: unavailable, partialFailures: partial,
+                              estimatedCostUSD: 0, updatedAt: now.addingTimeInterval(-ago))
+        }
+        func hero(_ cloud: CloudImportStatus?, importing: Bool = false) -> HeroState {
+            heroState(cloud: cloud, isImporting: importing, now: now)
+        }
+        let finished = box(.completed, 941, 941, unavailable: 12, ago: 3_600)
+        return hero(nil) == .idle
+            && hero(nil, importing: true) == .idle
+            && hero(box(.accepted, 0, 941)) == .syncing
+            && hero(box(.fastPass, 412, 941)) == .syncing
+            && hero(finished) == .ready
+            && hero(finished, importing: true) == .idle          // a new export is being read
+            && hero(box(.completed, 941, 941, ago: 25 * 3_600)) == .idle
+            && hero(box(.cancelled, 3, 941)) == .idle
+            && heroTitle(hero(finished)) == "Library ready"
+            && heroTitle(hero(box(.fastPass, 1, 2))) == "Syncing your saves"
+            && heroTitle(hero(nil)) == "Import your saves"
+            && heroSubtitle(.ready, finished)
+                == "929 videos sorted onto your shelves · 12 could not be read — private or deleted on TikTok"
+            && heroSubtitle(.ready, box(.completed, 20, 20)) == "20 videos sorted onto your shelves"
+            && heroSubtitle(.syncing, box(.fastPass, 4, 9))
+                == "Sorted 4 of 9 · you can close the app, Stash pings you when it is done"
+            && heroSubtitle(.idle, box(.completed, 20, 20, ago: 25 * 3_600)) == nil
+            && heroSubtitle(.idle, nil) == nil
+    }
+    #endif
 
     /// Guideline 5.1.2(i): the third parties that will see the library, named immediately above
     /// the button that hands it over — not in a policy page the user would have to go hunting
@@ -267,84 +363,126 @@ struct ImportView: View {
         .stashOutlineCard()
     }
 
-    private var importSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            cloudDisclosure
-            StashPrimaryButton(title: usesCloudImport ? "Submit TikTok export" : "Import TikTok export", systemImage: "square.and.arrow.down") {
+    /// The screen's one primary action, and a caption naming every shape the picker accepts —
+    /// the zip included, which used to be greyed out in the sheet with no explanation.
+    private var primaryAction: some View {
+        VStack(spacing: StashSpacing.item) {
+            StashPrimaryButton(title: "Choose TikTok export", systemImage: "square.and.arrow.down") {
                 showImporter = true
             }
             .disabled(controller.isImporting)
             .opacity(controller.isImporting ? 0.5 : 1)
-
-            Button { showGuide = true } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                    Micro(text: "How to get your TikTok data", size: 10, tracking: 1.2, color: .stashInk.opacity(0.7))
-                }
-                .foregroundStyle(Color.stashInk.opacity(0.7))
-            }
-            .buttonStyle(.plain)
-
-            // The share extension is invisible from inside the app, and a way in nobody knows
-            // about is not a way in. One line, next to the other way of adding videos.
-            HStack(spacing: 7) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 12, weight: .semibold))
-                Micro(text: "Or share a TikTok to Stash to save just that one",
-                      size: 10, tracking: 1.2, color: .stashInk.opacity(0.7))
-            }
-            .foregroundStyle(Color.stashInk.opacity(0.7))
+            Text("Zip, folder or JSON — Stash unpacks it.")
+                .font(.archivo(11.5, .semibold))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
         }
     }
 
-    /// The budget counter, in the same outlined card as the box status. Settings is three taps
-    /// deep (Library → Import → gear) and the number has to be readable *before* the user picks
-    /// a file, not after the server refuses it. An exhausted budget is amber, not red: nothing
-    /// broke and nothing is lost — the month simply has to turn over.
-    private func quotaCard(_ quota: Quota) -> some View {
-        let empty = quota.remaining == 0
-        let accent: Color = empty ? .categoryOther : .categoryCoding
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Micro(text: "Budget", size: 10, tracking: 1.8)
-                Spacer()
-                HStack(spacing: 7) {
-                    Image(systemName: empty ? "hourglass" : "chart.bar.fill")
-                        .font(.system(size: 12, weight: .bold))
-                    Micro(text: empty ? "All spent" : "\(quota.remaining) left",
-                          size: 10, tracking: 1.2, color: accent)
-                }
-                .foregroundStyle(accent)
+    /// Everything that is not the primary action, as two rows of the same shape. The guide used
+    /// to be a 15pt link nobody could hit, and the share extension was a sentence of static
+    /// text — a way in nobody knows about is not a way in.
+    private var optionCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            optionRow(
+                title: "Paste a TikTok link",
+                subtitle: "Costs \(Self.sharedVideoCost) of your budget: the save, its transcript "
+                    + "and the words on screen.",
+                action: pasteLink
+            )
+            if let pasteNotice {
+                Text(pasteNotice)
+                    .font(.archivo(12, .semibold))
+                    .foregroundStyle(Color.categoryOther)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
             }
-            Text(quotaSummary(quota))
-                .font(.archivo(13, .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.65))
-                .fixedSize(horizontal: false, vertical: true)
-            // A shared TikTok is charged three times — importing it, transcribing it and
-            // downloading it to read the frames — so the number is worth stating where the
-            // budget is read rather than leaving it to be discovered by subtraction.
-            Text("Sharing a TikTok into Stash costs 3: one to import it, one for the transcript, "
-                 + "one to read the words on screen.")
-                .font(.archivo(13, .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.65))
-                .fixedSize(horizontal: false, vertical: true)
+            Rectangle()
+                .fill(Color.stashInk.opacity(0.15))
+                .frame(height: 1)
+            optionRow(
+                title: "How to get your TikTok data",
+                subtitle: "TikTok takes up to 2 days",
+                action: { showGuide = true }
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .stashOutlineCard()
+        .stashOutlineCard(padding: 0)
     }
 
-    private func quotaSummary(_ quota: Quota) -> String {
-        let resets = quota.monthResetDate.formatted(date: .abbreviated, time: .omitted)
-        if quota.initialRemaining > 0 {
-            return "\(quota.initialRemaining) of your \(quota.initialLimit) starting videos left, "
-                + "then \(quota.monthLimit) a month."
+    /// One row of `optionCard`: a title, the cost or the wait underneath, and the chevron that
+    /// means "this pushes a screen". 56pt tall before the text wraps, so the whole row is the
+    /// target rather than the glyph at its edge.
+    private func optionRow(title: String, subtitle: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.archivo(15, .heavy))
+                        .foregroundStyle(Color.stashInk)
+                    Text(subtitle)
+                        .font(.archivo(12, .semibold))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
         }
-        if quota.monthRemaining > 0 {
-            return "\(quota.monthRemaining) of \(quota.monthLimit) left this month · resets \(resets)."
+        .buttonStyle(.plain)
+    }
+
+    /// Takes the TikTok link off the clipboard and hands it to the share extension's inbox, so
+    /// a pasted link and a shared one travel the identical path — `drainSharedInbox` is what
+    /// the app already runs on every foreground.
+    ///
+    /// ponytail: reads `UIPasteboard.general.string` directly rather than wiring up a
+    /// `PasteButton`, so iOS shows its own "Allow Paste?" alert first. A denial is
+    /// indistinguishable here from an empty clipboard and reads as the same notice.
+    private func pasteLink() {
+        pasteNotice = nil
+        guard UIPasteboard.general.hasStrings,
+              let text = UIPasteboard.general.string,
+              let link = TikTokLink.firstLink(in: text) else {
+            pasteNotice = "No TikTok link on the clipboard."
+            return
         }
-        return "This month's \(quota.monthLimit) are spent. \(quota.monthLimit) more on \(resets) — "
-            + "everything already imported stays where it is."
+        // Nil only when the app group is missing from the signed entitlements, which is the
+        // same failure the share extension reports in the same words.
+        guard let inbox = SharedInbox(), (try? inbox.write(link)) != nil else {
+            controller.lastError = "Stash can't save right now"
+            return
+        }
+        controller.drainSharedInbox()
+    }
+
+    private func errorLine(_ error: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 13, weight: .bold))
+            Text(error)
+                .font(.archivo(13, .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            // An error that only clears itself on the next import is a permanent one to anybody
+            // who decided not to retry.
+            Button { controller.dismissShellStatus() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .minTapTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .foregroundStyle(Color.categoryRecipe)
     }
 
     private var boxCard: some View {
@@ -658,6 +796,11 @@ struct SettingsView: View {
                 .disabled(pinned || (!isOn && full))
                 .accessibilityAddTraits(isOn ? [.isSelected] : [])
             }
+            // Seven toggles with no default is a bar the user can quietly make worse and has no
+            // way back from; the recommended set is one row away.
+            Button("Reset to recommended") { slotsRaw = TabSlots.encode(TabSlots.fallback) }
+                .tint(.primary)
+                .disabled(slots == TabSlots.fallback)
             Text("Up to \(TabSlots.maximum) sections fit on the bar. Whatever you leave off keeps its saves — anything with its own shelf goes back to Library.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
