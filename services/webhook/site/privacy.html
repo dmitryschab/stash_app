@@ -132,7 +132,7 @@
       <p>We do not rely on consent for any of the above, so there is no consent for you to withdraw — instead, deleting your account (below) ends the processing entirely. If we ever add something genuinely optional, we will ask for consent separately and it will be refusable without losing the rest.</p>
 
       <h2>Where it is processed</h2>
-      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. Speech-to-text runs at Groq, which is outside the EU; see international transfers below.</p>
+      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. Speech-to-text runs at Groq, which is outside the EU; see international transfers below. While that analysis runs, the caption and hashtags of each imported video also go to Cloudflare's Clef model, through OpenRouter, Inc., for a first category guess that the full analysis then replaces.</p>
       <p>This is shared infrastructure. Your rows sit in the same database table and the same queue as other users', separated by your account identifier rather than by having a server of your own.</p>
       <p>To transcribe a video and read its on-screen text, our server fetches the video from TikTok, extracts the audio and samples some frames, and deletes the downloaded file as soon as that is done. Stash does not keep copies of TikTok videos.</p>
 
@@ -143,10 +143,12 @@
         <dd>Hosting, the import queue, and the database (eu-north-1, Stockholm); text analysis on Bedrock (eu-central-1, Frankfurt). Receives everything listed under "What we collect".</dd>
         <dt>Groq, Inc.</dt>
         <dd>Speech-to-text. Receives the audio track extracted from a saved video and returns the transcript. It does not receive your account identifier, your email, or your library.</dd>
+        <dt>OpenRouter, Inc.</dt>
+        <dd>Routes the caption and hashtags of each imported video to Cloudflare, Inc.'s Clef model for a first category guess. Receives no cover images, transcripts, account identifiers or email. Established in the United States; see international transfers.</dd>
       </dl>
 
       <h2>International transfers</h2>
-      <p>Groq, Inc. is established in the United States and we send audio to its API, so this is a transfer outside the EEA under Chapter V GDPR. It is made under the European Commission's Standard Contractual Clauses, together with the fact that the audio is transient — it is processed for the length of one request and is not retained by us afterwards.</p>
+      <p>Groq, Inc. and OpenRouter, Inc. are established in the United States and we send audio to Groq's API and captions to OpenRouter's, so these are transfers outside the EEA under Chapter V GDPR. They are made under the European Commission's Standard Contractual Clauses, together with the fact that the data is transient — it is processed for the length of one request and is not retained by us afterwards.</p>
       <!--
         VERIFY BEFORE PUBLISHING: two facts here were not checkable from this repository.
         (1) Whether Groq, Inc. is actively certified on the EU-U.S. Data Privacy Framework list at

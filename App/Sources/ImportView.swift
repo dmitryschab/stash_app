@@ -197,6 +197,10 @@ struct ImportView: View {
                 .frame(height: 8)
                 .padding(.top, 14)
             }
+            if heroState == .syncing, controller.isShapingLibrary, !controller.mapShares.isEmpty {
+                MapBar(shares: controller.mapShares, ink: .stashOnAccent.opacity(0.8))
+                    .padding(.top, 12)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .stashCard(fill: .categoryCoding)
@@ -305,6 +309,11 @@ struct ImportView: View {
         guard let cloud else { return nil }
         switch state {
         case .syncing:
+            // While the map is still settling the library has no shape yet; say what is being
+            // built from, not a count that reads as stalled at 0.
+            if let map = cloud.map, map.done < map.sampled {
+                return "Shaping your library from \(map.sampled) saves · \(map.done) sorted so far"
+            }
             return "Sorted \(cloud.fastPass.done) of \(cloud.fastPass.total) "
                 + "· you can close the app, Stash pings you when it is done"
         case .ready:
@@ -342,11 +351,11 @@ struct ImportView: View {
     static func selfTest() -> Bool {
         let now = Date()
         func box(_ state: CloudImportState, _ done: Int, _ total: Int, unavailable: Int = 0,
-                 partial: Int = 0, ago: TimeInterval = 0) -> CloudImportStatus {
+                 partial: Int = 0, ago: TimeInterval = 0, map: CloudImportMap? = nil) -> CloudImportStatus {
             CloudImportStatus(importID: "imp-1", state: state,
                               fastPass: CloudImportProgress(done: done, total: total),
                               unavailable: unavailable, partialFailures: partial,
-                              estimatedCostUSD: 0, updatedAt: now.addingTimeInterval(-ago))
+                              estimatedCostUSD: 0, updatedAt: now.addingTimeInterval(-ago), map: map)
         }
         func hero(_ cloud: CloudImportStatus?, importing: Bool = false) -> HeroState {
             heroState(cloud: cloud, isImporting: importing, now: now)
@@ -370,6 +379,11 @@ struct ImportView: View {
                 == "Sorted 4 of 9 · you can close the app, Stash pings you when it is done"
             && heroSubtitle(.idle, box(.completed, 20, 20, ago: 25 * 3_600)) == nil
             && heroSubtitle(.idle, nil) == nil
+            // While the map settles the card says what it is building from, not "0 of 941".
+            && heroSubtitle(.syncing, box(.fastPass, 0, 941, map: CloudImportMap(sampled: 60, done: 12)))
+                == "Shaping your library from 60 saves · 12 sorted so far"
+            && heroSubtitle(.syncing, box(.fastPass, 412, 941, map: CloudImportMap(sampled: 60, done: 60)))
+                == "Sorted 412 of 941 · you can close the app, Stash pings you when it is done"
             // A spent budget has to say so in words, not only in the badge's colour.
             && budgetBadge(remaining: 120) == "120 videos left"
             && budgetBadge(remaining: 1) == "1 video left"
@@ -379,16 +393,19 @@ struct ImportView: View {
 
     /// Guideline 5.1.2(i): the third parties that will see the library, named immediately above
     /// the button that hands it over — not in a policy page the user would have to go hunting
-    /// for. The two names match the sub-processors the privacy policy lists, and the split is
-    /// the real one: Groq gets the audio track, Bedrock gets text only.
+    /// for. The three names match the sub-processors the privacy policy lists, and the split is
+    /// the real one: Groq gets the audio track, Bedrock gets text only, and Clef (through
+    /// OpenRouter) gets the caption and hashtags for the first sort.
     private var cloudDisclosure: some View {
         VStack(alignment: .leading, spacing: 8) {
             Micro(text: "Processed in the cloud", size: 10, tracking: 1.8)
             Text("Stash servers download each video you submit. Its audio goes to Groq, Inc. "
                  + "(United States) for speech-to-text; the caption, transcript and on-screen "
                  + "text go to AWS Bedrock (Frankfurt) to write the summary and pick the "
-                 + "category. The downloaded video is deleted straight after, and nothing is "
-                 + "used to train models.")
+                 + "category. The caption and hashtags also go to Cloudflare's Clef model, "
+                 + "through OpenRouter, Inc. (United States), for a first sort while that runs. "
+                 + "The downloaded video is deleted straight after, and nothing is used to train "
+                 + "models.")
                 .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.65))
                 .fixedSize(horizontal: false, vertical: true)
@@ -898,7 +915,7 @@ struct SettingsView: View {
         Section("Legal") {
             Link("Terms of service", destination: StashLegal.terms)
             Link("Privacy policy", destination: StashLegal.privacy)
-            Text("The privacy policy names everything Stash holds and the two providers that process it: Groq for speech-to-text, AWS for hosting and analysis.")
+            Text("The privacy policy names everything Stash holds and the providers that process it: Groq for speech-to-text, OpenRouter and Cloudflare for the first sort, AWS for hosting and analysis.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
