@@ -46,6 +46,7 @@ struct TikTokBrainApp: App {
         assert(TabSlots.selfTest(), "TabSlots self-test failed")
         assert(PipelineCenter.shellStatusSelfTest(), "PipelineCenter shell status self-test failed")
         assert(PipelineCenter.expectedSelfTest(), "PipelineCenter expected self-test failed")
+        assert(FocusPickerView.selfTest(), "FocusPickerView self-test failed")
         assert(SearchSuggestions.selfTest(), "SearchSuggestions self-test failed")
         assert(ImportView.selfTest(), "ImportView self-test failed")
         assert(MusicView.selfTest(), "MusicView self-test failed")
@@ -317,6 +318,25 @@ struct RootView: View {
     /// this the screen would still be there after Continue.
     @State private var welcomeDismissed = false
 
+    /// The focus picker, once per account. The key is set on every way out — picked, skipped
+    /// or swiped away — so it is seen once and Settings is where tabs change after that.
+    @State private var focusPickerShown = false
+    private static func focusKey(_ userID: String) -> String { "focusPicked-\(userID)" }
+    private var focusPicked: Bool {
+        guard let userID = session.userID else { return true }
+        return UserDefaults.standard.bool(forKey: Self.focusKey(userID))
+    }
+    private func markFocusPicked() {
+        if let userID = session.userID { UserDefaults.standard.set(true, forKey: Self.focusKey(userID)) }
+    }
+    #if DEBUG
+    /// `-showFocusPicker` presents the sheet over a seeded library with sample shares — the
+    /// only way to screenshot it without an import.
+    private static var forcesFocusPicker: Bool { CommandLine.arguments.contains("-showFocusPicker") }
+    private static let sampleShares: [(category: Category, count: Int)] =
+        [(.coding, 230), (.recipe, 180), (.music, 90), (.home, 60), (.film, 40), (.style, 25)]
+    #endif
+
     // Observes import progress so the sync pill shows on every tab, not just Import.
     private var center = PipelineCenter.shared
     private var session = StashSession.shared
@@ -495,6 +515,28 @@ struct RootView: View {
         // shell rendering a tab no slot points at, with no way back but a relaunch.
         .onChange(of: slotsRaw) { _, _ in
             if !slots.contains(tab) { tab = slots.first ?? .library }
+        }
+        .onChange(of: center.cloudStatus?.map?.done, initial: true) { _, _ in
+            guard !focusPickerShown, !center.importRouteRequested, !session.isDemoAccount else { return }
+            if FocusPickerView.shouldShow(map: center.cloudStatus?.map, shaping: center.isShapingLibrary,
+                                          picked: focusPicked) {
+                focusPickerShown = true
+            }
+            #if DEBUG
+            if Self.forcesFocusPicker { focusPickerShown = true }
+            #endif
+        }
+        .sheet(isPresented: $focusPickerShown, onDismiss: markFocusPicked) {
+            #if DEBUG
+            let shares = Self.forcesFocusPicker ? Self.sampleShares : center.mapShares
+            #else
+            let shares = center.mapShares
+            #endif
+            FocusPickerView(shares: shares) { picks in
+                if !picks.isEmpty { slotsRaw = TabSlots.encode(FocusPickerView.slots(for: picks)) }
+                focusPickerShown = false
+            }
+            .presentationDetents([.large])
         }
         .animation(.easeOut(duration: 0.25), value: searchOpen)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: center.shellStatus)
