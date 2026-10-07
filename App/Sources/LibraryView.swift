@@ -88,7 +88,7 @@ struct LibraryView: View {
     private var desked: [SaveIntent: [Video]] {
         let scope = Set(shelves)
         var out: [SaveIntent: [Video]] = [:]
-        for video in videos where !video.needsLook {
+        for video in videos where !video.needsLook && !video.isGuessed {
             guard let category = video.category, scope.contains(category) else { continue }
             let intent = SaveIntent.classify(category: category, topics: video.topics,
                                              hasBuys: !video.buys.isEmpty,
@@ -96,6 +96,36 @@ struct LibraryView: View {
             out[intent, default: []].append(video)
         }
         return out
+    }
+
+    /// Guessed rows per desk: a category and nothing else, which is exactly what
+    /// `SaveIntent.classify` files on when topics are empty. Drawn as skeletons, never as rows.
+    private var guessedByIntent: [SaveIntent: Int] {
+        let scope = Set(shelves)
+        var out: [SaveIntent: Int] = [:]
+        for video in videos where video.isGuessed && !video.unavailable {
+            guard let category = video.category, scope.contains(category) else { continue }
+            let intent = SaveIntent.classify(category: category, topics: [], hasBuys: false,
+                                             includeBuy: includeBuyShelf)
+            out[intent, default: 0] += 1
+        }
+        return out
+    }
+
+    /// Skeleton rows owed to a desk: guessed rows already here, plus what the map still expects.
+    private func sorting(_ intent: SaveIntent) -> Int {
+        (guessedByIntent[intent] ?? 0) + center.expected(intent, includeBuy: includeBuyShelf)
+    }
+
+    private func sortingShelf(_ intent: SaveIntent) -> some View {
+        SkeletonShelf(count: sorting(intent), tint: intent.deskTint, symbol: intent.deskSymbol)
+    }
+
+    /// A desk with nothing landed yet, named so the skeletons under it read as a shelf.
+    private func sortingHeader(_ intent: SaveIntent) -> some View {
+        Micro(text: "\(intent.deskTitle) · sorting", size: 10, tracking: 2, color: intent.deskTint)
+            .frame(height: 44)
+            .padding(.top, 16)
     }
 
     /// The buy shelf's unit is a pick, not a video, and it is cross-category on purpose —
@@ -185,11 +215,18 @@ struct LibraryView: View {
     @ViewBuilder
     private func desk(_ desked: [SaveIntent: [Video]],
                       _ buyPicks: [(video: Video, pick: BuyPick, index: Int)]) -> some View {
-        if let watch = desked[.watch] { watchShelf(watch) }
-        if let doable = desked[.tryIt] { rowShelf(.tryIt, doable, badge: "try it") }
+        // Under every desk, the rows still being sorted; a desk with nothing landed yet gets a
+        // bare header so its skeletons read as a shelf. Buys get none — a buy is a pick inside
+        // a save, and the map knows nothing about picks.
+        if let watch = desked[.watch] { watchShelf(watch) } else if sorting(.watch) > 0 { sortingHeader(.watch) }
+        sortingShelf(.watch)
+        if let doable = desked[.tryIt] { rowShelf(.tryIt, doable, badge: "try it") } else if sorting(.tryIt) > 0 { sortingHeader(.tryIt) }
+        sortingShelf(.tryIt)
         if !buyPicks.isEmpty { buyShelf(buyPicks) }
-        if let mood = desked[.mood] { moodShelf(mood) }
-        if let reference = desked[.reference] { rowShelf(.reference, reference) }
+        if let mood = desked[.mood] { moodShelf(mood) } else if sorting(.mood) > 0 { sortingHeader(.mood) }
+        sortingShelf(.mood)
+        if let reference = desked[.reference] { rowShelf(.reference, reference) } else if sorting(.reference) > 0 { sortingHeader(.reference) }
+        sortingShelf(.reference)
     }
 
     /// The shelf's name, its size, and the only door past its cap.

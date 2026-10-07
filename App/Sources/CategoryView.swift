@@ -48,7 +48,8 @@ struct CategoryView: View {
                         } else {
                             list.padding(.top, 4)
                         }
-                        // Task 7 adds: SkeletonShelf(count: sorting, tint: category.color, symbol: category.symbol)
+                        SkeletonShelf(count: sorting, tint: category.color, symbol: category.symbol)
+                            .padding(.top, analysed.isEmpty ? 8 : 0)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, stashTabBarClearance)
