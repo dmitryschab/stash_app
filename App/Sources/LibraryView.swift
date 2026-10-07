@@ -376,6 +376,17 @@ extension SaveIntent {
         case .reference: .stashInk.opacity(0.62)
         }
     }
+
+    /// The skeleton's glyph while a shelf is still being sorted: the desk's verb, not a category.
+    var deskSymbol: String {
+        switch self {
+        case .watch: "play.rectangle"
+        case .tryIt: "checklist"
+        case .buy: "bag"
+        case .mood: "photo.on.rectangle"
+        case .reference: "bookmark"
+        }
+    }
 }
 
 // MARK: - Shelf cells

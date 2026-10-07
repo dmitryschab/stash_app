@@ -45,6 +45,12 @@ final class PipelineCenter {
     var lastError: String?
     var lastSummary: String?
     var cloudStatus: CloudImportStatus?
+    /// How many rows the library holds per category, split by whether an analysis has
+    /// written them (`analysed`) or only Clef has (`guessed`, see `Video.isGuessed`). Refreshed
+    /// after every batch of results or guesses on the poll's own context, so the views that
+    /// draw skeletons read a dictionary instead of fetching the library per body.
+    struct CategoryTally: Equatable { var analysed = 0; var guessed = 0 }
+    private(set) var tallies: [Category: CategoryTally] = [:]
     var cloudSyncing = false
     /// A TikTok data request is out and the archive is not built yet; Settings says so under the
     /// connected row. Not persisted: every foreground asks the box again.
@@ -126,6 +132,7 @@ final class PipelineCenter {
         }
         dismissedImportID = UserDefaults.standard.string(forKey: Self.dismissedImportKey)
         Self.discardLegacyState()
+        refreshTallies()   // a cold launch mid-import has skeletons to size
         MediaFetcher.sweepInterruptedReads()
         Self.startPowerAndPathWatch()
         refreshThumbnails()
@@ -215,6 +222,97 @@ final class PipelineCenter {
             return .finished(sorted: max(0, cloud.fastPass.done - cloud.unavailable))
         }
         return nil
+    }
+
+    // MARK: - Library map
+
+    /// True while an import is running and its map has at least one answer — the window in
+    /// which skeletons and the picker exist.
+    var isShapingLibrary: Bool {
+        #if DEBUG
+        if Self.debugSorting != nil { return true }
+        #endif
+        guard let status = cloudStatus, status.state == .accepted || status.state == .fastPass,
+              let map = status.map else { return false }
+        return map.done > 0
+    }
+
+    /// The map's counts scaled to the import's total, largest first: what the picker's chips
+    /// and the Import hero's bar show.
+    var mapShares: [(category: Category, count: Int)] {
+        guard isShapingLibrary, let status = cloudStatus, let map = status.map else { return [] }
+        return map.counts
+            .map { (category: $0.key, count: Self.scaled(count: $0.value, done: map.done, total: status.fastPass.total)) }
+            .filter { $0.count > 0 }
+            .sorted { ($0.count, $1.category.rawValue) > ($1.count, $0.category.rawValue) }
+    }
+
+    /// Skeleton rows still owed to `category`: the sample's share scaled to the import, minus
+    /// every row already carrying that category (analysed or guessed). Zero outside an import.
+    func expected(_ category: Category) -> Int {
+        #if DEBUG
+        if let forced = Self.debugSorting { return forced }
+        #endif
+        guard isShapingLibrary, let status = cloudStatus, let map = status.map else { return 0 }
+        let tally = tallies[category] ?? CategoryTally()
+        return Self.expected(count: map.counts[category] ?? 0, done: map.done,
+                             total: status.fastPass.total, landed: tally.analysed + tally.guessed)
+    }
+
+    /// The same, per desk shelf: every category whose saves file under `intent` when nothing
+    /// but the category is known — which is all a guessed row has.
+    func expected(_ intent: SaveIntent, includeBuy: Bool) -> Int {
+        librarySegments
+            .filter { SaveIntent.classify(category: $0, topics: [], hasBuys: false, includeBuy: includeBuy) == intent }
+            .reduce(0) { $0 + expected($1) }
+    }
+
+    static func scaled(count: Int, done: Int, total: Int) -> Int {
+        guard done > 0, total > 0 else { return 0 }
+        return Int((Double(count) / Double(done) * Double(total)).rounded())
+    }
+
+    static func expected(count: Int, done: Int, total: Int, landed: Int) -> Int {
+        max(0, scaled(count: count, done: done, total: total) - landed)
+    }
+
+    #if DEBUG
+    /// `-debugSorting 12` draws twelve skeletons under every category, with no import running
+    /// — the only way to screenshot a shelf mid-sort from a seeded simulator.
+    static let debugSorting: Int? = UserDefaults.standard.string(forKey: "debugSorting").flatMap(Int.init)
+
+    /// The skeleton arithmetic, checked at launch like the pill's: it is a ratio of three
+    /// numbers from two different sources and a clamp, none of it visible from any one screen.
+    static func expectedSelfTest() -> Bool {
+        expected(count: 30, done: 50, total: 1000, landed: 100) == 500
+            && expected(count: 20, done: 50, total: 1000, landed: 450) == 0        // clamped
+            && expected(count: 0, done: 50, total: 1000, landed: 0) == 0
+            && expected(count: 30, done: 0, total: 1000, landed: 0) == 0           // nothing settled yet
+            && expected(count: 30, done: 50, total: 0, landed: 0) == 0             // nothing to scale to
+            && expected(count: 1, done: 3, total: 10, landed: 0) == 3              // rounds, not truncates
+    }
+    #endif
+
+    /// Recount the library by category on a detached context, then publish.
+    private func refreshTallies() {
+        guard let container else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let context = ModelContext(container)
+            guard let videos = try? context.fetch(FetchDescriptor<Video>()) else { return }
+            var tallies: [Category: CategoryTally] = [:]
+            for video in videos where !video.unavailable {
+                guard let category = Category(rawValue: video.categoryRaw) else { continue }
+                if video.isGuessed { tallies[category, default: CategoryTally()].guessed += 1 }
+                else { tallies[category, default: CategoryTally()].analysed += 1 }
+            }
+            await MainActor.run { self?.tallies = tallies }
+        }
+    }
+
+    private static func applyGuesses(_ guesses: [String: Category], to container: ModelContainer) async throws -> Int {
+        try await Task.detached(priority: .utility) {
+            try CloudImportResultUpserter.applyGuesses(guesses, to: ModelContext(container))
+        }.value
     }
 
     #if DEBUG
@@ -1436,6 +1534,10 @@ final class PipelineCenter {
             let status = try await client.status(importID: importID)
             cloudState.apply(status: status)
             persistCloudState()
+            if let guesses = status.map?.guesses, !guesses.isEmpty, let container,
+               try await Self.applyGuesses(guesses, to: container) > 0 {
+                refreshTallies()
+            }
 
             var cursor = cloudState.nextResultsCursor
             var seenCursors = Set<String>()
@@ -1444,6 +1546,7 @@ final class PipelineCenter {
                 if let container {
                     let applied = try await Self.apply(page.results, to: container)
                     if applied > 0 {
+                        refreshTallies()
                         lastSummary = "Synced \(applied) cloud results"
                         refreshThumbnails()
                         backfillEmbeddings()
