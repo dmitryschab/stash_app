@@ -46,6 +46,7 @@ struct TikTokBrainApp: App {
         assert(TabSlots.selfTest(), "TabSlots self-test failed")
         assert(PipelineCenter.shellStatusSelfTest(), "PipelineCenter shell status self-test failed")
         assert(PipelineCenter.expectedSelfTest(), "PipelineCenter expected self-test failed")
+        assert(PipelineCenter.firstSliceSelfTest(), "PipelineCenter first-slice self-test failed")
         assert(FocusPickerView.selfTest(), "FocusPickerView self-test failed")
         assert(SearchSuggestions.selfTest(), "SearchSuggestions self-test failed")
         assert(ImportView.selfTest(), "ImportView self-test failed")
