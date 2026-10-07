@@ -26,6 +26,11 @@ class FakeStore:
         self.completed = completed
         self.failed = []
         self.completed_results = []
+        self.release_checks = []
+
+    def claim_release(self, import_id):
+        self.release_checks.append(import_id)
+        return None
 
     def claim_video(self, import_id, video_id):
         return self.claimed
@@ -425,3 +430,31 @@ def test_an_instagram_reel_keeps_its_shortcode_and_caption_hashtags(monkeypatch)
     ).process("https://www.instagram.com/reel/DBL2NCuMkAo/")
     assert result.video_id == "DBL2NCuMkAo"
     assert result.hashtags == ["recipe", "dinner"]
+
+
+@pytest.mark.parametrize("process", [
+    lambda *_args: VideoResult(videoID="123", title="Saved"),
+    lambda *_args: (_ for _ in ()).throw(PipelineError("bad", False, "invalid_output")),
+    lambda *_args: (_ for _ in ()).throw(RuntimeError("boom")),
+], ids=["completed", "pipeline-error", "unexpected-error"])
+def test_every_settled_video_checks_for_the_next_slice(process):
+    store = FakeStore()
+    handle_message(message(), stores(store), SimpleNamespace(process=process), FakeQueue())
+
+    assert store.release_checks == ["import-1"]
+
+
+def test_a_failing_release_does_not_change_the_videos_outcome():
+    store = FakeStore()
+
+    def throttled(import_id):
+        raise RuntimeError("dynamo is throttling")
+
+    store.claim_release = throttled
+    queue = FakeQueue()
+    pipeline = SimpleNamespace(process=lambda *_args: VideoResult(videoID="123", title="Saved"))
+
+    result = handle_message(message(), stores(store), pipeline, queue)
+
+    assert result == HandleResult(deleted=True, retryable=False)
+    assert queue.deleted == ["receipt-1"]
