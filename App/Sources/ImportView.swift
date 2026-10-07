@@ -314,8 +314,12 @@ struct ImportView: View {
             if let map = cloud.map, map.done < map.sampled {
                 return "Shaping your library from \(map.sampled) saves · \(map.done) sorted so far"
             }
-            return "Sorted \(cloud.fastPass.done) of \(cloud.fastPass.total) "
-                + "· you can close the app, Stash pings you when it is done"
+            let sorted = "Sorted \(cloud.fastPass.done) of \(cloud.fastPass.total)"
+            if cloud.fastPass.total > CloudImportLimits.firstSlice,
+               cloud.fastPass.done >= CloudImportLimits.firstSlice {
+                return "Your newest saves are ready — browse while the rest sorts · " + sorted
+            }
+            return sorted + " · you can close the app, Stash pings you when it is done"
         case .ready:
             // Clamped like `notifyLibraryReady`: an import that resolved nothing must not read
             // as a negative count.
@@ -383,7 +387,15 @@ struct ImportView: View {
             && heroSubtitle(.syncing, box(.fastPass, 0, 941, map: CloudImportMap(sampled: 60, done: 12)))
                 == "Shaping your library from 60 saves · 12 sorted so far"
             && heroSubtitle(.syncing, box(.fastPass, 412, 941, map: CloudImportMap(sampled: 60, done: 60)))
-                == "Sorted 412 of 941 · you can close the app, Stash pings you when it is done"
+                == "Your newest saves are ready — browse while the rest sorts · Sorted 412 of 941"
+            // The box sorts newest first in slices of 100: the line changes at the slice, and a
+            // library that is one slice never shows it.
+            && heroSubtitle(.syncing, box(.fastPass, 99, 941))
+                == "Sorted 99 of 941 · you can close the app, Stash pings you when it is done"
+            && heroSubtitle(.syncing, box(.fastPass, 100, 941))
+                == "Your newest saves are ready — browse while the rest sorts · Sorted 100 of 941"
+            && heroSubtitle(.syncing, box(.fastPass, 60, 100))
+                == "Sorted 60 of 100 · you can close the app, Stash pings you when it is done"
             // A spent budget has to say so in words, not only in the badge's colour.
             && budgetBadge(remaining: 120) == "120 videos left"
             && budgetBadge(remaining: 1) == "1 video left"

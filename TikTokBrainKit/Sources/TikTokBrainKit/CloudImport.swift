@@ -266,6 +266,11 @@ public enum CloudImportLimits {
     /// account never holds more than 600 of them, so `PipelineCenter.runCloudImport` trims a
     /// submission to the remaining budget long before this cap comes into play.
     public static let maxVideosPerImport = 1200
+
+    /// The box releases an import to its queue in slices of this many, newest first
+    /// (services/webhook/cloud_import_store.SLICE). The phone mirrors it to know when the saves
+    /// people reach for first are in.
+    public static let firstSlice = 100
 }
 
 public enum CloudImportFeatureFlag {
