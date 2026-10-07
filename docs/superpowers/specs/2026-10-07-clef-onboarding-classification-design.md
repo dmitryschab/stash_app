@@ -138,12 +138,14 @@ class ImportStatus(ContractModel):
 - `CloudImportSyncState.apply(status:)` keeps the incoming map when its `done` is ≥ the current
   one's, otherwise keeps the current.
 - `CloudImport.apply(_:to:)`: an `unavailable` result over a row that still holds a guess
-  (`cloudAnalysisRevision == 0`, non-empty `categoryRaw`) clears `categoryRaw`, so a dead video
+  (`isGuessed`) clears `categoryRaw`, so a dead video
   does not keep a category it was only guessed into.
 - `public static func applyGuesses(_ guesses: [String: Category], to context: ModelContext) throws -> Int`:
   fetch the named rows; where `cloudAnalysisRevision == 0 && categoryRaw.isEmpty`, set
-  `categoryRaw`. Returns how many changed. "Guessed" is derived everywhere as
-  `cloudAnalysisRevision == 0 && !categoryRaw.isEmpty` — no new field, no migration.
+  `categoryRaw`. Returns how many changed. "Guessed" is derived everywhere as `Video.isGuessed`
+  = `!categoryRaw.isEmpty && title.isEmpty && summary.isEmpty` — no new field, no migration.
+  Not the revision: rows the old on-device pipeline analysed, and the demo seed, sit at
+  revision 0 with titles, and must keep rendering as saves.
 
 ### C3 — app (`App/Sources/`)
 
@@ -178,11 +180,11 @@ class ImportStatus(ContractModel):
 **`CategoryView.swift` (new).** The generic section:
 - Header like `CookView`'s: the category's `displayName` in its tint, "N saves" trailing where
   N counts analysed rows only.
-- Body: month runs of analysed rows (`category == c && cloudAnalysisRevision > 0 && !needsLook`),
+- Body: month runs of analysed rows (`category == c && !isGuessed && !needsLook`),
   the same row cell `IntentListView` draws — lift that cell out of `LibraryView.swift` as an
   internal `SaveRow` both use. Rows open `VideoDetailView`.
 - Under the real rows: `sorting = guessed(c) + center.expected(c)` skeleton rows, where
-  `guessed(c)` counts rows with `categoryRaw == c && cloudAnalysisRevision == 0`. Since
+  `guessed(c)` counts rows with `categoryRaw == c && isGuessed`. Since
   `expected` already subtracts guessed rows as landed, this equals the scaled estimate minus
   the analysed rows. Capped at 5 on screen with a `Micro` line "+N more sorting" beyond that.
   Zero skeletons once the import completes.
@@ -190,7 +192,7 @@ class ImportStatus(ContractModel):
 
 **`LibraryView.swift`.** Guessed rows already land on the right desk, because `desked`
 classifies on category alone when `topics` is empty. Each desk shelf splits its videos into
-analysed (drawn as today) and guessed (`cloudAnalysisRevision == 0`, drawn as `SkeletonRow`),
+analysed (drawn as today) and guessed (`isGuessed`, drawn as `SkeletonRow`),
 then appends `center.expected(intent, includeBuy:)` more skeletons — same cap of 5 and the same
 "+N more sorting" line. A guessed row is never drawn as a real row with an empty title.
 
