@@ -510,9 +510,12 @@ public enum CloudImportResultUpserter {
                 }
                 if !result.buys.isEmpty { video.buysJSON = try? JSONEncoder().encode(result.buys) }
             }
-            // A row that only ever held a guess and turns out to be gone must not keep a
-            // category it was guessed into — it would sit on a shelf as a dead save.
-            if result.unavailable, video.isGuessed { video.categoryRaw = "" }
+            // A row that only ever held a guess, and whose fast pass then failed or found the
+            // video gone, must not keep the category it was guessed into: a guessed row is not
+            // in "Needs a look", not archived and never retried, so it would be a shimmer the
+            // user can neither open nor fix. Cleared, it is a plain failure — the archive
+            // retries it, and a retry at the same revision lands through `replacesFailure`.
+            if result.unavailable || result.errorCode != nil, video.isGuessed { video.categoryRaw = "" }
             video.unavailable = result.unavailable
             video.cloudAnalysisRevision = result.analysisRevision
             video.stageStatesJSON = stageStates(for: result)

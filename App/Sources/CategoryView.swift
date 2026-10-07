@@ -28,8 +28,11 @@ struct CategoryView: View {
         videos.filter { $0.category == category && !$0.isGuessed && !$0.needsLook }
     }
 
+    /// Guessed rows count as skeletons only while the import that guessed them is running;
+    /// afterwards they are failures the archive retries, not placeholders.
     private var guessed: Int {
-        videos.filter { $0.category == category && $0.isGuessed && !$0.unavailable }.count
+        guard center.isShapingLibrary else { return 0 }
+        return videos.filter { $0.category == category && $0.isGuessed && !$0.unavailable }.count
     }
 
     private var sorting: Int { guessed + center.expected(category) }

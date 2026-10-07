@@ -101,6 +101,9 @@ struct LibraryView: View {
     /// Guessed rows per desk: a category and nothing else, which is exactly what
     /// `SaveIntent.classify` files on when topics are empty. Drawn as skeletons, never as rows.
     private var guessedByIntent: [SaveIntent: Int] {
+        // Only while an import is sorting: outside one a guessed row is a save the fast pass
+        // never finished, and a shimmer nobody can open is not how to show that.
+        guard center.isShapingLibrary else { return [:] }
         let scope = Set(shelves)
         var out: [SaveIntent: Int] = [:]
         for video in videos where video.isGuessed && !video.unavailable {
@@ -114,7 +117,7 @@ struct LibraryView: View {
 
     /// Skeleton rows owed to a desk: guessed rows already here, plus what the map still expects.
     private func sorting(_ intent: SaveIntent) -> Int {
-        (guessedByIntent[intent] ?? 0) + center.expected(intent, includeBuy: includeBuyShelf)
+        (guessedByIntent[intent] ?? 0) + center.expected(intent, includeBuy: includeBuyShelf, shelves: shelves)
     }
 
     private func sortingShelf(_ intent: SaveIntent) -> some View {

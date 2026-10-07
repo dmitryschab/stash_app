@@ -132,7 +132,7 @@
       <p>We do not rely on consent for any of the above, so there is no consent for you to withdraw — instead, deleting your account (below) ends the processing entirely. If we ever add something genuinely optional, we will ask for consent separately and it will be refusable without losing the rest.</p>
 
       <h2>Where it is processed</h2>
-      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. Speech-to-text runs at Groq, which is outside the EU; see international transfers below. While that analysis runs, the caption and hashtags of each imported video also go to Cloudflare's Clef model, through OpenRouter, Inc., for a first category guess that the full analysis then replaces.</p>
+      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. Speech-to-text runs at Groq, which is outside the EU; see international transfers below. While that analysis runs, the caption, hashtags, creator name and sound title of each imported video also go to Cloudflare's Clef model, through OpenRouter, Inc., for a first category guess that the full analysis then replaces; the images of a photo post go to a vision model at OpenRouter to be read.</p>
       <p>This is shared infrastructure. Your rows sit in the same database table and the same queue as other users', separated by your account identifier rather than by having a server of your own.</p>
       <p>To transcribe a video and read its on-screen text, our server fetches the video from TikTok, extracts the audio and samples some frames, and deletes the downloaded file as soon as that is done. Stash does not keep copies of TikTok videos.</p>
 
@@ -144,7 +144,7 @@
         <dt>Groq, Inc.</dt>
         <dd>Speech-to-text. Receives the audio track extracted from a saved video and returns the transcript. It does not receive your account identifier, your email, or your library.</dd>
         <dt>OpenRouter, Inc.</dt>
-        <dd>Routes the caption and hashtags of each imported video to Cloudflare, Inc.'s Clef model for a first category guess. Receives no cover images, transcripts, account identifiers or email. Established in the United States; see international transfers.</dd>
+        <dd>Routes the caption, hashtags, creator name and sound title of each imported video to Cloudflare, Inc.'s Clef model for a first category guess, and the images of a photo post to a vision model to be read. Receives no transcripts, account identifiers or email. Established in the United States; see international transfers.</dd>
       </dl>
 
       <h2>International transfers</h2>
@@ -157,6 +157,9 @@
         (2) Whether Groq has an EU processing region and whether the account is pinned to it. The
             code calls api.groq.com with no region pin (services/webhook/api_v1.py), so the text
             above assumes US processing. Do not soften it without checking.
+        (3) The same two questions for OpenRouter, Inc. (openrouter.ai): DPF status and whether
+            its processing can be pinned to the EU. The code calls openrouter.ai with no region
+            pin (services/webhook/clef.py, api_v1.py).
       -->
       <p>AWS processes your data in the EU regions named above. AWS's parent company is American, so its Data Processing Addendum and the Standard Contractual Clauses cover any support access from outside the EEA. Stash does not use the AWS European Sovereign Cloud.</p>
 

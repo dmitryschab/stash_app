@@ -409,3 +409,37 @@ def test_a_retry_does_not_start_a_second_map(map_dependencies):
         client.post("/v1/imports", json=payload(2))
     assert pool.submitted == 2
     assert store.map["sampled"] == 2
+
+
+def test_a_lost_create_race_with_free_retries_starts_no_second_map(map_dependencies, monkeypatch):
+    store, _, pool = map_dependencies
+    store.failures = {"1": 1, "2": 1}                                    # every video a free retry: nothing charged
+    monkeypatch.setattr(store, "get_client_import", lambda cid: None)   # the race: the dedupe row is not visible yet
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(2))
+        client.post("/v1/imports", json=payload(2))                     # create_import replays: created=False
+    assert pool.submitted == 2
+    assert store.map["sampled"] == 2
+
+
+def test_the_map_fetches_the_canonical_url(map_dependencies, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cloud_import_api, "fetch_metadata", lambda url: seen.append(url) or {"description": "x"})
+    body = payload(1)
+    body["videos"][0]["url"] = "https://www.tiktok.com/@x/photo/1"
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=body)
+    assert seen == ["https://www.tiktok.com/@x/video/1"]
+
+
+def test_a_failing_store_write_is_logged_not_lost(map_dependencies, monkeypatch, caplog):
+    store, _, _ = map_dependencies
+
+    def boom(import_id, video_id, category):
+        raise RuntimeError("dynamo down")
+
+    monkeypatch.setattr(store, "guess_video", boom)
+    with TestClient(app) as client, caplog.at_level("ERROR"):
+        response = client.post("/v1/imports", json=payload(1))
+    assert response.status_code == 202
+    assert "map write failed" in caplog.text

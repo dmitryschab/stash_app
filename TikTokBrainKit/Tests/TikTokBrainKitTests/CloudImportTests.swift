@@ -133,6 +133,26 @@ final class CloudImportTests: XCTestCase {
         XCTAssertTrue(video.isGuessed)
     }
 
+    func testAFailedFastPassClearsAGuessAndTheRetryThenLands() throws {
+        // The map lands first, then the fast pass fails this video. The guess must go with the
+        // failure — a guessed row is not in "Needs a look", not archived and never retried —
+        // and the retry that follows, at the same revision, must still be accepted.
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        context.insert(Video(videoID: "1", url: URL(string: "https://www.tiktok.com/@x/video/1")!,
+                             bookmarkedAt: Date(timeIntervalSince1970: 1)))
+        try context.save()
+        _ = try CloudImportResultUpserter.applyGuesses(["1": .coding], to: context)
+        _ = try CloudImportResultUpserter.apply([CloudImportResult(videoID: "1", analysisRevision: 8, errorCode: "analysis_failed")], to: context)
+        let video = try XCTUnwrap(context.fetch(FetchDescriptor<Video>()).first)
+        XCTAssertEqual(video.categoryRaw, "")
+        XCTAssertFalse(video.isGuessed)
+        let applied = try CloudImportResultUpserter.apply([CloudImportResult(videoID: "1", analysisRevision: 8, category: "coding", title: "Real")], to: context)
+        XCTAssertEqual(applied, 1)
+        XCTAssertEqual(video.categoryRaw, "coding")
+        XCTAssertEqual(video.title, "Real")
+    }
+
     func testAnUnavailableResultClearsAGuess() throws {
         let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = ModelContext(container)

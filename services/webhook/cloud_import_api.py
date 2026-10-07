@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 import clef
 from cloud_import_models import CreateImportRequest, CreateImportResponse, ImportStatus, ResultPage
-from cloud_import_pipeline import fetch_metadata
+from cloud_import_pipeline import _canonical, fetch_metadata
 from cloud_import_queue import SQSImportQueue
 from cloud_import_store import MAX_FREE_RETRIES, DynamoImportStore
 from stash_auth import entitled_store, quota_exhausted, user_store
@@ -51,18 +51,26 @@ def sample_for_map(videos: list, size: int = MAP_SAMPLE) -> list:
 
 def _map_one(store: DynamoImportStore, import_id: str, video_id: str, url: str) -> None:
     try:
-        metadata = fetch_metadata(url)
+        # The same rewrite the fast pass applies: yt-dlp refuses a photo post's `/photo/` path
+        # and serves the post under `/video/`, so without it every sampled photo post is a skip.
+        metadata = fetch_metadata(_canonical(url))
         guess = clef.classify(clef.state_from_metadata(metadata)) if metadata else None
     except Exception:
         # The journal is the only place this lands; the map just has one fewer answer.
         log.exception("map pass failed video=%s import=%s", video_id, import_id)
         guess = None
-    if guess is None:
-        store.skip_map_video(import_id)
-        return
-    category, probability = guess
-    log.info("map guess import=%s video=%s category=%s p=%.2f", import_id, video_id, category, probability)
-    store.guess_video(import_id, video_id, category)
+    # The pool never reads these futures, so an exception here would vanish without a line
+    # in the journal — and a map that never reaches `sampled` is the one failure the phone
+    # cannot tell from a slow one.
+    try:
+        if guess is None:
+            store.skip_map_video(import_id)
+            return
+        category, probability = guess
+        log.info("map guess import=%s video=%s category=%s p=%.2f", import_id, video_id, category, probability)
+        store.guess_video(import_id, video_id, category)
+    except Exception:
+        log.exception("map write failed video=%s import=%s", video_id, import_id)
 
 
 def start_map_pass(store: DynamoImportStore, import_id: str, videos: list, pool=None) -> int:
@@ -141,8 +149,11 @@ def create_import(
             for video in body.videos:
                 queue.enqueue(store.user_id, created.import_id, video.video_id, url=video.url)
             # After the queue, never before: the fast pass is what the user paid for, and a
-            # first guess that delayed it would be a worse deal than no guess.
-            start_map_pass(store, created.import_id, body.videos)
+            # first guess that delayed it would be a worse deal than no guess. Only for the
+            # import this call actually created — a lost race with nothing charged lands here
+            # too, and a second `start_map` would reset a map the first pass is still writing.
+            if created.created:
+                start_map_pass(store, created.import_id, body.videos)
     return CreateImportResponse(
         importID=created.import_id,
         state="accepted",

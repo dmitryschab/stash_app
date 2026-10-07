@@ -329,6 +329,20 @@ struct RootView: View {
     private func markFocusPicked() {
         if let userID = session.userID { UserDefaults.standard.set(true, forKey: Self.focusKey(userID)) }
     }
+
+    /// Presents the picker when every condition holds. Nothing is presented over Import or
+    /// Settings, and nothing for a demo account or an import that is not the account's first.
+    private func considerFocusPicker() {
+        guard !focusPickerShown, !center.screenBusy, !center.importRouteRequested, !session.isDemoAccount else { return }
+        #if DEBUG
+        if Self.forcesFocusPicker { focusPickerShown = true; return }
+        #endif
+        if FocusPickerView.shouldShow(map: center.cloudStatus?.map, shaping: center.isShapingLibrary,
+                                      picked: focusPicked,
+                                      eligible: center.cloudStatus?.importID == center.focusEligibleImportID) {
+            focusPickerShown = true
+        }
+    }
     #if DEBUG
     /// `-showFocusPicker` presents the sheet over a seeded library with sample shares — the
     /// only way to screenshot it without an import.
@@ -516,16 +530,12 @@ struct RootView: View {
         .onChange(of: slotsRaw) { _, _ in
             if !slots.contains(tab) { tab = slots.first ?? .library }
         }
-        .onChange(of: center.cloudStatus?.map?.done, initial: true) { _, _ in
-            guard !focusPickerShown, !center.importRouteRequested, !session.isDemoAccount else { return }
-            if FocusPickerView.shouldShow(map: center.cloudStatus?.map, shaping: center.isShapingLibrary,
-                                          picked: focusPicked) {
-                focusPickerShown = true
-            }
-            #if DEBUG
-            if Self.forcesFocusPicker { focusPickerShown = true }
-            #endif
-        }
+        // Every signal that can complete the picker's conditions: the map settling, Import or
+        // Settings closing, the pill's route to Import finishing. The map usually settles while
+        // the user is on Import watching it, so the close is the trigger that matters most.
+        .onChange(of: center.cloudStatus?.map?.done, initial: true) { _, _ in considerFocusPicker() }
+        .onChange(of: center.screenBusy) { _, _ in considerFocusPicker() }
+        .onChange(of: center.importRouteRequested) { _, _ in considerFocusPicker() }
         .sheet(isPresented: $focusPickerShown, onDismiss: markFocusPicked) {
             #if DEBUG
             let shares = Self.forcesFocusPicker ? Self.sampleShares : center.mapShares

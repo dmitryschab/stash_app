@@ -51,6 +51,23 @@ final class PipelineCenter {
     /// draw skeletons read a dictionary instead of fetching the library per body.
     struct CategoryTally: Equatable { var analysed = 0; var guessed = 0 }
     private(set) var tallies: [Category: CategoryTally] = [:]
+
+    /// Raised while Import or Settings is on screen — a count, because Settings opens over
+    /// Import. The focus picker waits for both to close: a sheet over the import screen would
+    /// cover the very map the user is watching settle, and a sheet under Settings' sheet
+    /// silently fails to present.
+    private var screenBusyCount = 0
+    var screenBusy: Bool { screenBusyCount > 0 }
+    func screenDidAppear() { screenBusyCount += 1 }
+    func screenDidDisappear() { screenBusyCount = max(0, screenBusyCount - 1) }
+
+    /// The one import the focus picker may follow: the first submitted onto a library with no
+    /// filed saves. A sync, a retry or a second export onto an existing library is not a first
+    /// import, and the picker is for first impressions only — it also replaces the bar, which
+    /// an account that already chose its tabs would not thank us for. Persisted so a relaunch
+    /// mid-import still knows which import it was.
+    private(set) var focusEligibleImportID: String?
+    private static let focusEligibleKey = "focusEligibleImportID"
     var cloudSyncing = false
     /// A TikTok data request is out and the archive is not built yet; Settings says so under the
     /// connected row. Not persisted: every foreground asks the box again.
@@ -131,6 +148,7 @@ final class PipelineCenter {
             shareImports = imports
         }
         dismissedImportID = UserDefaults.standard.string(forKey: Self.dismissedImportKey)
+        focusEligibleImportID = UserDefaults.standard.string(forKey: Self.focusEligibleKey)
         Self.discardLegacyState()
         refreshTallies()   // a cold launch mid-import has skeletons to size
         MediaFetcher.sweepInterruptedReads()
@@ -259,12 +277,24 @@ final class PipelineCenter {
                              total: status.fastPass.total, landed: tally.analysed + tally.guessed)
     }
 
-    /// The same, per desk shelf: every category whose saves file under `intent` when nothing
-    /// but the category is known — which is all a guessed row has.
-    func expected(_ intent: SaveIntent, includeBuy: Bool) -> Int {
-        librarySegments
-            .filter { SaveIntent.classify(category: $0, topics: [], hasBuys: false, includeBuy: includeBuy) == intent }
-            .reduce(0) { $0 + expected($1) }
+    /// The same, per desk shelf, over the categories Library still owns.
+    func expected(_ intent: SaveIntent, includeBuy: Bool, shelves: [Category]) -> Int {
+        Self.categories(filing: intent, among: shelves, includeBuy: includeBuy).reduce(0) { $0 + expected($1) }
+    }
+
+    /// The categories whose saves file under `intent` when nothing but the category is known —
+    /// which is all a guessed row has — limited to `shelves`: a recipe lands on Cook, and Cook
+    /// draws its own skeletons, so a desk that counted it would hold placeholders that never fill.
+    static func categories(filing intent: SaveIntent, among shelves: [Category], includeBuy: Bool) -> [Category] {
+        shelves.filter { SaveIntent.classify(category: $0, topics: [], hasBuys: false, includeBuy: includeBuy) == intent }
+    }
+
+    /// Whether any save in the library has a category yet — the test for a first import. Read
+    /// before the new rows go in; they have no category either way.
+    private func hasFiledSaves() -> Bool {
+        guard let container else { return true }   // unknown: never claim a first import
+        let descriptor = FetchDescriptor<Video>(predicate: #Predicate { $0.categoryRaw != "" })
+        return ((try? ModelContext(container).fetchCount(descriptor)) ?? 1) > 0
     }
 
     static func scaled(count: Int, done: Int, total: Int) -> Int {
@@ -290,6 +320,10 @@ final class PipelineCenter {
             && expected(count: 30, done: 0, total: 1000, landed: 0) == 0           // nothing settled yet
             && expected(count: 30, done: 50, total: 0, landed: 0) == 0             // nothing to scale to
             && expected(count: 1, done: 3, total: 10, landed: 0) == 3              // rounds, not truncates
+            // A desk only expects the categories Library still owns: a recipe files on Cook.
+            && categories(filing: .tryIt, among: librarySegments, includeBuy: false).contains(.recipe)
+            && !categories(filing: .tryIt, among: [.fitness, .travel, .home], includeBuy: false).contains(.recipe)
+            && categories(filing: .tryIt, among: [.fitness, .travel, .home], includeBuy: false) == [.fitness, .travel]
     }
     #endif
 
@@ -629,6 +663,7 @@ final class PipelineCenter {
         }
 
         do {
+            let firstImport = !hasFiledSaves()
             let newCount = try await runner.ingest(bookmarks: bookmarks)
             let fingerprint = CloudImportSyncState.fingerprint(of: submitting)
             let clientImportID: UUID
@@ -645,6 +680,10 @@ final class PipelineCenter {
             let submission = try await client.submit(bookmarks: submitting, clientImportID: clientImportID)
             cloudState.importID = submission.importID
             persistCloudState()
+            if firstImport {
+                focusEligibleImportID = submission.importID
+                UserDefaults.standard.set(submission.importID, forKey: Self.focusEligibleKey)
+            }
             UserDefaults.standard.removeObject(forKey: Self.exportRequestedKey)
             cancelExportReminders()   // the export is in — stop nagging about downloading it
             // Asked here, where the answer buys something visible: the "library is ready" ping.
@@ -1342,6 +1381,8 @@ final class PipelineCenter {
         UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetriesKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetryAtKey)
+        focusEligibleImportID = nil
+        UserDefaults.standard.removeObject(forKey: Self.focusEligibleKey)
     }
 
     // MARK: - TikTok sync

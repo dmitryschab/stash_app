@@ -89,11 +89,11 @@ struct FocusPickerView: View {
         [.today] + picks.prefix(maxPicks).compactMap(StashTab.tab(owning:)) + [.library]
     }
 
-    /// Whether to present: not yet answered for this account, an import is shaping the library,
-    /// and the map has settled enough to mean something — twenty answers, or all of a small
-    /// import — with at least one category worth offering.
-    static func shouldShow(map: CloudImportMap?, shaping: Bool, picked: Bool) -> Bool {
-        guard !picked, shaping, let map else { return false }
+    /// Whether to present: not yet answered for this account, the import is the account's first
+    /// (`eligible`), it is shaping the library, and the map has settled enough to mean
+    /// something — twenty answers, or all of a small import — with a category worth offering.
+    static func shouldShow(map: CloudImportMap?, shaping: Bool, picked: Bool, eligible: Bool) -> Bool {
+        guard !picked, shaping, eligible, let map else { return false }
         guard map.done >= min(20, map.sampled) else { return false }
         return map.counts.contains { $0.key != .other && $0.value > 0 }
     }
@@ -110,13 +110,15 @@ struct FocusPickerView: View {
             && TabSlots.encode(slots(for: [.coding, .home, .recipe])) == "today,code,cook,home,library"
             && slots(for: [.other]) == [.today, .library]
             && slots(for: [.coding, .home, .recipe, .music]).count == 5                   // a fourth pick is dropped
-            && shouldShow(map: small, shaping: true, picked: false)
-            && !shouldShow(map: settling, shaping: true, picked: false)
-            && shouldShow(map: settled, shaping: true, picked: false)
-            && !shouldShow(map: settled, shaping: true, picked: true)
-            && !shouldShow(map: settled, shaping: false, picked: false)
-            && !shouldShow(map: allOther, shaping: true, picked: false)
-            && !shouldShow(map: nil, shaping: true, picked: false)
+            && shouldShow(map: small, shaping: true, picked: false, eligible: true)
+            && !shouldShow(map: settling, shaping: true, picked: false, eligible: true)
+            && shouldShow(map: settled, shaping: true, picked: false, eligible: true)
+            && !shouldShow(map: settled, shaping: true, picked: true, eligible: true)
+            && !shouldShow(map: settled, shaping: false, picked: false, eligible: true)
+            && !shouldShow(map: allOther, shaping: true, picked: false, eligible: true)
+            && !shouldShow(map: nil, shaping: true, picked: false, eligible: true)
+            // An import onto a library that already has saves is not the first import.
+            && !shouldShow(map: settled, shaping: true, picked: false, eligible: false)
     }
     #endif
 }

@@ -99,6 +99,9 @@ struct ImportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
+                    // The focus picker holds off while this screen is up (PipelineCenter.screenBusy).
+                    .onAppear { controller.screenDidAppear() }
+                    .onDisappear { controller.screenDidDisappear() }
                 syncCard.padding(.top, 16)
                 primaryAction.padding(.top, StashSpacing.group)
                 optionCard.padding(.top, 16)
@@ -310,8 +313,9 @@ struct ImportView: View {
         switch state {
         case .syncing:
             // While the map is still settling the library has no shape yet; say what is being
-            // built from, not a count that reads as stalled at 0.
-            if let map = cloud.map, map.done < map.sampled {
+            // built from, not a count that reads as stalled at 0. Only until the fast pass has
+            // passed the sample, so a map that stalled cannot hold the card for the whole import.
+            if let map = cloud.map, map.done < map.sampled, cloud.fastPass.done < map.sampled {
                 return "Shaping your library from \(map.sampled) saves · \(map.done) sorted so far"
             }
             return "Sorted \(cloud.fastPass.done) of \(cloud.fastPass.total) "
@@ -384,6 +388,10 @@ struct ImportView: View {
                 == "Shaping your library from 60 saves · 12 sorted so far"
             && heroSubtitle(.syncing, box(.fastPass, 412, 941, map: CloudImportMap(sampled: 60, done: 60)))
                 == "Sorted 412 of 941 · you can close the app, Stash pings you when it is done"
+            // A map that stalled must not hold the card: once the fast pass has passed the
+            // sample, progress is the honest line.
+            && heroSubtitle(.syncing, box(.fastPass, 412, 941, map: CloudImportMap(sampled: 60, done: 12)))
+                == "Sorted 412 of 941 · you can close the app, Stash pings you when it is done"
             // A spent budget has to say so in words, not only in the badge's colour.
             && budgetBadge(remaining: 120) == "120 videos left"
             && budgetBadge(remaining: 1) == "1 video left"
@@ -402,8 +410,9 @@ struct ImportView: View {
             Text("Stash servers download each video you submit. Its audio goes to Groq, Inc. "
                  + "(United States) for speech-to-text; the caption, transcript and on-screen "
                  + "text go to AWS Bedrock (Frankfurt) to write the summary and pick the "
-                 + "category. The caption and hashtags also go to Cloudflare's Clef model, "
-                 + "through OpenRouter, Inc. (United States), for a first sort while that runs. "
+                 + "category. The caption, hashtags, creator name and sound title also go to "
+                 + "Cloudflare's Clef model, through OpenRouter, Inc. (United States), for a first "
+                 + "sort while that runs, and a photo post's images go to OpenRouter to be read. "
                  + "The downloaded video is deleted straight after, and nothing is used to train "
                  + "models.")
                 .font(.archivo(13, .semibold))
@@ -758,6 +767,9 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            // A sheet under this one would fail to present; the picker waits (PipelineCenter.screenBusy).
+            .onAppear { controller.screenDidAppear() }
+            .onDisappear { controller.screenDidDisappear() }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
@@ -915,7 +927,7 @@ struct SettingsView: View {
         Section("Legal") {
             Link("Terms of service", destination: StashLegal.terms)
             Link("Privacy policy", destination: StashLegal.privacy)
-            Text("The privacy policy names everything Stash holds and the providers that process it: Groq for speech-to-text, OpenRouter and Cloudflare for the first sort, AWS for hosting and analysis.")
+            Text("The privacy policy names everything Stash holds and the providers that process it: Groq for speech-to-text, OpenRouter and Cloudflare for the first sort and photo posts, AWS for hosting and analysis.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
