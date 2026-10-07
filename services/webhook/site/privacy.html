@@ -86,7 +86,7 @@
   <div class="wrap">
     <article>
       <h1>Privacy policy</h1>
-      <p class="updated">Last updated 22 August 2026 · Applies to the Stash iOS app and this website</p>
+      <p class="updated">Last updated 7 October 2026 · Applies to the Stash iOS app and this website</p>
 
       <div class="callout">
         <p><strong>Who is responsible for your data.</strong> The controller is Dmitrijs Sabelniks, a sole proprietorship (eenmanszaak) registered in the Netherlands, KvK number 70958416, VAT identification number NL002463368B81, registered address Gasthuisring 14-21, 5041 DS Tilburg, Netherlands. Write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a> about anything on this page.</p>
@@ -112,14 +112,14 @@
       <p>Stash has no analytics SDK, no advertising SDK and no crash-reporting SDK. We do not track you across other companies' apps or websites, and we do not sell your data.</p>
 
       <h2>How your favourites reach Stash</h2>
-      <p>Both live routes start with an action you take. Stash never reaches into your TikTok account by itself.</p>
+      <p>Every route starts with an action you take. Stash only reaches into your TikTok account if you connect it, and only for as long as it stays connected.</p>
       <dl>
         <dt>Sharing a video into Stash (live)</dt>
         <dd>You tap Share on a TikTok and pick Stash. The extension records the link and nothing else — it sends no data anywhere. The next time you open Stash, that one video is fetched and analysed like any other.</dd>
         <dt>Your own TikTok data export (live)</dt>
         <dd>You request your data from TikTok, download the file yourself, and pick it in Stash. Stash reads the Favourite Videos entries out of it and ignores every other category in the file — messages, watch history, profile, wallet and the rest are never sent to our servers and never written to storage.</dd>
-        <dt>TikTok Data Portability API (not available)</dt>
-        <dd>Stash cannot connect to your TikTok account, cannot read it, and never asks for your TikTok password. We would like to offer this route so a library could stay in sync without you exporting anything. If it ever becomes available, connecting would be an explicit authorisation you give inside TikTok and revocable from TikTok's own settings at any time, and this page will be updated before the route is switched on.</dd>
+        <dt>Connecting your TikTok account (optional)</dt>
+        <dd>Settings lets you connect your TikTok account through TikTok's Data Portability API, so your library stays in sync without you exporting anything. You authorise it inside TikTok's own sign-in, and Stash never sees your TikTok password. While connected, Stash stores your TikTok user ID, your display name, and the access and refresh tokens TikTok issues. It asks TikTok for your data archive at most once a day, reads only the Favourite Videos entries out of it, discards every other category without storing or logging it, and deletes the archive from our server as soon as those entries are read. They then reach your library the same way an export would. Disconnecting in Settings, or deleting your Stash account, revokes Stash's access at TikTok and deletes the stored tokens. You can also revoke it from TikTok's own settings at any time, and Stash drops the connection the next time it syncs.</dd>
       </dl>
 
       <h2>Why we process it, and on what legal basis</h2>
@@ -177,7 +177,7 @@
       </dl>
 
       <h2>Deleting your account and your data</h2>
-      <p>Settings in the app has <strong>Delete account</strong>. It removes your account identifier, your library, your quota counters and your import bookkeeping from our servers, and it deletes the copy held on your phone. It also revokes the Sign in with Apple grant, so Stash disappears from the Apple ID list on your device. It is immediate and it is not reversible. The two lags above — the 14-day queue window and the 35-day backup window — are the only places anything survives, and neither is used to serve your data back to anyone.</p>
+      <p>Settings in the app has <strong>Delete account</strong>. It removes your account identifier, your library, your quota counters and your import bookkeeping from our servers, and it deletes the copy held on your phone. It also revokes the Sign in with Apple grant, so Stash disappears from the Apple ID list on your device, and, if you connected TikTok, Stash's access to your TikTok account. It is immediate and it is not reversible. The two lags above — the 14-day queue window and the 35-day backup window — are the only places anything survives, and neither is used to serve your data back to anyone.</p>
       <p>Deleting in the app is all or nothing today: there is no button that removes a single video. If you want one video gone rather than the account, or would rather ask us than press the button, write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a> and we will remove it.</p>
 
       <h2>Your rights</h2>
@@ -202,7 +202,7 @@
       <h2>If you are in the United States</h2>
       <p>Stash is sold worldwide, so some of you are covered by California's CCPA as amended by the CPRA, or by a comparable state law in Virginia, Colorado, Connecticut, Utah, Texas, Oregon or Montana. The service works the same way for everyone; this section says the same things again in the vocabulary those laws use.</p>
       <p><strong>We do not sell your personal information, and we do not share it for cross-context behavioural advertising.</strong> We never have. There is no advertising in Stash, no advertising SDK, no analytics SDK, and no data broker in the picture — which is why you will not find a "Do Not Sell or Share My Personal Information" link on this site. There is nothing for it to switch off.</p>
-      <p>In the twelve months covered by this policy we collect two of the statutory categories: <strong>identifiers</strong> (the app-specific Apple user identifier, and the IP address in our server logs) and <strong>internet or other electronic network activity</strong> (the videos you saved and everything we derive from them — captions, transcripts, on-screen text, summaries and categories). We collect no sensitive personal information as that term is defined, so the right to limit its use does not arise. Everything above is collected from you and from the TikTok data export you hand us, and it is used for one purpose: running the app you bought. Retention is set out under "How long we keep it".</p>
+      <p>In the twelve months covered by this policy we collect two of the statutory categories: <strong>identifiers</strong> (the app-specific Apple user identifier, your TikTok user ID if you connect your account, and the IP address in our server logs) and <strong>internet or other electronic network activity</strong> (the videos you saved and everything we derive from them — captions, transcripts, on-screen text, summaries and categories). We collect no sensitive personal information as that term is defined, so the right to limit its use does not arise. Everything above is collected from you, from the TikTok data export you hand us, and, if you connect your account, from TikTok, and it is used for one purpose: running the app you bought. Retention is set out under "How long we keep it".</p>
       <p>You have the right to know what we hold and get a copy of it, to have it corrected, and to have it deleted. Two of those are buttons rather than requests: Settings has <strong>Export my data</strong> and <strong>Delete account</strong>, and neither asks us for permission. For anything else, or to have someone act as your authorised agent, write to <a href="mailto:privacy@stash.dmitrijs.dev">privacy@stash.dmitrijs.dev</a>. We verify a request by checking that it comes from the account it concerns, and we answer within 45 days.</p>
       <p>We will not discriminate against you for exercising any of this — no price change, no degraded service. The app costs the same and works the same either way.</p>
 

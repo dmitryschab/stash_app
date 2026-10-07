@@ -77,6 +77,9 @@ final class StashSession {
     /// act on an unknown check `quota != nil` as well (see `RootView.paidShell`).
     var isOnTrial: Bool { quota?.isOnTrial ?? false }
     var lastAuthError: String?
+    /// The TikTok account linked to this one, read from GET /v1/me. Settings writes it too, the
+    /// moment a connect or disconnect returns, rather than waiting for the next /v1/me.
+    var tiktok: TikTokConnection?
 
     var isSignedIn: Bool { if case .signedIn = state { return true }; return false }
     var userID: String? { if case .signedIn(let id) = state { return id }; return nil }
@@ -168,6 +171,7 @@ final class StashSession {
         StashKeychain.clear()
         stored = nil
         quota = nil
+        tiktok = nil
         isDemoAccount = false
         // Not carried across accounts: the next Apple ID to sign in on this device has its
         // own subscription, or none, and inheriting this one would hand it the app for free.
@@ -254,6 +258,7 @@ final class StashSession {
             // the old install, so the restored session may not carry the flag yet.
             if let demo = me.demo { isDemoAccount = demo }
             if let entitled = me.entitled { setEntitled(entitled) }
+            tiktok = me.tiktok
         } catch {
             // A stale counter is not worth a visible error; the next quota-carrying call fixes it.
             NSLog("StashSession: quota refresh failed: %@", String(describing: error))
@@ -426,6 +431,9 @@ final class StashSession {
         let quota: Quota?
         let demo: Bool?
         let entitled: Bool?
+        /// Absent from a server older than TikTok sign-in, null when nothing is linked; an
+        /// optional decodes both as nil rather than failing the quota alongside it.
+        let tiktok: TikTokConnection?
     }
 
     private struct SubscriptionRequest: Encodable {

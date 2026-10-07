@@ -1,10 +1,11 @@
 // VideoDetailView.swift
 //
-// A pushed detail screen, Set List style: circular back button + category pill, big Archivo
-// title, the category payload (recipe / track / code / film) under micro headers in the
-// category color, and the ink pill TikTok action with a per-video "re-run pipeline" underneath.
-// The pipeline stage list that used to sit above the actions is gone — it was a troubleshooting
-// aid, and the Import screen still shows the run as a whole.
+// A pushed detail screen, Set List style: circular back button + category pill + an ellipsis
+// menu, big Archivo title, the category payload (recipe / track / code / film) under micro
+// headers in the category color, and the ink pill TikTok action alone at the foot. The
+// per-video "Analyse again" lives in that menu, where a repair belongs; the pipeline stage
+// list that used to sit above the actions is gone — it was a troubleshooting aid, and the
+// Import screen still shows the run as a whole.
 //
 // Film is the one category that skips the embedded player: `FilmSection`'s poster strip stands
 // in for `WatchSection`, and the action pill below reads "WATCH ON TIKTOK" instead of "OPEN IN
@@ -65,7 +66,7 @@ struct VideoDetailView: View {
     // MARK: - Chrome
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             StashBackButton()
             Spacer()
             if let category = video.category {
@@ -76,8 +77,40 @@ struct VideoDetailView: View {
                     .padding(.vertical, 7)
                     .background(Capsule().strokeBorder(Color.categoryOther, lineWidth: 1.5))
             }
+            moreMenu
         }
         .padding(.top, 8)
+    }
+
+    /// Re-analysing one save is a repair, not something a reader reaches for, so it sits under
+    /// an ellipsis up here instead of competing with the TikTok pill at the foot of the screen.
+    /// The ellipsis becomes a spinner while the run is in flight — the menu closes on tap, and
+    /// the work is otherwise invisible until the payload below changes under the reader.
+    @ViewBuilder
+    private var moreMenu: some View {
+        if !isDemoLibrary {
+            Menu {
+                Button { rerun() } label: {
+                    Label("Analyse again", systemImage: "arrow.clockwise")
+                }
+                .disabled(isRerunning || budgetSpent)
+                // A re-analysis fetches the transcript again, which costs a unit. Saying so
+                // beside the greyed-out item beats an item that refuses taps without a reason.
+                if let budgetNote { Text(budgetNote) }
+            } label: {
+                Group {
+                    if isRerunning {
+                        ProgressView().controlSize(.small).tint(.stashInk)
+                    } else {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.stashInk.opacity(0.75))
+                    }
+                }
+                .minTapTarget()
+            }
+            .accessibilityLabel("More actions")
+        }
     }
 
     private var header: some View {
@@ -113,9 +146,11 @@ struct VideoDetailView: View {
         return parts.joined(separator: " · ")
     }
 
+    /// A section break has to out-measure the 18pt gap between the rows inside a section,
+    /// or the screen reads as one undivided list.
     private func sectionHeader(_ text: String) -> some View {
         Micro(text: text, size: 11, tracking: 2, color: tint)
-            .padding(.top, 20)
+            .padding(.top, 34)
     }
 
     // MARK: - Payloads
@@ -440,43 +475,21 @@ struct VideoDetailView: View {
 
     // MARK: - Actions
 
+    /// One action, since "Analyse again" moved up into the top bar's menu: the pill is now the
+    /// only thing at the foot of the screen, which is the only thing a reader wants there.
     private var actions: some View {
-        VStack(spacing: 0) {
-            Link(destination: video.url) {
-                HStack(spacing: 9) {
-                    Image(systemName: video.category == .film ? "arrow.up.right.square" : "play.rectangle")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text(video.category == .film ? "WATCH ON TIKTOK" : "OPEN IN TIKTOK")
-                        .font(.archivo(13, .heavy))
-                        .tracking(0.8)
-                }
-                .foregroundStyle(Color.stashOnInk)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(Color.stashInk, in: Capsule())
+        Link(destination: video.url) {
+            HStack(spacing: 9) {
+                Image(systemName: video.category == .film ? "arrow.up.right.square" : "play.rectangle")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(video.category == .film ? "WATCH ON TIKTOK" : "OPEN IN TIKTOK")
+                    .font(.archivo(13, .heavy))
+                    .tracking(0.8)
             }
-            if !isDemoLibrary {
-                Button {
-                    rerun()
-                } label: {
-                    HStack(spacing: 8) {
-                        Micro(text: "Re-run pipeline", size: 11, tracking: 1.2, color: .stashInk.opacity(0.45))
-                        if isRerunning { ProgressView().controlSize(.small).tint(.stashInk) }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(isRerunning || budgetSpent)
-                .opacity(budgetSpent ? 0.4 : 1)
-                .padding(.top, 14)
-                // A re-run fetches the transcript again, which costs a unit. Saying so up front
-                // beats letting the stage come back "Failed" with no reason attached.
-                if let quota, quota.remaining == 0 {
-                    Micro(text: "No budget left · \(quota.monthLimit) more on "
-                          + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted),
-                          size: 9.5, tracking: 1.2, color: .categoryOther)
-                        .padding(.top, 8)
-                }
-            }
+            .foregroundStyle(Color.stashOnInk)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(Color.stashInk, in: Capsule())
         }
         .padding(.top, 26)
     }
@@ -487,6 +500,13 @@ struct VideoDetailView: View {
     /// the read happens inside `body`.
     private var quota: Quota? { StashSession.shared.quota }
     private var budgetSpent: Bool { quota?.remaining == 0 }
+
+    /// Why "Analyse again" is greyed out, in the words the menu shows beside it.
+    private var budgetNote: String? {
+        guard let quota, quota.remaining == 0 else { return nil }
+        return "No budget left · \(quota.monthLimit) more on "
+            + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted)
+    }
 
     /// The demo library is invented content: its video ids do not resolve on TikTok, so a
     /// re-run enriches to nothing, and `PipelineRunner` reads that as deleted/private and sets

@@ -121,7 +121,7 @@ struct CookView: View {
     private var wall: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
+                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
                     .padding(.top, 14)
                     .padding(.bottom, 8)
                     .id(run.id)
@@ -185,8 +185,10 @@ struct TopicChip: View {
             }
             Micro(text: label, size: 9.5, tracking: 0.8, color: foreground)
             if let count {
+                // Quieter than the label, but an unselected chip sits on the cream page, where
+                // 9.5 pt has an ink floor of 0.62 — 0.4 of an already dimmed ink was 0.26.
                 Micro(text: "\(count)", size: 9.5, tracking: 0.4,
-                      color: foreground.opacity(isOn ? 0.6 : 0.4))
+                      color: isOn ? foreground.opacity(0.6) : .stashInk.opacity(0.62))
             }
         }
         .padding(.horizontal, 12)
@@ -321,7 +323,7 @@ struct TopicPicker: View {
                     .foregroundStyle(Color.stashInk)
                 Spacer()
                 if let count {
-                    Micro(text: "\(count)", size: 10, tracking: 0.4, color: .stashInk.opacity(0.4))
+                    Micro(text: "\(count)", size: 10, tracking: 0.4, color: .stashInk.opacity(0.62))
                 }
                 Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 15, weight: .semibold))
@@ -391,6 +393,16 @@ struct RecipeDetailView: View {
                         .font(.archivo(12, .semibold))
                         .foregroundStyle(Color.stashInk.opacity(0.5))
                         .padding(.top, 6)
+                    // Read straight out of the log rather than held in state: finishing Cook
+                    // Mode flips `isCooking`, which re-runs this body with the stamp in place.
+                    // Same day says "today", as the end of Cook Mode does — the relative style
+                    // counts seconds, and "cooked 40 seconds ago" is nobody's idea of a stamp.
+                    if let cookedAt = CookedLog.date(for: video.videoID) {
+                        let when = Calendar.current.isDateInToday(cookedAt)
+                            ? "today" : cookedAt.formatted(.relative(presentation: .named))
+                        Micro(text: "Cooked \(when)", size: 10, tracking: 1.8, color: .categoryRecipe)
+                            .padding(.top, 8)
+                    }
                     if let recipe = video.recipe {
                         ingredientsSection(recipe.ingredients)
                         methodSection(recipe.steps)
@@ -405,7 +417,10 @@ struct RecipeDetailView: View {
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .fullScreenCover(isPresented: $isCooking) {
-            CookModeView(title: video.rowTitle, steps: video.recipe?.steps ?? [])
+            CookModeView(title: video.rowTitle,
+                         steps: video.recipe?.steps ?? [],
+                         ingredients: video.recipe?.ingredients ?? [],
+                         videoID: video.videoID)
         }
     }
 
@@ -533,16 +548,38 @@ struct RecipeDetailView: View {
 // MARK: - Cook Mode (5b)
 
 /// One step per screen, readable from across the counter. The screen stays awake while open.
+///
+/// Ingredients travel with the steps: checking a quantity used to mean leaving full screen and
+/// losing your place (F15), so they sit behind a capsule here and under the step that needs
+/// them. The last step ends the session instead of dropping you back on the recipe (F38).
 struct CookModeView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
     let steps: [String]
+    let ingredients: [String]
+    let videoID: String
 
     @State private var step = 0
+    @State private var showingIngredients = false
+    @State private var finished = false
 
     private let cream = Color(hex: 0xF7F1E1)
 
+    private var currentStep: String { steps.indices.contains(step) ? steps[step] : "" }
+
     var body: some View {
+        Group {
+            if finished { finishedFrame } else { stepFrame }
+        }
+        .background(Color.categoryRecipe.ignoresSafeArea())
+        .sensoryFeedback(.success, trigger: finished)
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    // MARK: The step
+
+    private var stepFrame: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Button { dismiss() } label: {
@@ -568,18 +605,20 @@ struct CookModeView: View {
                 }
             }
             .padding(.top, 18)
+            ingredientsButton
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("\(step + 1)")
                         .font(.archivo(84, .black))
                         .foregroundStyle(cream.opacity(0.35))
-                    Text(steps.indices.contains(step) ? steps[step] : "")
+                    Text(currentStep)
                         .font(.archivo(30, .black))
                         .foregroundStyle(cream)
                         .lineSpacing(6)
+                    forThisStep
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 44)
+                .padding(.top, 28)
             }
             HStack(spacing: 12) {
                 Button {
@@ -596,7 +635,7 @@ struct CookModeView: View {
                 .disabled(step == 0)
                 .accessibilityLabel("Previous step")
                 Button {
-                    if step + 1 < steps.count { step += 1 } else { dismiss() }
+                    if step + 1 < steps.count { step += 1 } else { finish() }
                 } label: {
                     Text(step + 1 < steps.count ? "NEXT STEP" : "DONE")
                         .font(.archivo(13, .heavy))
@@ -615,10 +654,278 @@ struct CookModeView: View {
         .padding(.horizontal, 24)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .background(Color.categoryRecipe.ignoresSafeArea())
-        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .sheet(isPresented: $showingIngredients) { ingredientsSheet }
     }
+
+    /// The whole list, one sheet away, over the step rather than instead of it: `step` is this
+    /// view's own state, so the sheet cannot cost you your place.
+    @ViewBuilder
+    private var ingredientsButton: some View {
+        if !ingredients.isEmpty {
+            Button { showingIngredients = true } label: {
+                Micro(text: "Ingredients · \(ingredients.count)", size: 10, tracking: 1.8, color: cream)
+                    .padding(.horizontal, 18)
+                    .frame(height: 44)
+                    .background(Capsule().strokeBorder(cream, lineWidth: 1.5))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 16)
+            .accessibilityLabel("Ingredients, \(ingredients.count)")
+            .accessibilityHint("Shows the full list")
+        }
+    }
+
+    /// Only what this step is about, under the step itself — the answer to "how much of it?"
+    /// without leaving the step you are standing in.
+    @ViewBuilder
+    private var forThisStep: some View {
+        let used = CookMatcher.ingredients(in: currentStep, from: ingredients)
+        if !used.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                Micro(text: "For this step", size: 9.5, tracking: 1.8, color: cream.opacity(0.7))
+                ForEach(used, id: \.self) { ingredient in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Rectangle().fill(cream.opacity(0.75)).frame(width: 6, height: 6)
+                        Text(ingredient)
+                            .font(.archivo(15, .semibold))
+                            .foregroundStyle(cream.opacity(0.9))
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    private var ingredientsSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Ingredients")
+                    .font(.archivo(26, .heavy))
+                    .foregroundStyle(cream)
+                Micro(text: "\(ingredients.count) in this recipe", size: 10, tracking: 1.8,
+                      color: cream.opacity(0.75))
+                    .padding(.top, 6)
+                ForEach(ingredients, id: \.self) { ingredient in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Rectangle().fill(cream).frame(width: 8, height: 8)
+                        Text(ingredient)
+                            .font(.archivo(16, .semibold))
+                            .foregroundStyle(cream)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 10)
+                }
+                .padding(.top, 8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .background(Color.categoryRecipe.ignoresSafeArea())
+        .presentationDetents([.medium])
+    }
+
+    // MARK: The ending
+
+    /// "DONE" used to just drop you back on the recipe, which reads as the app losing interest.
+    /// The session ends on a frame that says so, and the cook is written down (F38).
+    private func finish() {
+        CookedLog.mark(videoID)
+        finished = true
+    }
+
+    private var finishedFrame: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer()
+            Image(systemName: "checkmark")
+                .font(.system(size: 32, weight: .black))
+                .foregroundStyle(Color.categoryRecipe)
+                .frame(width: 84, height: 84)
+                .background(Circle().fill(cream))
+            Text("Cooked.")
+                .font(.archivo(52, .black))
+                .foregroundStyle(cream)
+                .padding(.top, 22)
+            Text("\(title) · \(steps.count) steps")
+                .font(.archivo(15, .semibold))
+                .foregroundStyle(cream.opacity(0.85))
+                .padding(.top, 6)
+            Micro(text: "Marked as cooked · today", size: 10, tracking: 1.8, color: cream.opacity(0.7))
+                .padding(.top, 16)
+            Spacer()
+            Button { dismiss() } label: {
+                Text("Back to the recipe".uppercased())
+                    .font(.archivo(13, .heavy))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.categoryRecipe)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(cream, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+}
+
+// MARK: - Cooked log
+
+/// Which recipes you have actually cooked, and when. A flat `[videoID: Date]` in UserDefaults
+/// rather than a field on `Video`: cooking is a fact about you, not about the save, and it has
+/// to outlive a re-run of the pipeline rewriting the row it belongs to.
+enum CookedLog {
+    static let key = "cookedRecipes"
+
+    static func all(in defaults: UserDefaults = .standard) -> [String: Date] {
+        (defaults.dictionary(forKey: key) ?? [:]).compactMapValues { $0 as? Date }
+    }
+
+    static func date(for videoID: String, in defaults: UserDefaults = .standard) -> Date? {
+        all(in: defaults)[videoID]
+    }
+
+    static func mark(_ videoID: String, at date: Date = Date(), in defaults: UserDefaults = .standard) {
+        guard !videoID.isEmpty else { return }
+        var log = all(in: defaults)
+        log[videoID] = date
+        defaults.set(log, forKey: key)
+    }
+
+    #if DEBUG
+    /// Runs on every debug launch, next to the other shell asserts. Its own suite, so the
+    /// check never touches what you actually cooked.
+    static func selfTest() -> Bool {
+        let suite = "CookedLog.selfTest"
+        guard let defaults = UserDefaults(suiteName: suite) else { return false }
+        defaults.removePersistentDomain(forName: suite)
+        let when = Date(timeIntervalSince1970: 1_000)
+        mark("abc", at: when, in: defaults)
+        mark("", at: when, in: defaults)                    // an empty id is not a recipe
+        let ok = date(for: "abc", in: defaults) == when     // survives the plist round trip
+            && date(for: "xyz", in: defaults) == nil
+            && all(in: defaults).count == 1
+        defaults.removePersistentDomain(forName: suite)
+        return ok
+    }
+    #endif
+}
+
+// MARK: - Step to ingredient
+
+/// Which of the recipe's ingredients a step is actually about. Nothing links the two — the
+/// pipeline returns a list of ingredient lines and a list of step lines — so the only signal
+/// is the words: strip the amount off "100 g pecorino romano, grated" and look for what is
+/// left in the step's own text.
+///
+/// ponytail: whole-word phrase match with regular plurals — it reads words, not cooking, so a
+/// synonym ("scallion" for "spring onion") is a miss. Swap for the recipe model's own
+/// step↔ingredient links if it grows them.
+enum CookMatcher {
+    /// Units as recipes write them, so "2 tbsp olive oil" loses both the 2 and the tbsp.
+    private static let units: Set<String> = [
+        "g", "kg", "mg", "ml", "l", "dl", "cl", "oz", "lb", "lbs",
+        "tsp", "tsps", "teaspoon", "teaspoons", "tbsp", "tbsps", "tablespoon", "tablespoons",
+        "cup", "cups", "clove", "cloves", "pinch", "pinches", "dash", "dashes",
+        "handful", "handfuls", "can", "cans", "jar", "jars", "slice", "slices",
+        "stick", "sticks", "sprig", "sprigs", "piece", "pieces", "bunch", "bunches",
+    ]
+    private static let articles: Set<String> = ["a", "an", "of"]
+
+    /// The ingredient's name: no amount in front, nothing after the comma or bracket that
+    /// holds the preparation note. "100 g pecorino romano, finely grated" → "pecorino romano".
+    static func name(of ingredient: String) -> String {
+        let head = ingredient.lowercased()
+            .components(separatedBy: CharacterSet(charactersIn: ",("))
+            .first ?? ""
+        var words = head.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        while let first = words.first, isAmount(first) || units.contains(first) || articles.contains(first) {
+            words.removeFirst()
+        }
+        return words.joined(separator: " ")
+    }
+
+    /// The ingredients this step names, in the recipe's own order and in its own words — the
+    /// line is shown with its amount, which is the whole point of showing it here.
+    static func ingredients(in step: String, from ingredients: [String]) -> [String] {
+        let text = words(in: step)
+        return ingredients.filter { ingredient in
+            let name = name(of: ingredient)
+            // Two letters is noise, not a name: "1 l water" would leave "l" to match anything.
+            return name.count >= 3 && mentions(words(in: name), in: text)
+        }
+    }
+
+    /// Lowercased words, punctuation and hyphens dropped, each folded to its singular. Matching
+    /// on these rather than on the raw string is what keeps "oil" out of "bring to the boil"
+    /// and "egg" out of "eggplant", while "flat-leaf parsley" still meets "the flat leaf parsley".
+    private static func words(in text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .map(singular)
+    }
+
+    /// The regular plurals, and only those: "eggs" → "egg", "tomatoes" → "tomato". An irregular
+    /// one simply has to be written the same way in both lists.
+    private static func singular(_ word: String) -> String {
+        guard word.count > 3 else { return word }
+        for ending in ["oes", "ses", "xes", "zes", "ches", "shes"] where word.hasSuffix(ending) {
+            return String(word.dropLast(2))
+        }
+        if word.hasSuffix("ss") { return word }
+        return word.hasSuffix("s") ? String(word.dropLast()) : word
+    }
+
+    /// The name as a consecutive run of the step's words, so a two-word name stays a phrase.
+    private static func mentions(_ name: [String], in text: [String]) -> Bool {
+        guard !name.isEmpty, name.count <= text.count else { return false }
+        return (0...(text.count - name.count)).contains { start in
+            zip(name, text[start...]).allSatisfy { $0 == $1 }
+        }
+    }
+
+    /// "200", "1/2", "1½", "2-3", "200g" — an amount in any of the shapes a recipe writes it.
+    private static func isAmount(_ word: String) -> Bool {
+        let digits = CharacterSet(charactersIn: "0123456789./-¼½¾⅓⅔⅛")
+        let amount = word.prefix { $0.unicodeScalars.allSatisfy(digits.contains) }
+        guard !amount.isEmpty else { return false }
+        let unit = String(word.dropFirst(amount.count))
+        return unit.isEmpty || units.contains(unit)
+    }
+
+    #if DEBUG
+    /// Runs on every debug launch, next to the other shell asserts.
+    static func selfTest() -> Bool {
+        let list = [
+            "200 g spaghetti",
+            "100g pecorino romano, finely grated",
+            "2 tsp black pepper",
+            "a handful of flat-leaf parsley",
+            "Salt",
+        ]
+        let step = "Mash the Pecorino Romano with a splash of cool pasta water, then crack the black pepper over it."
+        return name(of: "200 g spaghetti") == "spaghetti"
+            && name(of: "100g pecorino romano, finely grated") == "pecorino romano"
+            && name(of: "a handful of flat-leaf parsley") == "flat-leaf parsley"
+            && name(of: "Salt") == "salt"
+            && name(of: "1½ cups plain flour") == "plain flour"
+            // The recipe's order and the recipe's own words, amounts included.
+            && ingredients(in: step, from: list) == ["100g pecorino romano, finely grated", "2 tsp black pepper"]
+            && ingredients(in: "Bring a large pan of water to the boil.", from: list).isEmpty
+            && ingredients(in: step, from: []).isEmpty
+            // Whole words only: a name inside a longer word is a different ingredient.
+            && ingredients(in: "Bring to the boil.", from: ["1 tbsp oil"]).isEmpty
+            && ingredients(in: "Slice the eggplant.", from: ["1 egg"]).isEmpty
+            // A regular plural is the same ingredient, and a two-word name is still a phrase.
+            && ingredients(in: "Beat the eggs.", from: ["1 egg"]) == ["1 egg"]
+            && ingredients(in: "Stir in the pecorino romano.", from: ["100g pecorino romano, finely grated"])
+                == ["100g pecorino romano, finely grated"]
+    }
+    #endif
 }
 
 #Preview("Cook wall") {
@@ -627,9 +934,18 @@ struct CookModeView: View {
 }
 
 #Preview("Cook mode") {
-    CookModeView(title: "Cacio e pepe", steps: [
-        "Toast the cracked pepper in the dry pan until fragrant.",
-        "Cook the spaghetti right in the pan, just shy of al dente.",
-        "Mash pecorino with a splash of cool pasta water into a paste.",
-    ])
+    CookModeView(
+        title: "Cacio e pepe",
+        steps: [
+            "Toast the cracked pepper in the dry pan until fragrant.",
+            "Cook the spaghetti right in the pan, just shy of al dente.",
+            "Mash pecorino with a splash of cool pasta water into a paste.",
+        ],
+        ingredients: [
+            "200 g spaghetti",
+            "100 g pecorino romano, finely grated",
+            "2 tsp black pepper, cracked",
+        ],
+        videoID: "preview"
+    )
 }

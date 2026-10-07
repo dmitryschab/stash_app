@@ -14,6 +14,8 @@ Item layout (all in the one imports table):
   PK="INSTALL#<userID>", SK="USER"          the account record
   PK="INSTALL#<userID>", SK="RT#<digest>"   mirror row, so DELETE /v1/me can find a
                                             user's refresh tokens without a GSI
+  PK="INSTALL#<userID>", SK="TIKTOK"        the linked TikTok account and its tokens
+                                            (tiktok_connect.py); at most one per user
   PK="RT#<digest>",      SK="META"          the lookup row a refresh call reads
   PK="INVITE#<code>",    SK="META"          invite code, redeemed by conditional write
 
@@ -173,6 +175,10 @@ def verify_stash_jwt(token: str) -> str:
 
 def _user_key(user_id: str) -> dict[str, str]:
     return {"PK": f"INSTALL#{user_id}", "SK": "USER"}
+
+
+def _tiktok_key(user_id: str) -> dict[str, str]:
+    return {"PK": f"INSTALL#{user_id}", "SK": "TIKTOK"}
 
 
 def _get_user(table, user_id: str) -> dict[str, Any] | None:
@@ -529,6 +535,7 @@ def get_me(user_id: str = Depends(current_user)):
     table = shared_table()
     user = _get_user(table, user_id) or {}
     quota = DynamoImportStore(table=table, user_id=user_id).get_quota()
+    tiktok = table.get_item(Key=_tiktok_key(user_id)).get("Item")
     return {
         "userID": user_id,
         "createdAt": int(user.get("createdAt", 0)),
@@ -538,6 +545,12 @@ def get_me(user_id: str = Depends(current_user)):
         "demo": bool(user.get("demo")),
         "entitled": stash_subscription.is_entitled(user),
         "subscriptionExpiresAt": int(user.get("subscriptionExpiresAt", 0) or 0),
+        # Null until the account links TikTok. Never carries a token, only what the Settings
+        # row shows. lastSyncAt and lastSyncCount are absent until the first sync delivers.
+        "tiktok": {"displayName": tiktok["displayName"], "connectedAt": int(tiktok["connectedAt"]),
+                   **{key: int(tiktok[key]) for key in ("lastSyncAt", "lastSyncCount")
+                      if key in tiktok}}
+                  if tiktok else None,
     }
 
 
@@ -615,8 +628,11 @@ def _bind_transaction(table, transaction_id: str, user_id: str) -> bool:
 @router.delete("/me", status_code=204)
 def delete_me(user_id: str = Depends(current_user)):
     """Erase the account. Required by App Store guideline 5.1.1(v)."""
+    # Imported here because tiktok_connect imports current_user from this module.
+    from tiktok_connect import revoke_tiktok
     table = shared_table()
     revoke_apple_token(table, user_id)
+    revoke_tiktok(table, user_id)
     removed = DynamoImportStore(table=table, user_id=user_id).delete_user_items()
     for key in removed:
         # The mirror row's SK is the lookup row's PK, so no extra bookkeeping is needed.
@@ -639,6 +655,9 @@ def _export_items(store: DynamoImportStore) -> Iterator[dict[str, Any]]:
         if item.get("SK", "").startswith("RT#"):
             continue  # session credentials are not user data
         item.pop("appleRefreshToken", None)
+        if item.get("SK") == "TIKTOK":
+            item.pop("accessToken", None)
+            item.pop("refreshToken", None)
         yield item
 
 

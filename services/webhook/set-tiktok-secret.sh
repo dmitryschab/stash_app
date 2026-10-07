@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Puts TIKTOK_CLIENT_SECRET into the Secrets Manager blob and turns webhook signature
-# verification on. Run it from this directory; it prompts for the secret with the echo off,
-# so the value never reaches your scrollback, this repo, or an agent transcript.
+# Puts TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET into the Secrets Manager blob. The secret
+# also turns webhook signature verification on. Run it from this directory; it prompts for the
+# secret with the echo off, so the value never reaches your scrollback, this repo, or an agent
+# transcript. The key is public (it ships in the app's Info.plist): pass it as TIKTOK_CLIENT_KEY
+# or type it when asked.
 #
 # It MERGES. The blob also holds STASH_JWT_SECRET, GROQ_API_KEY and the Apple trio, and a
 # put-secret-value that dropped any of them takes the service down — every authenticated
@@ -25,16 +27,20 @@ else
   echo
 fi
 [ -n "$TIKTOK_CLIENT_SECRET" ] || { echo "empty — nothing written"; exit 1; }
+[ -n "${TIKTOK_CLIENT_KEY:-}" ] || read -rp "TikTok client key (not secret; developers.tiktok.com -> your app -> Basic information): " TIKTOK_CLIENT_KEY
+[ -n "$TIKTOK_CLIENT_KEY" ] || { echo "empty client key — nothing written"; exit 1; }
 
 echo ">>> merging into $SECRET_ID"
 merged=$(
   aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --query SecretString --output text \
-  | TIKTOK_CLIENT_SECRET="$TIKTOK_CLIENT_SECRET" python3 -c '
+  | TIKTOK_CLIENT_KEY="$TIKTOK_CLIENT_KEY" TIKTOK_CLIENT_SECRET="$TIKTOK_CLIENT_SECRET" python3 -c '
 import json, os, sys
 before = json.load(sys.stdin)
-after = dict(before)
-after["TIKTOK_CLIENT_SECRET"] = os.environ["TIKTOK_CLIENT_SECRET"]
-missing = [k for k in before if k not in after or after[k] != before[k]]
+updates = {k: os.environ[k] for k in ("TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET")}
+after = {**before, **updates}
+# Every key but the two being set must come through untouched. The two are exempt because the
+# blob may already hold an older value (the production secret, or a previous run).
+missing = [k for k in before if k not in after or (k not in updates and after[k] != before[k])]
 if missing:                       # belt and braces: a merge that lost a key must not be written
     sys.exit("refusing to write, these keys would change: %s" % missing)
 print(json.dumps(after))

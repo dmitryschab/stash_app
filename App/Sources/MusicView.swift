@@ -101,6 +101,12 @@ enum MusicShelfItem: Identifiable {
         case .list: false     // a list is never "the whole album"
         }
     }
+    var isList: Bool {
+        switch self {
+        case .album: false
+        case .list: true
+        }
+    }
     var coverageLabel: String {
         switch self {
         case .album(let album): album.coverageLabel
@@ -281,9 +287,25 @@ struct MusicView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     @State private var store = AlbumStore()
     @State private var sorting: Sorting = .recent
+    @State private var focus: Filter = .all
 
+    /// The two orders the menu offers. Narrowing the wall is the chips' job — see `Filter`.
     enum Sorting: String, CaseIterable {
-        case recent = "Recent", mostSaved = "Most saved", wholeAlbums = "Whole albums"
+        case recent = "Recent", mostSaved = "Most saved"
+    }
+
+    /// The chip row, and only distinctions the wall already makes: an album whose every track
+    /// is saved, and a clip that recommended several releases at once.
+    enum Filter: String, CaseIterable {
+        case all = "all", wholeAlbums = "whole albums", lists = "lists"
+
+        func matches(_ item: MusicShelfItem) -> Bool {
+            switch self {
+            case .all: true
+            case .wholeAlbums: item.isWhole
+            case .lists: item.isList
+            }
+        }
     }
 
     private var musicSaves: [Video] {
@@ -294,29 +316,39 @@ struct MusicView: View {
         shelfItems(musicSaves, refs: store.refs)
     }
 
-    private func shelf(_ items: [MusicShelfItem]) -> [MusicShelfItem] {
+    /// Chips filter, the menu sorts. Static so the self-test can drive it without a view.
+    static func shelf(_ items: [MusicShelfItem], filter: Filter, sorting: Sorting) -> [MusicShelfItem] {
+        let shown = items.filter(filter.matches)
         switch sorting {
         case .recent:
-            items.sorted { $0.latestSave > $1.latestSave }
+            return shown.sorted { $0.latestSave > $1.latestSave }
         case .mostSaved:
-            items.sorted { ($0.saveCount, $0.latestSave) > ($1.saveCount, $1.latestSave) }
-        case .wholeAlbums:
-            items.filter(\.isWhole).sorted { $0.latestSave > $1.latestSave }
+            return shown.sorted { ($0.saveCount, $0.latestSave) > ($1.saveCount, $1.latestSave) }
         }
+    }
+
+    /// The filter the wall obeys. A chip is only offered while it has something to show, so a
+    /// filter whose last record went away falls back to "all" rather than blanking the wall.
+    static func offered(_ filter: Filter, in items: [MusicShelfItem]) -> Filter {
+        filter == .all || items.contains(where: filter.matches) ? filter : .all
     }
 
     var body: some View {
         NavigationStack {
             StashScrollView(tab: .music) {
+                // Folded once per pass: the header, the chips and the wall all read the same
+                // records under the same filter.
                 let items = allItems
+                let filter = Self.offered(focus, in: items)
+                let shown = Self.shelf(items, filter: filter, sorting: sorting)
                 VStack(alignment: .leading, spacing: 0) {
-                    StashHeader(title: "Music", trailing: "\(items.count) records · \(musicSaves.count) saves")
+                    StashHeader(title: "Music", trailing: trailing(items: items, shown: shown, filter: filter))
                         .padding(.top, 8)
-                    chips.padding(.top, 14)
                     if musicSaves.isEmpty {
                         emptyState.padding(.top, 48)
                     } else {
-                        mosaic(shelf(items)).padding(.top, 22)
+                        shelfHeader(items: items, filter: filter).padding(.top, 14)
+                        mosaic(shown).padding(.top, 22)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -329,28 +361,57 @@ struct MusicView: View {
         .onDisappear { PreviewPlayer.shared.stop() }
     }
 
-    private var chips: some View {
+    /// Cook's rule for the header: totals until a chip is on, then how much of the wall it left.
+    private func trailing(items: [MusicShelfItem], shown: [MusicShelfItem], filter: Filter) -> String {
+        guard filter != .all else {
+            return "\(items.count) records · \(musicSaves.count) saves"
+        }
+        return "\(shown.count) of \(items.count)"
+    }
+
+    /// The wall's section header. The mosaic is one run with no month headings, so this row is
+    /// the only header it has: the filter chips, and the one sort menu at its trailing end.
+    private func shelfHeader(items: [MusicShelfItem], filter: Filter) -> some View {
+        HStack(spacing: 8) {
+            chips(items: items, filter: filter)
+            sortMenu
+        }
+    }
+
+    private func chips(items: [MusicShelfItem], filter: Filter) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(Sorting.allCases, id: \.self) { option in
-                    let isOn = sorting == option
-                    Button { sorting = option } label: {
-                        Micro(text: option.rawValue, size: 9.5, tracking: 0.8,
-                              color: isOn ? .stashOnInk : .stashInk.opacity(0.65))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background {
-                                if isOn {
-                                    Capsule().fill(Color.stashInk)
-                                } else {
-                                    Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2)
-                                }
-                            }
+                ForEach(Filter.allCases, id: \.self) { option in
+                    let count = items.filter(option.matches).count
+                    // A chip that can only show an empty wall is not a filter.
+                    if option == .all || count > 0 {
+                        TopicChip(label: option.rawValue,
+                                  count: option == .all ? nil : count,
+                                  unit: "records", isOn: filter == option) {
+                            focus = filter == option ? .all : option
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
+    }
+
+    /// Chips filter, the menu sorts — the same split as Haul's list heading.
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort records", selection: $sorting) {
+                ForEach(Sorting.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Micro(text: sorting.rawValue, size: 9.5, tracking: 0.8, color: .stashInk.opacity(0.65))
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(Color.stashInk.opacity(0.65))
+            }
+            .minTapTarget()
+        }
+        .accessibilityLabel("Sort records, \(sorting.rawValue)")
     }
 
     /// A list cell deliberately gets no single cover: it stands for several releases at once,
@@ -416,6 +477,41 @@ struct MusicView: View {
             offersImport: videos.isEmpty
         )
     }
+
+    #if DEBUG
+    /// The wall's one piece of arithmetic: chips narrow, the menu orders, and a filter that has
+    /// run out hands the wall back rather than leaving it blank with no chip to tap.
+    static func selfTest() -> Bool {
+        func video(_ id: String, at seconds: TimeInterval) -> Video {
+            Video(videoID: id, url: URL(string: "https://www.tiktok.com/@a/video/\(id)")!,
+                  bookmarkedAt: Date(timeIntervalSince1970: seconds))
+        }
+        func album(_ id: String, trackCount: Int?, saves: [(String, TimeInterval)]) -> MusicShelfItem {
+            .album(MusicAlbum(
+                id: id, title: id, artist: "artist", year: nil, trackCount: trackCount,
+                collectionID: nil, albumURL: nil,
+                saves: saves.map { .init(video: video(id + $0.0, at: $0.1), trackName: $0.0, trackNumber: nil) }
+            ))
+        }
+        let whole = album("whole", trackCount: 2, saves: [("a", 100), ("b", 200)])
+        let part = album("part", trackCount: 4, saves: [("a", 300)])
+        let single = album("single", trackCount: nil, saves: [("a", 50), ("b", 60), ("c", 70)])
+        let list = MusicShelfItem.list(MusicList(video: video("list", at: 10), picks: [
+            MusicPick(kind: .album, title: "one"), MusicPick(kind: .album, title: "two"),
+        ]))
+        let items = [whole, part, single]
+        return shelf(items, filter: .all, sorting: .recent).map(\.id)
+                == ["album:part", "album:whole", "album:single"]         // newest save first
+            && shelf(items, filter: .all, sorting: .mostSaved).map(\.id)
+                == ["album:single", "album:whole", "album:part"]         // most clips first
+            && shelf(items, filter: .wholeAlbums, sorting: .recent).map(\.id) == ["album:whole"]
+            && shelf(items + [list], filter: .lists, sorting: .recent).map(\.id) == ["list:list"]
+            && list.isList && !list.isWhole && !whole.isList             // a list is never whole
+            && offered(.lists, in: items) == .all                        // nothing left to show
+            && offered(.lists, in: items + [list]) == .lists
+            && offered(.wholeAlbums, in: [part]) == .all
+    }
+    #endif
 }
 
 /// One mosaic cell: the sleeve plus its coverage caption.
@@ -429,9 +525,9 @@ private struct SleeveTile: View {
             SleeveArt(title: item.title, artist: item.artist, artwork: artwork, strip: strip)
             HStack {
                 Micro(text: item.coverageLabel, size: 9.5, tracking: 1.1,
-                      color: item.isWhole ? .categoryOther : .stashInk.opacity(0.55))
+                      color: item.isWhole ? .categoryOther : .stashInk.opacity(0.62))
                 Spacer()
-                Micro(text: item.clipsLabel, size: 9.5, tracking: 1.1, color: .stashInk.opacity(0.45))
+                Micro(text: item.clipsLabel, size: 9.5, tracking: 1.1, color: .stashInk.opacity(0.62))
             }
             .padding(.horizontal, 2)
         }
@@ -527,7 +623,7 @@ struct SleeveArt: View {
                             .minimumScaleFactor(0.5)
                             .lineLimit(3)
                             .foregroundStyle(style.foreground)
-                        Micro(text: artist, size: 8.5, tracking: 1.8,
+                        Micro(text: artist, size: 9.5, tracking: 1.8,
                               color: style.foreground.opacity(0.75))
                             .lineLimit(1)
                     }
@@ -564,7 +660,7 @@ struct SleeveStrip: View {
             }
             if sleeves.count > 4 {
                 Text("+\(sleeves.count - 4)")
-                    .font(.archivo(8, .heavy))
+                    .font(.archivo(9.5, .heavy))
                     .foregroundStyle(foreground)
                     .frame(width: Self.size, height: Self.size)
                     .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.22)))
@@ -662,7 +758,7 @@ struct AlbumDetailView: View {
                 .multilineTextAlignment(.center)
             Micro(
                 text: album.artist + (album.year.map { " · \($0)" } ?? ""),
-                size: 10, tracking: 1.8, color: .stashInk.opacity(0.5)
+                size: 10, tracking: 1.8, color: .stashInk.opacity(0.62)
             )
             Micro(text: coverageLine, size: 9.5, tracking: 1.2, color: .categoryRecipe)
                 .padding(.top, 4)
@@ -707,6 +803,10 @@ struct AlbumDetailView: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
+                        // The row opens the clip in TikTok, so it wears the outbound arrow.
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.stashInk.opacity(0.62))
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
@@ -739,7 +839,7 @@ struct AlbumDetailView: View {
         if let collectionID = album.collectionID {
             VStack(alignment: .leading, spacing: 4) {
                 Micro(text: "Tracklist" + (album.trackCount.map { " · \($0)" } ?? ""),
-                      size: 10, tracking: 2, color: .stashInk.opacity(0.45))
+                      size: 10, tracking: 2, color: .stashInk.opacity(0.62))
                 if let tracklist {
                     VStack(spacing: 0) {
                         ForEach(Array(tracklist.enumerated()), id: \.offset) { index, name in
@@ -786,10 +886,11 @@ struct AlbumDetailView: View {
             Spacer(minLength: 0)
             if let save {
                 Link(destination: save.video.url) {
-                    Micro(text: "▶\u{FE0E} Clip", size: 8.5, tracking: 1, color: .categoryRecipe)
+                    Micro(text: "▶\u{FE0E} Clip", size: 9.5, tracking: 1, color: .categoryRecipe)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Capsule().strokeBorder(Color.categoryRecipe, lineWidth: 1.2))
+                        .minTapTarget()
                 }
                 .accessibilityLabel("Open the clip for \(name)")
             }
@@ -899,7 +1000,7 @@ struct MusicListDetailView: View {
                 .font(.archivo(27, .black))
                 .foregroundStyle(Color.stashInk)
                 .multilineTextAlignment(.center)
-            Micro(text: bylines, size: 10, tracking: 1.8, color: .stashInk.opacity(0.5))
+            Micro(text: bylines, size: 10, tracking: 1.8, color: .stashInk.opacity(0.62))
             Micro(text: "\(list.picks.count) releases · saved in "
                   + list.video.bookmarkedAt.formatted(.dateTime.month(.wide)),
                   size: 9.5, tracking: 1.2, color: .categoryRecipe)
@@ -954,8 +1055,8 @@ struct MusicListDetailView: View {
                                 .font(.archivo(13.5, .bold))
                                 .foregroundStyle(Color.stashInk)
                                 .lineLimit(2)
-                            Micro(text: subtitle(for: pick), size: 9, tracking: 1.2,
-                                  color: .stashInk.opacity(0.5))
+                            Micro(text: subtitle(for: pick), size: 9.5, tracking: 1.2,
+                                  color: .stashInk.opacity(0.62))
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -1157,7 +1258,9 @@ struct PreviewButton: View {
             }
             .frame(width: size, height: size)
             .background(Circle().fill(Color.black.opacity(isMissing ? 0.3 : 0.6)))
-            .padding(5)                     // the wall's 34 pt disc gets a 44 pt target
+            // Pads the target, not the disc: every size this is drawn at — 34 on the wall, 26
+            // and 24 and 22 in the tracklists — reaches the 44 pt minimum.
+            .padding(max(5, (44 - size) / 2))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

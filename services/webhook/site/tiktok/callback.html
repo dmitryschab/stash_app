@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash — connecting TikTok</title>
+<link rel="icon" type="image/png" href="/assets/stash-logo-clean.png">
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --surface: #ffffff;
+    --text: #1b1b22;
+    --muted: #5b5b68;
+    --border: #e6e6ec;
+    --maxw: 760px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101014;
+      --surface: #17171d;
+      --text: #ecedf2;
+      --muted: #a2a2b0;
+      --border: #26262f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+  header { border-bottom: 1px solid var(--border); background: var(--surface); }
+  .bar { display: flex; align-items: center; height: 62px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 1.12rem; letter-spacing: -0.01em; }
+  .brand img { width: 24px; height: 30px; object-fit: contain; display: block; }
+  p { color: var(--muted); font-size: 1.08rem; margin: 54px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <div class="brand">
+      <img src="/assets/stash-logo-clean.png" alt="" aria-hidden="true">
+      <a href="/">Stash</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <p>Open Stash to finish connecting TikTok.</p>
+</main>
+</body>
+</html>

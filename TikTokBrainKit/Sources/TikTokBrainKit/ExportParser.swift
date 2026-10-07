@@ -7,11 +7,10 @@ import Foundation
 /// collects every array whose key matches `(?i)favou?rite.*video` and whose
 /// items are objects carrying `Date`/`date` and `Link`/`link` fields.
 ///
-/// Zip handling is intentionally out of scope for the prototype: `Process`/
-/// `unzip` is unavailable on iOS. Callers extract the archive and pass either
-/// the raw JSON (`parse(jsonData:)`) or the extracted directory
-/// (`parse(zipAt:)`, which scans it for `*.json`). Passing an actual zip file
-/// throws `CocoaError(.fileReadUnknown)`.
+/// The zip TikTok hands over is read as it is: `parse(zipAt:)` takes the raw
+/// archive, an already-extracted directory, or a single JSON file, so nobody
+/// has to unpack anything first. `ZipReader` does the archive walk — see its
+/// ceiling there — and every JSON member merges the way directory files do.
 public struct ExportParser {
     public init() {}
 
@@ -21,12 +20,14 @@ public struct ExportParser {
         return bookmarks(from: collectFavoriteItems(in: root))
     }
 
-    /// Parse bookmarks from an extracted export.
+    /// Parse bookmarks from an export.
     ///
     /// - A directory is scanned (non-recursively) for `*.json` files, which are
     ///   parsed and merged.
     /// - A single `*.json` file is parsed directly.
-    /// - Any other file (e.g. an actual `.zip`) throws `CocoaError(.fileReadUnknown)`.
+    /// - A zip has its `*.json` members read and merged the same way; one that
+    ///   cannot be read throws `CocoaError(.fileReadCorruptFile)`.
+    /// - Any other file throws `CocoaError(.fileReadUnknown)`.
     public func parse(zipAt url: URL) throws -> [Bookmark] {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
@@ -50,8 +51,24 @@ public struct ExportParser {
             return try parse(jsonData: Data(contentsOf: url))
         }
 
-        // Real zip extraction is not supported in the prototype (see doc comment).
+        if url.pathExtension.lowercased() == "zip" || Self.startsWithZipMagic(url) {
+            var items: [[String: Any]] = []
+            for member in try ZipReader.jsonMembers(of: url) {
+                let root = try JSONSerialization.jsonObject(with: member, options: [])
+                items.append(contentsOf: collectFavoriteItems(in: root))
+            }
+            return bookmarks(from: items)
+        }
+
         throw CocoaError(.fileReadUnknown)
+    }
+
+    /// The local file header magic every zip opens with, so an export that reached the picker
+    /// without its extension — saved from Mail, renamed, handed over by another app — still reads.
+    private static func startsWithZipMagic(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 4)) == Data([0x50, 0x4B, 0x03, 0x04])
     }
 
     // MARK: - Tree walk
@@ -106,7 +123,9 @@ public struct ExportParser {
 
     // MARK: - Build & de-duplicate
 
-    private func bookmarks(from items: [[String: Any]]) -> [Bookmark] {
+    /// Not private: the TikTok sync's favourites (`TikTokConnectClient.sync`) come through
+    /// here too, so a synced favourite and an exported one are the same `Bookmark`.
+    func bookmarks(from items: [[String: Any]]) -> [Bookmark] {
         let formatter = Self.makeDateFormatter()
         var newestByID: [String: Bookmark] = [:]
         for object in items {

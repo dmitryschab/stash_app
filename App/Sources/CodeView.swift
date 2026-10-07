@@ -1,10 +1,11 @@
 // CodeView.swift
 //
 // The Code tab: every coding save, links first. Coding saves are screencasts and talking
-// heads, so Cook's photo wall would say nothing here — rows carry the tech tag and the link
-// count instead, and the up-right arrow marks the saves that actually lead somewhere. Built
-// on Cook's bones: StashHeader, tag chips (TopicChip / TopicPicker over CodeData.techTags),
-// a featured card for the newest save, month runs with the TimeRail.
+// heads, so Cook's photo wall would say nothing here — rows carry the tech tag and a link
+// glyph with its count instead. Every row and the featured card push the save's page, so
+// they all wear a chevron; the links live on that page. Built on Cook's bones: StashHeader,
+// tag chips (TopicChip / TopicPicker over CodeData.techTags), a featured card for the newest
+// save, month runs with the TimeRail.
 
 import SwiftUI
 import SwiftData
@@ -145,7 +146,8 @@ struct CodeView: View {
                         .background(Capsule().strokeBorder(Color.stashOnAccent.opacity(0.5), lineWidth: 1.2))
                 }
                 Spacer()
-                Image(systemName: "arrow.up.right")
+                // The card opens the save's page inside Stash, so it is a chevron.
+                Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Color.stashOnAccent)
                     .frame(width: 32, height: 32)
@@ -160,7 +162,7 @@ struct CodeView: View {
     private var rows: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.45))
+                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
                     .padding(.top, 18)
                     .padding(.bottom, 4)
                     .id(run.id)
@@ -190,8 +192,9 @@ struct CodeView: View {
 // MARK: - Row
 
 /// Compact row: the first tech tag in green, then what the save holds — "checklist · 20",
-/// "6 tools" — falling back to the link count, then the author when the save points nowhere.
-/// The green up-right arrow is the tell for a save with links.
+/// "6 tools" — falling back to the author when the save has nothing else to say. A green link
+/// glyph with its count says the save carries links; the row itself pushes the save's page,
+/// which is where those links are, so its glyph is a chevron.
 private struct CodeRow: View {
     let video: Video
 
@@ -210,26 +213,40 @@ private struct CodeRow: View {
                     if let tag {
                         Micro(text: tag, size: 10, tracking: 1.2, color: .categoryCoding)
                     }
-                    Text(meta(label: note?.shelfLabel, links: links, tagged: tag != nil))
-                        .font(.archivo(12))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
-                        .lineLimit(1)
+                    let meta = meta(label: note?.shelfLabel, tagged: tag != nil)
+                    if !meta.isEmpty {
+                        Text(meta)
+                            .font(.archivo(12))
+                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                    if links > 0 { linkMark(links) }
                 }
             }
             Spacer(minLength: 0)
-            Image(systemName: links > 0 ? "arrow.up.right" : "chevron.right")
-                .font(.system(size: links > 0 ? 14 : 12, weight: .bold))
-                .foregroundStyle(links > 0 ? Color.categoryCoding : Color.stashInk.opacity(0.4))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.stashInk.opacity(0.4))
         }
         .padding(.vertical, 9)
     }
 
-    private func meta(label: String?, links: Int, tagged: Bool) -> String {
+    /// "Carries links" is a property of the save, not a door out of the app — a glyph, never
+    /// the outbound arrow.
+    private func linkMark(_ links: Int) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "link").font(.system(size: 9, weight: .bold))
+            Text("\(links)").font(.archivo(12))
+        }
+        .foregroundStyle(Color.categoryCoding)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(links) link\(links == 1 ? "" : "s")")
+    }
+
+    private func meta(label: String?, tagged: Bool) -> String {
         let tail: String
         if let label {
             tail = label
-        } else if links > 0 {
-            tail = "\(links) link\(links == 1 ? "" : "s")"
         } else if !video.author.isEmpty {
             tail = "@\(video.author)"
         } else {

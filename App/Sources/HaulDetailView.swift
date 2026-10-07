@@ -269,10 +269,10 @@ struct HaulDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
             refreshStatus
-            if let first = offers.first {
-                Link(destination: first.url) {
+            if let primary = Self.primaryOffer(offers) {
+                Link(destination: primary.offer.url) {
                     HStack(spacing: 8) {
-                        Text("View at \(first.merchant)")
+                        Text(primary.label)
                         Image(systemName: "arrow.up.right")
                     }
                     .font(.archivo(15, .bold))
@@ -284,6 +284,7 @@ struct HaulDetailView: View {
                     .background(Color.stashInk, in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(primary.spoken)
                 .padding(.top, 12)
             }
         case .offers(_, let checkedAt):
@@ -339,6 +340,34 @@ struct HaulDetailView: View {
                 .padding(.top, 8)
             retryButton
         }
+    }
+
+    /// Where the page's one filled button goes, what it says, and what VoiceOver hears.
+    ///
+    /// The server ranks the country's own Amazon or the brand's own store first, which is not
+    /// always the cheapest — and when it is not, a button repeating row 0 sends the user to a
+    /// price they could have beaten one row down. So the button names the cheapest offer only
+    /// when that offer is not the one already ranked first; the ordinary case, cheapest pinned
+    /// at the top, keeps "View at" exactly as it was.
+    static func primaryOffer(_ offers: [HaulOffer]) -> (offer: HaulOffer, label: String, spoken: String)? {
+        guard let first = offers.first else { return nil }
+        guard let cheapest = comparableCheapest(offers), cheapest != first else {
+            return (first, "View at \(first.merchant)", "View at \(first.merchant)")
+        }
+        // The visible label spends its words on the price, so the spoken one names the shop.
+        return (cheapest, "Buy the cheapest — \(cheapest.price)",
+                "Buy the cheapest, \(cheapest.price), at \(cheapest.merchant)")
+    }
+
+    /// The cheapest offer, or nil when "cheapest" would be a claim the numbers do not support:
+    /// one offer only, two currencies in the same list, no currency at all, or a price the
+    /// search could not put a number on. `amount` is the server's own number — nothing here
+    /// parses a price string.
+    private static func comparableCheapest(_ offers: [HaulOffer]) -> HaulOffer? {
+        guard offers.count > 1, let currency = offers.first?.currency, !currency.isEmpty,
+              offers.allSatisfy({ $0.currency == currency && $0.amount > 0 })
+        else { return nil }
+        return offers.min { $0.amount < $1.amount }   // a tie keeps the server's order
     }
 
     private func offerCard(_ offers: [HaulOffer]) -> some View {
@@ -452,9 +481,7 @@ struct HaulDetailView: View {
                     Link(destination: url) { Label("Search \(shop.label)", systemImage: "magnifyingglass") }
                 }
             }
-            if let link = pick.link {
-                Link("Open the link from the video", destination: link)
-            }
+            // The video's own link lives in the top bar's menu; one place is enough.
         } label: {
             Text("Search other stores")
                 .font(.archivo(13, .semibold))
@@ -499,6 +526,34 @@ struct HaulDetailView: View {
         .accessibilityLabel("Watch \(video.rowTitle)\(video.author.isEmpty ? "" : " by @\(video.author)")")
         .padding(.top, 8)
     }
+
+    #if DEBUG
+    /// The one button that leaves Stash has to go where its words say, and "cheapest" is the
+    /// only claim this page makes on its own — everything else is the server's ranking passed
+    /// through. So the claim gets a launch-time check.
+    static func selfTest() -> Bool {
+        func offer(_ merchant: String, _ amount: Double, _ currency: String = "EUR") -> HaulOffer {
+            HaulOffer(merchant: merchant, url: URL(string: "https://\(merchant).example")!,
+                      price: "\(currency) \(amount)", amount: amount, currency: currency)
+        }
+        let cheaperBelow = [offer("Amazon", 99), offer("Logitech", 94.99)]
+        let cheapestFirst = [offer("Amazon", 94.99), offer("Logitech", 99)]
+        let mixed = [offer("Amazon", 99), offer("Logitech", 80, "USD")]
+        let unpriced = [offer("Amazon", 99), offer("Logitech", 0)]
+        let noCurrency = [offer("Amazon", 99, ""), offer("Logitech", 80, "")]
+        let tied = [offer("Amazon", 94.99), offer("Logitech", 94.99)]
+        return primaryOffer([]) == nil
+            && primaryOffer([offer("Amazon", 99)])?.label == "View at Amazon"
+            && primaryOffer(cheaperBelow)?.offer.merchant == "Logitech"
+            && primaryOffer(cheaperBelow)?.label == "Buy the cheapest — EUR 94.99"
+            && primaryOffer(cheaperBelow)?.spoken == "Buy the cheapest, EUR 94.99, at Logitech"
+            && primaryOffer(cheapestFirst)?.label == "View at Amazon"  // ranked first is already cheapest
+            && primaryOffer(mixed)?.label == "View at Amazon"          // two currencies do not compare
+            && primaryOffer(unpriced)?.label == "View at Amazon"       // a price with no number behind it
+            && primaryOffer(noCurrency)?.label == "View at Amazon"     // no currency to compare in
+            && primaryOffer(tied)?.offer.merchant == "Amazon"          // a tie keeps the server's order
+    }
+    #endif
 }
 
 // MARK: - Shopping country

@@ -11,7 +11,9 @@
 // answers offline, what answers while the box is thinking, and what answers for a save the
 // embedding backfill has not reached yet.
 //
-// `SearchGrip` is the gesture arithmetic, kept out of the view so it can be checked.
+// `SearchGrip` is the gesture arithmetic and `SearchSuggestions` is what an empty field offers
+// — this library's own most-used topics, under the queries that already went somewhere. Both
+// are kept out of the view so they can be checked.
 
 import SwiftUI
 import SwiftData
@@ -58,6 +60,15 @@ struct SearchOverlay: View {
     /// The current query's vector, or nil while it is being typed, being fetched, or unavailable.
     /// Nil is not an error state — it is the lexical-only mode the whole screen degrades to.
     @State private var queryEmbedding: [Float]?
+    /// The query whose embedding attempt has finished — succeeded, failed or come back empty.
+    /// A plain in-flight Bool raced: a cancelled run resumes after its replacement has already
+    /// started, and clears the flag the new run just set. A query stamp cannot, because only
+    /// the run that owns the query writes it.
+    @State private var embeddedQuery: String?
+
+    /// The queries this field has sent somewhere, newest first, up to five. One `\n`-joined
+    /// string because `@AppStorage` has no array of strings and five queries do not want a file.
+    @AppStorage("recentSearches") private var recentSearchesRaw = ""
 
     /// The library flattened for scoring, and the last scoring over it. Both are filled off the
     /// main thread; a render only maps ids back onto rows.
@@ -81,13 +92,19 @@ struct SearchOverlay: View {
                         emptyLibrary.padding(.top, 44)
                     } else if trimmedQuery.isEmpty {
                         suggestions.padding(.top, 22)
-                    } else if results.isEmpty, scoredQuery == trimmedQuery {
-                        Text("No saves matched.")
-                            .font(.archivo(14, .semibold))
-                            .foregroundStyle(Color.stashInk.opacity(0.55))
-                            .padding(.top, 24)
                     } else {
-                        resultRows.padding(.top, 8)
+                        // The answer is only final once the scorer has caught up with the
+                        // field, the index exists, and the meaning half has landed. Until
+                        // then the rows below are a first pass, and the line above says so.
+                        if let label = settlingLabel { settlingRow(label).padding(.top, 14) }
+                        if results.isEmpty, !isSettling {
+                            Text("No saves matched.")
+                                .font(.archivo(14, .semibold))
+                                .foregroundStyle(Color.stashInk.opacity(0.62))
+                                .padding(.top, 24)
+                        } else {
+                            resultRows.padding(.top, 8)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -115,14 +132,30 @@ struct SearchOverlay: View {
     private func embedQuery() async {
         let text = trimmedQuery
         queryEmbedding = nil
+        embeddedQuery = nil
         guard !text.isEmpty else { return }
         try? await Task.sleep(nanoseconds: 400_000_000)
         guard !Task.isCancelled else { return }
 
         let client = BoxEmbeddingClient(config: PipelineCenter.currentConfig())
+        // The Kit gives this request 30 seconds (`boxRequestTimeout`), plus a 401 refresh
+        // retry on top — far too long to sit on a verdict the lexical half already has. The
+        // deadline stamps the same query the run itself would stamp, so a late answer is
+        // still applied and still rescores; only the waiting stops.
+        // ponytail: a fixed 6 s, not a measured p95 of the box. It is the number that keeps
+        // "No saves matched." honest on a working box and unblocked on a hung one.
+        let deadline = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            embeddedQuery = text
+        }
+        defer { deadline.cancel() }
+
         let vectors = try? await client.embed([text])
         guard !Task.isCancelled else { return }
         queryEmbedding = vectors?.first
+        // Settled either way: a nil vector is the lexical-only answer, not a pending one.
+        embeddedQuery = text
     }
 
     // MARK: - Matching
@@ -130,6 +163,24 @@ struct SearchOverlay: View {
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Why the rows on screen are still provisional, or nil once they are the answer. Three
+    /// waits, two of which the user has no reason to tell apart: the scorer catching up with
+    /// the field and the index being built are both just "searching", while the round trip to
+    /// the box is the one worth naming — it is the wait that can add results after a screen
+    /// has already settled into looking empty.
+    ///
+    /// All three used to read as "No saves matched." — an answer, and a wrong one, for the
+    /// second or so an index build plus a 400 ms debounce plus a round trip takes. A
+    /// meaning-only hit (no word in common) arrives on exactly that last step.
+    private var settlingLabel: String? {
+        guard !trimmedQuery.isEmpty else { return nil }
+        if scoredQuery != trimmedQuery || index.isEmpty { return "Searching…" }
+        if embeddedQuery != trimmedQuery { return "Also checking by meaning…" }
+        return nil
+    }
+
+    private var isSettling: Bool { settlingLabel != nil }
 
     private struct Hit: Identifiable {
         let video: Video
@@ -204,13 +255,59 @@ struct SearchOverlay: View {
         )
     }
 
+    /// The one line the screen shows while it is still working. No percentage, no stage name —
+    /// the results underneath are already usable, this only says more may arrive.
+    private func settlingRow(_ label: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.stashInk.opacity(0.62))
+            Micro(text: label, size: 10, tracking: 1.4)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label.replacingOccurrences(of: "…", with: ""))
+    }
+
+    /// What an empty field offers: the queries that went somewhere, then the words this library
+    /// actually uses. The three canned chips this replaces promised results that could only
+    /// exist in someone else's library.
     private var suggestions: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Micro(text: "Try asking", size: 10, tracking: 1.8)
-            FlowChips(
-                chips: ["Songs like Midnight City", "Dinner under 20 min", "That Swift trick"],
-                onTap: { query = $0 }
-            )
+        let recents = self.recents
+        let topics = SearchSuggestions.topTopics(in: videos, limit: 5)
+        return VStack(alignment: .leading, spacing: 10) {
+            if !recents.isEmpty {
+                Micro(text: "Recent", size: 10, tracking: 1.8)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(recents, id: \.self) { recent in
+                        Button { query = recent } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "clock")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color.stashInk.opacity(0.5))
+                                Text(recent)
+                                    .font(.archivo(14, .semibold))
+                                    .foregroundStyle(Color.stashInk)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(height: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if !topics.isEmpty {
+                Micro(text: "From your saves", size: 10, tracking: 1.8)
+                    .padding(.top, recents.isEmpty ? 0 : 10)
+                FlowChips(chips: topics.map(\.topic), onTap: { query = $0 })
+            }
+            if recents.isEmpty, topics.isEmpty {
+                // A library with saves but no topics yet — say what the field reaches rather
+                // than leaving the screen blank under its own title.
+                Micro(text: "Search titles, captions, transcripts and on-screen words",
+                      size: 10, tracking: 1.2)
+            }
         }
     }
 
@@ -219,9 +316,28 @@ struct SearchOverlay: View {
             ForEach(results) { hit in
                 NavigationLink { VideoDetailView(video: hit.video) } label: { resultRow(hit) }
                     .buttonStyle(.plain)
+                    // A query is worth keeping once it led somewhere. Simultaneous rather than
+                    // `onTapGesture`, which would eat the link's own tap.
+                    .simultaneousGesture(TapGesture().onEnded { recordSearch(trimmedQuery) })
                 Divider().overlay(Color.stashInk.opacity(0.12))
             }
         }
+    }
+
+    // MARK: - Recents
+
+    private var recents: [String] {
+        recentSearchesRaw.split(separator: "\n").map(String.init)
+    }
+
+    /// Newest first, no case-insensitive duplicate, five deep.
+    private func recordSearch(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The separator is the one character a stored query may not contain.
+        guard !trimmed.isEmpty, !trimmed.contains("\n") else { return }
+        var kept = recents.filter { $0.caseInsensitiveCompare(trimmed) != .orderedSame }
+        kept.insert(trimmed, at: 0)
+        recentSearchesRaw = kept.prefix(5).joined(separator: "\n")
     }
 
     private func resultRow(_ hit: Hit) -> some View {
@@ -239,7 +355,7 @@ struct SearchOverlay: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Micro(text: "\(hit.percent)%", size: 9, tracking: 1.1, color: strong ? (hit.video.category?.color ?? .stashInk) : .stashInk.opacity(0.55))
+            Micro(text: "\(hit.percent)%", size: 9.5, tracking: 1.1, color: strong ? (hit.video.category?.color ?? .stashInk) : .stashInk.opacity(0.62))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
                 .background(
@@ -380,6 +496,62 @@ enum SearchIndex {
     #endif
 }
 
+/// What an empty search field offers, taken from the library rather than from a copywriter.
+enum SearchSuggestions {
+    /// The library's most-used topics, largest first. Counted case-insensitively — the analysis
+    /// writes "Sourdough" and "sourdough" for the same thing — and shown in the first spelling
+    /// the list offers, which for a library read newest-first is the most recent one. Equal
+    /// counts fall back to the name, so the chips do not reshuffle between two identical reads.
+    static func topTopics(in topicLists: [[String]], limit: Int = 5) -> [(topic: String, count: Int)] {
+        var counts: [String: Int] = [:]      // folded topic -> how many saves carry it
+        var spelling: [String: String] = [:] // folded topic -> the spelling to show
+        for topics in topicLists {
+            for topic in topics {
+                let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let folded = trimmed.lowercased()
+                counts[folded, default: 0] += 1
+                if spelling[folded] == nil { spelling[folded] = trimmed }
+            }
+        }
+        // Spelled out rather than chained: a map-then-sort over a dictionary of labelled
+        // tuples is one of the shapes the type checker gives up on.
+        var ranked: [(topic: String, count: Int)] = []
+        ranked.reserveCapacity(counts.count)
+        for (folded, count) in counts {
+            ranked.append((topic: spelling[folded] ?? folded, count: count))
+        }
+        ranked.sort { first, second in
+            if first.count != second.count { return first.count > second.count }
+            return first.topic.lowercased() < second.topic.lowercased()
+        }
+        return Array(ranked.prefix(max(0, limit)))
+    }
+
+    /// The live-library door. Reading `topics` is the only thing this needs a `Video` for.
+    static func topTopics(in videos: [Video], limit: Int = 5) -> [(topic: String, count: Int)] {
+        topTopics(in: videos.map(\.topics), limit: limit)
+    }
+
+    #if DEBUG
+    /// Counting is the whole feature, so it gets the same launch-time check as the scorer.
+    static func selfTest() -> Bool {
+        let empty: [[String]] = []
+        let blanks: [[String]] = [[], [" "]]
+        let library = [["Bread", "pasta"], ["bread", "Pasta", "coffee"], ["BREAD"]]
+        let top = topTopics(in: library, limit: 2)
+        let tied = topTopics(in: [["Zebra"], ["apple"]], limit: 5)
+        return topTopics(in: empty, limit: 5).isEmpty
+            && topTopics(in: blanks, limit: 5).isEmpty
+            && top.count == 2                                   // limit is honoured
+            && top[0].topic == "Bread" && top[0].count == 3     // three spellings, one topic
+            && top[1].topic == "pasta" && top[1].count == 2     // and the first spelling wins
+            && tied.map(\.topic) == ["apple", "Zebra"]          // equal counts sort by name
+            && topTopics(in: library, limit: 0).isEmpty
+    }
+    #endif
+}
+
 /// Outlined uppercase chips that wrap onto multiple lines.
 struct FlowChips: View {
     let chips: [String]
@@ -393,6 +565,9 @@ struct FlowChips: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
                         .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
+                        // The pill draws ~31 pt tall; the thumb gets 44. `FlexibleWrap`
+                        // measures the grown size, so the rows space themselves.
+                        .minTapTarget()
                 }
                 .buttonStyle(.plain)
             }

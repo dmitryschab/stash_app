@@ -206,7 +206,7 @@ struct HaulView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(sort.rawValue).font(.archivo(13))
-                    Image(systemName: "arrow.down").font(.system(size: 11))
+                    Image(systemName: "arrow.up.arrow.down").font(.system(size: 11))
                 }.frame(minHeight: 44)
             }
             .accessibilityLabel("Sort finds, \(sort.rawValue)")
@@ -217,12 +217,7 @@ struct HaulView: View {
     private var filterSheet: some View {
         NavigationStack {
             List {
-                Section("Category") {
-                    filterOption("All categories", selected: category == nil) { category = nil }
-                    ForEach(categories) { item in
-                        filterOption(item.label, selected: category == item) { category = item }
-                    }
-                }
+                // Category lives on the chip row and nowhere else; this sheet is the shortlist.
                 Section("Your shortlist") {
                     ForEach(HaulStatusFilter.allCases, id: \.self) { item in
                         filterOption(item.rawValue, selected: status == item) { status = item }
@@ -233,7 +228,8 @@ struct HaulView: View {
             .navigationTitle("Filter finds").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Reset") { category = nil; status = .all }
+                    // Only what this sheet shows: the chip row owns the category.
+                    Button("Reset") { status = .all }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { showingFilters = false }

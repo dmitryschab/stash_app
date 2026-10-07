@@ -72,6 +72,14 @@ extension Color {
     static let stashOnAccent = Color(light: 0xF7F1E1, dark: 0x1D0E06)   // text on jewel cards
 }
 
+// MARK: - Spacing
+
+/// Two gaps, so spacing can say "same group" or "next group" and nothing in between.
+enum StashSpacing {
+    static let group: CGFloat = 24
+    static let item: CGFloat = 10
+}
+
 // MARK: - Type (Archivo)
 
 extension Font {
@@ -96,7 +104,7 @@ struct Micro: View {
     let text: String
     var size: CGFloat = 10
     var tracking: CGFloat = 1.6
-    var color: Color = .stashInk.opacity(0.45)
+    var color: Color = .stashInk.opacity(0.62)
 
     var body: some View {
         Text(text.uppercased())
@@ -117,7 +125,7 @@ struct StashHeader: View {
                 Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
                 Spacer()
                 if !trailing.isEmpty {
-                    Micro(text: trailing, size: 11, tracking: 1.4, color: .stashInk.opacity(0.5))
+                    Micro(text: trailing, size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
                 }
             }
             Text(title)
@@ -165,6 +173,15 @@ extension View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(Color.stashInk.opacity(0.9), lineWidth: 1.5)
             )
+    }
+}
+
+/// The hit-area floor, applied where a control draws smaller than a thumb. It grows the
+/// layout — the caller's drawing is centred in the larger frame, not stretched to fill it.
+extension View {
+    /// Grows the hit area to Apple's 44 pt minimum. The visual stays whatever the caller drew.
+    func minTapTarget(_ side: CGFloat = 44) -> some View {
+        frame(minWidth: side, minHeight: side).contentShape(Rectangle())
     }
 }
 
@@ -516,7 +533,10 @@ struct StashEmptyState: View {
                 .lineSpacing(3)
             if offersImport {
                 NavigationLink { ImportView() } label: {
+                    // The chip draws ~31pt tall; the frame grows around it, so the capsule
+                    // keeps its size and only the hit area reaches 44pt.
                     InfoChip(text: "Import your saves", systemImage: "square.and.arrow.down")
+                        .minTapTarget()
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 8)
@@ -619,9 +639,9 @@ struct TimeRail: View {
                 } label: {
                     Micro(
                         text: entry.label,
-                        size: 8.5,
+                        size: 9.5,
                         tracking: 0.8,
-                        color: scrubTarget == entry.target ? .stashInk : .stashInk.opacity(0.55)
+                        color: scrubTarget == entry.target ? .stashInk : .stashInk.opacity(0.62)
                     )
                 }
                 .buttonStyle(.plain)

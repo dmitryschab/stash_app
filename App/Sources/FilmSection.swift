@@ -19,7 +19,10 @@ struct FilmSection: View {
 
     /// Keyed by index into `films` rather than by title — two picks can share a title (a remake),
     /// and the index is what `.task(id:)` iterates and what the card lookup uses.
-    @State private var refs: [Int: FilmRef] = [:]
+    ///
+    /// Same reading as the film wall's: an absent key is "still asking Wikipedia", a `nil`
+    /// value is a recorded miss. One shimmers, the other is the title tile for good.
+    @State private var refs: [Int: FilmRef?] = [:]
 
     private var films: [FilmPick] { video.films }
 
@@ -53,9 +56,9 @@ struct FilmSection: View {
 
     @ViewBuilder
     private func card(index: Int, pick: FilmPick) -> some View {
-        let ref = refs[index]
+        let lookup = refs[index]
         let content = VStack(alignment: .leading, spacing: 6) {
-            poster(pick: pick, ref: ref)
+            poster(pick: pick, lookup: lookup)
             Text(pick.title)
                 .font(.archivo(12.5, .bold))
                 .foregroundStyle(Color.stashInk)
@@ -64,14 +67,15 @@ struct FilmSection: View {
             if let year = pick.year {
                 Text(String(year))
                     .font(.archivo(11))
-                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
             }
         }
         .frame(width: 100, alignment: .leading)
 
         // Only a resolved pick is a link — the honest outcome for a no-match title is a plain
-        // tile, not a link to the wrong movie's page.
-        if let ref {
+        // tile, not a link to the wrong movie's page. `lookup ?? nil` flattens "not yet" and
+        // "no match" into the one answer this cares about: there is nothing to open.
+        if let ref = lookup ?? nil {
             Link(destination: ref.detailURL) { content }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
@@ -85,14 +89,24 @@ struct FilmSection: View {
         }
     }
 
-    private func poster(pick: FilmPick, ref: FilmRef?) -> some View {
+    private func poster(pick: FilmPick, lookup: FilmRef??) -> some View {
         // `scaledToFill` overflows the frame; clipping trims the drawing, not the touches, so
         // contentShape bounds the hit area to the card (same fix as HaulProductArtwork). Not
         // allowsHitTesting(false): the poster is the Link's main tap target.
         Color.clear
             .overlay {
-                AsyncImage(url: ref?.posterURL) { $0.resizable().scaledToFill() } placeholder: {
-                    posterPlaceholder(title: pick.title)
+                switch lookup {
+                case .none:
+                    ShimmerBlock(cornerRadius: 10)
+                case .some(let ref):
+                    // A match without portrait art is as final as no match at all.
+                    if let url = ref?.posterURL {
+                        AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: {
+                            ShimmerBlock(cornerRadius: 10)
+                        }
+                    } else {
+                        posterPlaceholder(title: pick.title)
+                    }
                 }
             }
             .frame(width: 100, height: 150)
@@ -123,14 +137,21 @@ struct FilmSection: View {
     /// picks) — both for free, instead of hand-rolled cancellation bookkeeping.
     private func resolveFilms() async {
         refs = [:]
-        await withTaskGroup(of: (Int, FilmRef?).self) { group in
+        await withTaskGroup(of: (Int, FilmRef??).self) { group in
             for (index, pick) in films.enumerated() {
                 group.addTask {
-                    (index, try? await FilmResolver.shared.film(for: pick))
+                    // The outer optional says whether Wikipedia answered at all. Leaving the
+                    // page mid-lookup records nothing — there is nothing left to draw for.
+                    // Offline does record a miss, the same as the film page: this runs once per
+                    // appearance, so an absent key would shimmer for as long as the strip is on
+                    // screen. The sleeve is the honest answer, and coming back asks again.
+                    do { return (index, .some(try await FilmResolver.shared.film(for: pick))) }
+                    catch is CancellationError { return (index, nil) }
+                    catch { return (index, .some(nil)) }
                 }
             }
-            for await (index, ref) in group {
-                if let ref { refs[index] = ref }
+            for await (index, outcome) in group {
+                if let outcome { refs.updateValue(outcome, forKey: index) }
             }
         }
     }
