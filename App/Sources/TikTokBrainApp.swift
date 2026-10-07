@@ -515,6 +515,8 @@ private struct ImportSyncPill: View {
                         .lineLimit(1)
                     if case .syncing(let done, let total) = status {
                         track(done: done, total: total)
+                    } else if case .readingLibrary(_, let done, let total) = status {
+                        track(done: done, total: total)
                     }
                 }
                 .padding(.leading, 16)
@@ -552,6 +554,7 @@ private struct ImportSyncPill: View {
         switch status {
         case .reading: "Reading your export…"
         case .syncing(let done, let total): "Syncing \(done) of \(total)"
+        case .readingLibrary(let what, let done, let total): "Reading \(what) \(done) of \(total)"
         // A shared TikTok has no done/total — the pill just says one is in flight.
         case .shares(let count): count == 1 ? "Syncing 1 share" : "Syncing \(count) shares"
         case .finished(let sorted): "\(sorted) videos sorted"
@@ -562,7 +565,7 @@ private struct ImportSyncPill: View {
     /// Spinner for work still moving, a mark for the two that have stopped.
     @ViewBuilder private var leading: some View {
         switch status {
-        case .reading, .syncing, .shares:
+        case .reading, .syncing, .readingLibrary, .shares:
             ProgressView()
                 .controlSize(.mini)
                 .tint(.stashOnInk)
@@ -595,7 +598,7 @@ private struct ImportSyncPill: View {
     private var isDismissible: Bool {
         switch status {
         case .finished, .failed: true
-        case .reading, .syncing, .shares: false
+        case .reading, .syncing, .readingLibrary, .shares: false
         }
     }
 }

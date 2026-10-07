@@ -37,6 +37,9 @@ final class PipelineCenter {
     static let exportRequestedKey = "tiktokExportRequestedAt"
 
     var progress: (done: Int, total: Int)?
+    /// What the library deep pass is reading right now, so the pill can say so instead of
+    /// "Syncing" — which read as a re-import of a library that was already sorted.
+    var deepPassReading: String?
     var isImporting = false
     var boxStatus: BoxStatus = .unknown
     var lastError: String?
@@ -140,14 +143,15 @@ final class PipelineCenter {
     enum ShellStatus: Equatable {
         case reading                          // an export was picked; nothing submitted yet
         case syncing(done: Int, total: Int)   // on-device drain or the box's sorting pass
+        case readingLibrary(String, done: Int, total: Int)  // the unasked-for deep pass: what it reads
         case shares(Int)                      // shared TikToks in flight
         case finished(sorted: Int)            // a finished import from the last 24 h, not dismissed
         case failed(String)                   // a failed share, or `lastError`
     }
 
     var shellStatus: ShellStatus? {
-        Self.shellStatus(isImporting: isImporting, progress: progress, cloud: cloudStatus,
-                         pendingShares: pendingShares, lastError: lastError,
+        Self.shellStatus(isImporting: isImporting, progress: progress, deepPass: deepPassReading,
+                         cloud: cloudStatus, pendingShares: pendingShares, lastError: lastError,
                          dismissedError: dismissedError,
                          dismissedImportID: dismissedImportID, now: Date())
     }
@@ -180,7 +184,7 @@ final class PipelineCenter {
     /// The pill's whole decision as one function over values, first match wins: a share that died
     /// is louder than a sync still running, and a finished import is the quietest of all.
     static func shellStatus(isImporting: Bool, progress: (done: Int, total: Int)?,
-                            cloud: CloudImportStatus?, pendingShares: [PendingShare],
+                            deepPass: String? = nil, cloud: CloudImportStatus?, pendingShares: [PendingShare],
                             lastError: String?, dismissedError: String?,
                             dismissedImportID: String?, now: Date) -> ShellStatus? {
         // A failed share carries its own words (out of imports, signed out), so it must never be
@@ -189,7 +193,10 @@ final class PipelineCenter {
             if case .failed(let message) = share.stage { return .failed(message) }
         }
         if isImporting {
-            if let progress, progress.total > 0 { return .syncing(done: progress.done, total: progress.total) }
+            if let progress, progress.total > 0 {
+                if let deepPass { return .readingLibrary(deepPass, done: progress.done, total: progress.total) }
+                return .syncing(done: progress.done, total: progress.total)
+            }
             return .reading   // parsing the export: counted work has not started yet
         }
         if let cloud, cloud.state == .accepted || cloud.state == .fastPass {
@@ -223,11 +230,11 @@ final class PipelineCenter {
                               updatedAt: now.addingTimeInterval(-ago))
         }
         func pill(importing: Bool = false, progress: (done: Int, total: Int)? = nil,
-                  cloud: CloudImportStatus? = nil, shares: [PendingShare] = [],
+                  deepPass: String? = nil, cloud: CloudImportStatus? = nil, shares: [PendingShare] = [],
                   error: String? = nil, dismissedError: String? = nil,
                   dismissed: String? = nil) -> ShellStatus? {
-            Self.shellStatus(isImporting: importing, progress: progress, cloud: cloud,
-                             pendingShares: shares, lastError: error,
+            Self.shellStatus(isImporting: importing, progress: progress, deepPass: deepPass,
+                             cloud: cloud, pendingShares: shares, lastError: error,
                              dismissedError: dismissedError,
                              dismissedImportID: dismissed, now: now)
         }
@@ -235,6 +242,8 @@ final class PipelineCenter {
         return pill() == nil
             && pill(importing: true) == .reading
             && pill(importing: true, progress: (3, 40)) == .syncing(done: 3, total: 40)
+            && pill(importing: true, progress: (0, 959), deepPass: "transcripts")
+                == .readingLibrary("transcripts", done: 0, total: 959)
             && pill(cloud: box(.fastPass, 412, 941)) == .syncing(done: 412, total: 941)
             && pill(cloud: box(.accepted, 0, 941)) == .syncing(done: 0, total: 941)
             && pill(shares: [PendingShare(id: "a"), PendingShare(id: "b")]) == .shares(2)
@@ -835,10 +844,13 @@ final class PipelineCenter {
         defer {
             isImporting = false
             progress = nil
+            deepPassReading = nil
         }
+        deepPassReading = "transcripts"
         let transcripts = await runner.backfillTranscripts { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
+        deepPassReading = "on-screen text"
         let visual = await runner.backfillVisualText(deepPass: read) { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
