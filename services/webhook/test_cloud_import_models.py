@@ -258,3 +258,15 @@ def test_accepts_instagram_reel_url():
 def test_rejects_mismatched_instagram_rows(video_id, url):
     with pytest.raises(ValidationError):
         BookmarkInput(videoID=video_id, url=url, bookmarkedAt=datetime.now(timezone.utc))
+
+
+def test_import_status_serialises_the_map_and_omits_it_when_absent():
+    from datetime import datetime, timezone
+    from cloud_import_models import ImportMap, ImportState, ImportStatus, Progress
+    base = dict(importID="i", state=ImportState.FAST_PASS, fastPass=Progress(done=0, total=10),
+                unavailable=0, partialFailures=0, estimatedCostUSD=0.0,
+                updatedAt=datetime.now(timezone.utc))
+    assert ImportStatus(**base).model_dump(by_alias=True)["map"] is None
+    with_map = ImportStatus(**base, map=ImportMap(sampled=2, done=1, counts={"coding": 1}, guesses={"7": "coding"}))
+    assert with_map.model_dump(by_alias=True)["map"] == {
+        "sampled": 2, "done": 1, "counts": {"coding": 1}, "guesses": {"7": "coding"}}

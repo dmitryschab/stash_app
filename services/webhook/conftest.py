@@ -59,21 +59,55 @@ def evaluate_condition(expression: str, item: dict, names: dict, values: dict) -
     return True
 
 
+def _path(token: str, names: dict) -> list[str]:
+    """`mapCounts.#c` → ["mapCounts", "coding"]: a document path, names resolved."""
+    return [names.get(part, part) for part in token.strip().split(".")]
+
+
+def _get_path(item: dict, path: list[str]):
+    node = item
+    for part in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def _set_path(item: dict, path: list[str], value) -> None:
+    node = item
+    for part in path[:-1]:
+        node = node.setdefault(part, {})
+    node[path[-1]] = value
+
+
+def _operand(token: str, item: dict, names: dict, values: dict):
+    """A value token: `:v`, `if_not_exists(path,:v)` (no space after the comma — the
+    assignment splitter cuts on ", "), or a document path read for arithmetic."""
+    token = token.strip()
+    if token.startswith(":"):
+        return values[token]
+    if token.startswith("if_not_exists(") and token.endswith(")"):
+        path_token, default = token[len("if_not_exists("):-1].split(",", 1)
+        existing = _get_path(item, _path(path_token, names))
+        return existing if existing is not None else values[default.strip()]
+    return _get_path(item, _path(token, names))
+
+
 def apply_update(item: dict, expression: str, names: dict, values: dict) -> None:
     if not expression.startswith("SET "):
         raise NotImplementedError(f"fake table cannot apply {expression!r}")
     for assignment in expression[4:].split(", "):
         name, value = [part.strip() for part in assignment.split("=", 1)]
-        field = names.get(name, name)
+        target = _path(name, names)
         for symbol, combine in ((" + ", operator.add), (" - ", operator.sub)):
             if symbol in value:
                 base, operand = [part.strip() for part in value.split(symbol, 1)]
-                item[field] = combine(item.get(names.get(base, base), 0), values[operand])
+                _set_path(item, target, combine(_operand(base, item, names, values) or 0, values[operand]))
                 break
         else:
-            if value not in values:
+            if not (value.startswith(":") or value.startswith("if_not_exists(")):
                 raise NotImplementedError(f"fake table cannot evaluate {value!r}")
-            item[field] = values[value]
+            _set_path(item, target, _operand(value, item, names, values))
 
 
 class FakeTable:

@@ -161,6 +161,16 @@ class Progress(ContractModel):
     total: int
 
 
+class ImportMap(ContractModel):
+    """The first sort of a sample of the import: how many were sampled, how many Clef has
+    answered (skips included), the answers tallied by category, and each sampled video's
+    guess. The phone scales `counts` to the import's total for its skeleton rows."""
+    sampled: int
+    done: int
+    counts: dict[str, int] = Field(default_factory=dict)      # category -> n
+    guesses: dict[str, str] = Field(default_factory=dict)     # videoID -> category
+
+
 class ImportStatus(ContractModel):
     import_id: str = Field(alias="importID")
     state: ImportState
@@ -173,6 +183,9 @@ class ImportStatus(ContractModel):
     deferred: int = 0
     estimated_cost_usd: float = Field(alias="estimatedCostUSD")
     updated_at: datetime = Field(alias="updatedAt")
+    # None until the map pass has started — a status from before this field, or an import
+    # whose map never ran, reads as "no map" and the phone behaves as it did before.
+    map: ImportMap | None = None
 
 
 class RecipeData(ContractModel):

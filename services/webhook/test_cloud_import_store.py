@@ -339,3 +339,38 @@ def test_failure_counts_tally_failed_and_unavailable_rows_across_imports():
         table.items[(PARTITION, f"IMPORT#{import_id}#VIDEO#{video_id}")]["state"] = state
 
     assert store.failure_counts({"1", "2", "3", "4"}) == {"1": 2, "2": 1}
+
+
+# ---------------------------------------------------------------- map pass
+
+from conftest import ConditionalTable  # noqa: E402 — appended with its tests
+
+
+def test_the_map_counts_guesses_and_skips_on_meta_only():
+    table = ConditionalTable()
+    store = DynamoImportStore(table=table, user_id=USER)
+    created = store.create_import(request(("1", "2", "3")))
+
+    assert store.get_status(created.import_id).map is None     # no map until it starts
+
+    store.start_map(created.import_id, sampled=3)
+    store.guess_video(created.import_id, "1", "coding")
+    store.guess_video(created.import_id, "2", "coding")
+    store.skip_map_video(created.import_id)
+
+    status = store.get_status(created.import_id)
+    assert status.map.sampled == 3
+    assert status.map.done == 3
+    assert status.map.counts == {"coding": 2}
+    assert status.map.guesses == {"1": "coding", "2": "coding"}
+    # Nothing landed on the video rows: the status poll must not have to scan them.
+    assert "guess" not in table.items[(store.partition, f"IMPORT#{created.import_id}#VIDEO#1")]
+
+
+def test_two_categories_keep_separate_counters():
+    store = DynamoImportStore(table=ConditionalTable(), user_id=USER)
+    created = store.create_import(request(("1", "2")))
+    store.start_map(created.import_id, sampled=2)
+    store.guess_video(created.import_id, "1", "recipe")
+    store.guess_video(created.import_id, "2", "music")
+    assert store.get_status(created.import_id).map.counts == {"recipe": 1, "music": 1}

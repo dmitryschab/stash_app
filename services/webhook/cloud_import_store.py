@@ -26,6 +26,7 @@ from cloud_import_models import (
     TRIAL_LIMIT,
     MONTH_LIMIT,
     CreateImportRequest,
+    ImportMap,
     ImportState,
     ImportStatus,
     Progress,
@@ -415,6 +416,38 @@ class DynamoImportStore:
         self._try_finalize(import_id)
         return True
 
+    # ---------------------------------------------------------------- map pass
+
+    def start_map(self, import_id: str, sampled: int) -> None:
+        """Open the map on META: how many will be classified, nothing answered yet."""
+        self.table.update_item(
+            Key=self._key(import_id, "META"),
+            UpdateExpression="SET mapSampled = :sampled, mapDone = :zero, mapCounts = :counts, mapGuesses = :guesses",
+            ExpressionAttributeValues={":sampled": sampled, ":zero": 0, ":counts": {}, ":guesses": {}},
+        )
+
+    def guess_video(self, import_id: str, video_id: str, category: str) -> None:
+        """One answer: advance done, tally the category, remember the guess. All on META, one
+        atomic update, so eight threads tallying at once cannot lose a count — and so the
+        status poll reads one row instead of scanning twelve hundred."""
+        self.table.update_item(
+            Key=self._key(import_id, "META"),
+            # No space after the comma inside if_not_exists: DynamoDB accepts it either way,
+            # and the test double splits assignments on ", ".
+            UpdateExpression="SET mapDone = mapDone + :one, mapCounts.#c = if_not_exists(mapCounts.#c,:zero) + :one, mapGuesses.#v = :c",
+            ExpressionAttributeNames={"#c": category, "#v": video_id},
+            ExpressionAttributeValues={":one": 1, ":zero": 0, ":c": category},
+        )
+
+    def skip_map_video(self, import_id: str) -> None:
+        """A sampled video Clef or yt-dlp could not answer still counts as done: `done` is
+        the phone's "the map has settled" signal, and a skip must not stall it."""
+        self.table.update_item(
+            Key=self._key(import_id, "META"),
+            UpdateExpression="SET mapDone = mapDone + :one",
+            ExpressionAttributeValues={":one": 1},
+        )
+
     def fail_video(self, import_id: str, video_id: str, retryable: bool, code: str) -> bool:
         key = self._key(import_id, f"VIDEO#{video_id}")
         item = self._get(key)
@@ -521,6 +554,12 @@ class DynamoImportStore:
             deferred=int(item.get("deferred", 0)),
             estimatedCostUSD=float(item.get("estimatedCostUSD", 0)),
             updatedAt=item["updatedAt"],
+            map=ImportMap(
+                sampled=int(item["mapSampled"]),
+                done=int(item.get("mapDone", 0)),
+                counts={key: int(value) for key, value in (item.get("mapCounts") or {}).items()},
+                guesses={key: str(value) for key, value in (item.get("mapGuesses") or {}).items()},
+            ) if "mapSampled" in item else None,
         )
 
     def _condition(self, sk_prefix: str):
