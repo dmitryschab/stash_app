@@ -123,7 +123,9 @@ public struct ExportParser {
 
     // MARK: - Build & de-duplicate
 
-    private func bookmarks(from items: [[String: Any]]) -> [Bookmark] {
+    /// Not private: the TikTok sync's favourites (`TikTokConnectClient.sync`) come through
+    /// here too, so a synced favourite and an exported one are the same `Bookmark`.
+    func bookmarks(from items: [[String: Any]]) -> [Bookmark] {
         let formatter = Self.makeDateFormatter()
         var newestByID: [String: Bookmark] = [:]
         for object in items {
