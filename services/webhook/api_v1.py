@@ -78,6 +78,24 @@ def _stt_key() -> str:
     return stash_secrets.secret("STT_API_KEY") or stash_secrets.secret("OPENROUTER_API_KEY")
 
 
+def _caption_transcript(directory: str) -> str:
+    """The text of the caption track yt-dlp wrote beside the audio, or "" when there is none.
+
+    English first when TikTok offers several tracks — the analyzer answers in English anyway.
+    ponytail: no way to tell the original-language track from a translation; English wins.
+    """
+    tracks = sorted((f for f in os.listdir(directory) if f.endswith(".vtt")),
+                    key=lambda f: not f.split(".")[-2].startswith("en"))
+    if not tracks:
+        return ""
+    with open(os.path.join(directory, tracks[0]), encoding="utf-8", errors="replace") as handle:
+        lines = [re.sub(r"<[^>]+>", "", line).strip() for line in handle]
+    # Drop the header, cue timings and cue numbers; what is left is the spoken text.
+    spoken = [line for line in lines
+              if line and line != "WEBVTT" and "-->" not in line and not line.isdigit()]
+    return filter_transcript(spoken)
+
+
 def _has_no_video_track(directory: str) -> bool:
     """True when yt-dlp's sidecar metadata says every format is audio-only — a photo post.
 
@@ -252,13 +270,16 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
     quota = store.get_quota()
 
     with tempfile.TemporaryDirectory() as td:
-        # Keep yt-dlp's native container — Whisper accepts m4a/mp4/webm alike.
+        # Keep yt-dlp's native container — Whisper accepts m4a/mp4/webm alike. TikTok's own
+        # caption track rides along in the same run; a video without one is a warning, not a
+        # failure, so the return code still means "the audio arrived".
         dl = subprocess.run(
             [YTDLP, "-q", "--no-warnings", "-f", "bestaudio/best", "--write-info-json",
+             "--write-subs", "--sub-format", "vtt", "--sub-langs", "all",
              "-o", os.path.join(td, "audio.%(ext)s"), body.url],
             capture_output=True, timeout=180)
         produced = [os.path.join(td, f) for f in os.listdir(td)
-                    if f.startswith("audio.") and not f.endswith(".info.json")]
+                    if f.startswith("audio.") and not f.endswith((".info.json", ".vtt"))]
         if dl.returncode != 0 or not produced:
             # deleted / private / region-locked — a normal library condition
             return {"transcript": None, "duration": 0, "unavailable": True,
@@ -272,6 +293,13 @@ def video_transcript(body: TranscriptRequest, store: DynamoImportStore = Depends
         # so knowing this costs no extra round trip.
         if _has_no_video_track(td):
             return {"transcript": None, "duration": 0,
+                    "quota": quota.model_dump(by_alias=True)}
+        # Half of saves carry TikTok's own captions, and 95% of the ones with speech do (spike,
+        # 2026-10-07, 100 saves). They are the creator's words, free and exact, so Whisper only
+        # runs for the rest.
+        captions = _caption_transcript(td)
+        if captions:
+            return {"transcript": captions, "duration": 0,
                     "quota": quota.model_dump(by_alias=True)}
         audio = produced[0]
 

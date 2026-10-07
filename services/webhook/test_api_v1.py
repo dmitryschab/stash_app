@@ -155,6 +155,62 @@ def test_a_failed_download_is_not_billable(store, monkeypatch):
     assert store.get_quota().initial_remaining == INITIAL_LIMIT
 
 
+CAPTIONS = """WEBVTT
+
+
+00:00:00.060 --> 00:00:02.220
+GPT edited both of these videos.
+
+00:00:02.221 --> 00:00:06.301
+One is <c>GPT 6 Astra</c>, the other is GPT 6.1 Sol.
+"""
+
+
+def fake_download_with_captions(monkeypatch, captions):
+    """yt-dlp writing the audio plus TikTok's own caption track, as `--write-subs` does."""
+    def run(args, **_kwargs):
+        assert "--write-subs" in args
+        target = args[args.index("-o") + 1]
+        with open(target.replace("%(ext)s", "m4a"), "wb") as handle:
+            handle.write(b"\x00" * 16)
+        with open(target.replace("%(ext)s", "eng-US.vtt"), "w", encoding="utf-8") as handle:
+            handle.write(captions)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+    monkeypatch.setattr(api_v1.subprocess, "run", run)
+
+
+def test_tiktok_captions_are_the_transcript_and_whisper_never_runs(store, monkeypatch):
+    """Half of saves carry TikTok's own captions, and 95% of the ones with speech do. Reading
+    them is free; Whisper is a paid call that can only get the same words less exactly."""
+    fake_download_with_captions(monkeypatch, CAPTIONS)
+    monkeypatch.setattr(api_v1.requests, "post",
+                        lambda *a, **k: pytest.fail("Whisper ran although captions existed"))
+    with TestClient(app) as client:
+        response = client.post("/v1/videos/transcript", json={"url": URL})
+
+    assert response.status_code == 200
+    assert response.json()["transcript"] == (
+        "GPT edited both of these videos.\nOne is GPT 6 Astra, the other is GPT 6.1 Sol.")
+
+
+def test_whisper_gets_the_audio_not_the_caption_file(store, monkeypatch):
+    """Captions too thin to count fall back to Whisper — which must be sent the audio. The
+    caption file sits beside it with the same `audio.` prefix."""
+    fake_download_with_captions(monkeypatch, "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHi\n")
+    sent = []
+
+    def post(*_args, files, **_kwargs):
+        sent.append(files["file"][0])
+        return SimpleNamespace(status_code=200, headers={}, text="",
+                               json=lambda: {"segments": [], "duration": 3.0})
+
+    monkeypatch.setattr(api_v1.requests, "post", post)
+    with TestClient(app) as client:
+        client.post("/v1/videos/transcript", json={"url": URL})
+
+    assert sent == ["audio.m4a"]
+
+
 def test_a_photo_post_is_never_transcribed(store, monkeypatch):
     """Its audio is a licensed backing track, not speech. The app treats any non-empty
     transcript as the post's own content and re-analyses from text alone, which wiped the
