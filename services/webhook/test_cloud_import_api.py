@@ -314,3 +314,98 @@ def test_a_free_retry_goes_through_on_an_empty_budget(dependencies):
     assert response.status_code == 202
     assert (response.json()["accepted"], response.json()["deferred"]) == (2, 1)
     assert [message["videoID"] for message in queue.messages] == ["1", "2"]
+
+
+# ---------------------------------------------------------------- map pass
+
+class InlinePool:
+    """Runs each submission on the spot, so a test sees the map finished when the route returns."""
+    def __init__(self):
+        self.submitted = 0
+
+    def submit(self, fn, *args):
+        self.submitted += 1
+        fn(*args)
+
+
+class MapStore(FakeStore):
+    def __init__(self):
+        super().__init__()
+        self.map = None
+
+    def start_map(self, import_id, sampled):
+        self.map = {"importID": import_id, "sampled": sampled, "done": 0, "counts": {}, "guesses": {}}
+
+    def guess_video(self, import_id, video_id, category):
+        self.map["done"] += 1
+        self.map["counts"][category] = self.map["counts"].get(category, 0) + 1
+        self.map["guesses"][video_id] = category
+
+    def skip_map_video(self, import_id):
+        self.map["done"] += 1
+
+
+@pytest.fixture
+def map_dependencies(monkeypatch):
+    store = MapStore()
+    queue = FakeQueue()
+    pool = InlinePool()
+    app.dependency_overrides[stash_auth.current_user] = lambda: USER_ID
+    app.dependency_overrides[stash_auth.user_store] = lambda: store
+    app.dependency_overrides[stash_auth.entitled_store] = lambda: store
+    app.dependency_overrides[cloud_import_api.get_queue] = lambda: queue
+    monkeypatch.setattr(cloud_import_api, "_MAP_POOL", pool)
+    monkeypatch.setattr(cloud_import_api, "fetch_metadata",
+                        lambda url: {"description": f"video {url.rsplit('/', 1)[1]} #linux", "tags": ["linux"]})
+    monkeypatch.setattr(cloud_import_api.clef, "classify", lambda state: ("coding", 0.9))
+    yield store, queue, pool
+    app.dependency_overrides.clear()
+
+
+def test_sample_is_evenly_spaced_and_capped():
+    videos = list(range(300))
+    sample = cloud_import_api.sample_for_map(videos)
+    assert len(sample) == 60
+    assert sample[:3] == [0, 5, 10]            # every fifth, from the first
+    assert sample[-1] == 295
+    assert cloud_import_api.sample_for_map(list(range(7))) == list(range(7))   # fewer than 60: all
+    assert cloud_import_api.sample_for_map([]) == []
+
+
+def test_a_new_import_starts_the_map_and_tallies_guesses(map_dependencies):
+    store, queue, pool = map_dependencies
+    with TestClient(app) as client:
+        response = client.post("/v1/imports", json=payload(3))
+    import_id = response.json()["importID"]
+    assert pool.submitted == 3
+    assert store.map == {"importID": import_id, "sampled": 3, "done": 3,
+                         "counts": {"coding": 3}, "guesses": {"1": "coding", "2": "coding", "3": "coding"}}
+    assert len(queue.messages) == 3           # the fast pass is untouched
+    assert store.initial == INITIAL_LIMIT - 3  # the map charged nothing extra
+
+
+def test_a_clef_failure_still_counts_as_done(map_dependencies, monkeypatch):
+    store, _, _ = map_dependencies
+    answers = iter([("coding", 0.9), None, ("recipe", 0.8)])
+    monkeypatch.setattr(cloud_import_api.clef, "classify", lambda state: next(answers))
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(3))
+    assert store.map["done"] == 3
+    assert store.map["counts"] == {"coding": 1, "recipe": 1}
+
+
+def test_missing_metadata_is_a_skip_not_a_crash(map_dependencies, monkeypatch):
+    store, _, _ = map_dependencies
+    monkeypatch.setattr(cloud_import_api, "fetch_metadata", lambda url: None)
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(2))
+    assert store.map == {"importID": store.map["importID"], "sampled": 2, "done": 2, "counts": {}, "guesses": {}}
+
+
+def test_a_retry_does_not_start_a_second_map(map_dependencies):
+    store, _, pool = map_dependencies
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(2))
+        client.post("/v1/imports", json=payload(2))
+    assert pool.submitted == 2
+    assert store.map["sampled"] == 2

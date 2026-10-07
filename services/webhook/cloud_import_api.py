@@ -13,15 +13,71 @@ already paid for stays collectable after a subscription lapses.
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+import clef
 from cloud_import_models import CreateImportRequest, CreateImportResponse, ImportStatus, ResultPage
+from cloud_import_pipeline import fetch_metadata
 from cloud_import_queue import SQSImportQueue
 from cloud_import_store import MAX_FREE_RETRIES, DynamoImportStore
 from stash_auth import entitled_store, quota_exhausted, user_store
 
 
 router = APIRouter(prefix="/v1")
+
+log = logging.getLogger("stash-webhook")
+
+# How many videos of an import get a first guess from Clef. Sixty evenly spaced through a
+# thousand-video library puts a category's share within about ±12 points — enough to shape
+# the shelves — and finishes in ~10 s at eight wide.
+MAP_SAMPLE = 60
+
+# One pool per process, shared by every import. Eight threads is the whole budget however
+# many imports arrive at once: each task is one yt-dlp run (~1.3 s) and one Clef call
+# (~0.4 s), and the box is also running the fast-pass worker.
+_MAP_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="map")
+
+
+def sample_for_map(videos: list, size: int = MAP_SAMPLE) -> list:
+    """Evenly spaced through the submission. The phone sends newest-first, so a stride walks
+    the whole date range rather than the newest week — the picker is about the library, not
+    about last Tuesday."""
+    stride = max(1, len(videos) // size)
+    return videos[::stride][:size]
+
+
+def _map_one(store: DynamoImportStore, import_id: str, video_id: str, url: str) -> None:
+    try:
+        metadata = fetch_metadata(url)
+        guess = clef.classify(clef.state_from_metadata(metadata)) if metadata else None
+    except Exception:
+        # The journal is the only place this lands; the map just has one fewer answer.
+        log.exception("map pass failed video=%s import=%s", video_id, import_id)
+        guess = None
+    if guess is None:
+        store.skip_map_video(import_id)
+        return
+    category, probability = guess
+    log.info("map guess import=%s video=%s category=%s p=%.2f", import_id, video_id, category, probability)
+    store.guess_video(import_id, video_id, category)
+
+
+def start_map_pass(store: DynamoImportStore, import_id: str, videos: list, pool=None) -> int:
+    """Open the map and hand a sample of the import to the pool. Returns how many were sampled.
+    Never raises: the import is already accepted and charged by the time this runs."""
+    sample = sample_for_map(videos)
+    try:
+        store.start_map(import_id, sampled=len(sample))
+    except Exception:
+        log.exception("could not start the map for import=%s", import_id)
+        return 0
+    pool = pool or _MAP_POOL
+    for video in sample:
+        pool.submit(_map_one, store, import_id, video.video_id, video.url)
+    return len(sample)
 
 
 def get_queue() -> SQSImportQueue:
@@ -84,6 +140,9 @@ def create_import(
         else:
             for video in body.videos:
                 queue.enqueue(store.user_id, created.import_id, video.video_id, url=video.url)
+            # After the queue, never before: the fast pass is what the user paid for, and a
+            # first guess that delayed it would be a worse deal than no guess.
+            start_map_pass(store, created.import_id, body.videos)
     return CreateImportResponse(
         importID=created.import_id,
         state="accepted",
