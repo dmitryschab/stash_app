@@ -98,7 +98,7 @@ targets:
         DEVELOPMENT_TEAM: S76KJ8Y6C3  # personal team (Dmitrijs Sabelniks) — hosts Orivox too
         CODE_SIGN_STYLE: Automatic
         # The sandbox "Stash iOS" app's client key until P2 switches to production credentials.
-        TIKTOK_CLIENT_KEY: REPLACE_WITH_SANDBOX_CLIENT_KEY
+        TIKTOK_CLIENT_KEY: sbawv73l08u684eumu
 
   # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
   # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build
