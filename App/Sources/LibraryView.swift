@@ -498,7 +498,7 @@ private struct BuyShelfRow: View {
 /// A desk row: 52 pt art, two-line title (the p90 title in the real library is 46 characters
 /// and one line was clipping it), and a meta line that leads with the save's first topic in
 /// the shelf's tint — topics are the strongest signal in the data, 3.6 per save on every save.
-private struct LibraryRow: View {
+struct LibraryRow: View {
     let video: Video
     var tint: Color = .stashInk
     var badge: String? = nil

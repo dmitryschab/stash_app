@@ -84,7 +84,11 @@ struct TikTokBrainApp: App {
 /// Settings offers it and the order slots are drawn in; what is actually on screen is whatever
 /// subset `TabSlots` holds.
 enum StashTab: String, CaseIterable, Identifiable {
-    case today, code, cook, music, films, haul, library
+    // The four rich sections first, then every plain category in `librarySegments` order,
+    // Library last. The order is the pill's and the Settings list's.
+    case today, code, cook, music, films, haul
+    case fitness, style, travel, home, learning, comedy, dining, wellness
+    case library
 
     var id: String { rawValue }
 
@@ -96,6 +100,14 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: "Music"
         case .films: "Films"
         case .haul: "Haul"
+        case .fitness: "Fitness"
+        case .style: "Style"
+        case .travel: "Travel"
+        case .home: "Home"
+        case .learning: "Learning"
+        case .comedy: "Comedy"
+        case .dining: "Dining"
+        case .wellness: "Wellness"
         case .library: "Library"
         }
     }
@@ -109,6 +121,8 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .films: "movieclapper"
         case .haul: "bag.fill"
         case .library: "square.grid.2x2.fill"
+        case .fitness, .style, .travel, .home, .learning, .comedy, .dining, .wellness:
+            ownedCategory!.symbol
         }
     }
 
@@ -121,6 +135,14 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: "Records and recommendation lists."
         case .films: "Every film your saves named, as a poster wall."
         case .haul: "Everything your saves are selling."
+        case .fitness: "Workouts and training saves."
+        case .style: "Outfits, beauty and hair."
+        case .travel: "Places and trips."
+        case .home: "Decor, cleaning and DIY."
+        case .learning: "Facts, how-tos and explainers."
+        case .comedy: "The ones that made you laugh."
+        case .dining: "Restaurants, cafés and bars."
+        case .wellness: "Health, sleep and habits."
         case .library: "Every shelf, plus Import and Settings."
         }
     }
@@ -134,8 +156,21 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: .music
         case .code: .coding
         case .films: .film
+        case .fitness: .fitness
+        case .style: .style
+        case .travel: .travel
+        case .home: .home
+        case .learning: .learning
+        case .comedy: .comedy
+        case .dining: .dining
+        case .wellness: .wellness
         case .today, .haul, .library: nil
         }
+    }
+
+    /// The tab that shows `category`, rich or plain; nil for `other`, which has no tab.
+    static func tab(owning category: Category) -> StashTab? {
+        allCases.first { $0.ownedCategory == category }
     }
 }
 
@@ -236,6 +271,12 @@ enum TabSlots {
             && decode("cook,cook,cook") == [.cook, .library]            // duplicates collapse
             && decode("today,code,cook,music,haul") == [.today, .code, .cook, .music, .haul, .library]
             && encode([.haul, .today]) == "today,haul"
+            && librarySegments.filter { $0 != .other }.allSatisfy { StashTab.tab(owning: $0) != nil }
+            && StashTab.tab(owning: .other) == nil
+            && StashTab.tab(owning: .recipe) == .cook && StashTab.tab(owning: .home) == .home
+            && decode("home,style") == [.style, .home, .library]                   // catalogue order
+            && decode("today,code,cook,music,films,haul,home,style,wellness")       // nine asked for
+                == [.music, .films, .haul, .style, .home, .wellness, .library]        // seven kept, Library pinned
             && decode(encode([.today, .haul, .library])) == [.today, .haul, .library]
     }
     #endif
@@ -411,6 +452,8 @@ struct RootView: View {
                 case .music: MusicView()
                 case .films: FilmsView()
                 case .haul: HaulView()
+                case .fitness, .style, .travel, .home, .learning, .comedy, .dining, .wellness:
+                    CategoryView(tab: tab)
                 case .library: LibraryView(shelves: libraryShelves(visible: slots),
                                            includeBuyShelf: !slots.contains(.haul))
                 }
