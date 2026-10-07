@@ -15,14 +15,15 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 import clef
 from cloud_import_models import CreateImportRequest, CreateImportResponse, ImportStatus, ResultPage
 from cloud_import_pipeline import fetch_metadata
-from cloud_import_queue import SQSImportQueue
-from cloud_import_store import MAX_FREE_RETRIES, DynamoImportStore
+from cloud_import_queue import SQSImportQueue, release_due
+from cloud_import_store import MAX_FREE_RETRIES, SLICE, DynamoImportStore, newest_first
 from stash_auth import entitled_store, quota_exhausted, user_store
 
 
@@ -80,6 +81,9 @@ def start_map_pass(store: DynamoImportStore, import_id: str, videos: list, pool=
     return len(sample)
 
 
+# One client per process: the status poll takes the queue too now, and building a client
+# is an instance-metadata round trip. The credentials inside it refresh themselves.
+@lru_cache(maxsize=1)
 def get_queue() -> SQSImportQueue:
     return SQSImportQueue()
 
@@ -138,7 +142,8 @@ def create_import(
             # Lost a race with a concurrent identical retry; hand the units back.
             quota = store.refund_quota(charged)
         else:
-            for video in body.videos:
+            # The newest slice only; the worker releases the rest as this one settles.
+            for video in newest_first(body.videos)[:SLICE]:
                 queue.enqueue(store.user_id, created.import_id, video.video_id, url=video.url)
             # After the queue, never before: the fast pass is what the user paid for, and a
             # first guess that delayed it would be a worse deal than no guess.
@@ -157,7 +162,14 @@ def create_import(
 def get_import_status(
     import_id: str,
     store: DynamoImportStore = Depends(user_store),
+    queue: SQSImportQueue = Depends(get_queue),
 ):
+    # Stall recovery: a release that died with nothing left in flight has no worker to
+    # retake it, and the phone polls here every 8 s while open and from background refresh.
+    try:
+        release_due(store, queue, import_id)
+    except Exception:
+        log.exception("slice release from the status poll failed import=%s", import_id)
     status = store.get_status(import_id)
     if status is None:
         raise HTTPException(status_code=404, detail="import not found")
