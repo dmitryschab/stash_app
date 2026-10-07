@@ -44,11 +44,13 @@ Constants: `SLICE = 100`, `REFILL_AT = 20`, `RELEASE_LEASE_SECONDS = 60`.
 - `claim_release(import_id) -> tuple[int, int] | None` — reads META. `None` when `released` is
   absent (an import from before this change), `released >= total`, or
   `fastDone < released - REFILL_AT`. Otherwise one conditional update
-  `SET releasing = :now` where `released = :seen AND (attribute_not_exists(releasing) OR releasing < :stale)`;
+  `SET releaseLeaseUntil = :now+60s` where `#released = :seen AND releaseLeaseUntil < :now`;
   on success returns `(released, min(released + SLICE, total))`, on a conditional failure `None`.
+  META starts with `releaseLeaseUntil = "1970-01-01T00:00:00+00:00"` so one `<` covers "free"
+  (the test double evaluates neither `OR` nor `REMOVE`).
 - `slice_videos(import_id, lo, hi) -> list[tuple[str, str | None]]` — `(videoID, url)` for the
   VIDEO rows with `lo <= order < hi`, sorted by `order`. One paged query over the import's rows.
-- `finish_release(import_id, lo, hi)` — `SET released = :hi REMOVE releasing` where `released = :lo`.
+- `finish_release(import_id, lo, hi)` — `SET #released = :hi, releaseLeaseUntil = <free>` where `#released = :lo`.
 - `pending_videos` (the client-retry re-drive) returns only rows with no `order` or
   `order < released`, so a retry does not release the whole library at once.
 
@@ -113,7 +115,7 @@ priority while the map runs.
 
 - `release_due` raises in the worker or the status route → logged; the message result and the
   status response are unchanged.
-- The lease holder dies mid-release → the lease goes stale after 60 s; the next settle or status
+- The lease holder dies mid-release → `releaseLeaseUntil` passes after 60 s; the next settle or status
   poll re-sends the slice; duplicates are dropped by `claim_video`.
 - Everything in flight settles while a release is stuck → the next status poll recovers it (app
   open, or background refresh).
@@ -134,7 +136,7 @@ Server, pytest with the existing fakes (`test_cloud_import_api.py`, `test_cloud_
 2. `release_due` with `fastDone` 79 → sends nothing; 80 → sends orders 100–199, `released = 200`;
    the 50-video tail → `released = 250`.
 3. Two `release_due` calls racing on one due slice → the slice is sent once.
-4. A stale `releasing` lease → the same slice is re-sent and `released` advances.
+4. A stale `releaseLeaseUntil` → the same slice is re-sent and `released` advances.
 5. The worker calls `release_due` after a settle; `release_due` raising does not change the
    `HandleResult`.
 6. The client-retry re-drive sends only rows with `order < released`.
