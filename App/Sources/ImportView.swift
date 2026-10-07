@@ -633,6 +633,8 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var accountError: String?
     @State private var showPaywall = false
+    /// Debug and TestFlight only for now; see `TikTokConnectSection.isOffered`.
+    @State private var offersTikTok = false
     /// The pill's slots. See `TabSlots` for the two rules this editor has to respect.
     @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
     @AppStorage(MusicService.key) private var musicService = ""
@@ -655,6 +657,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if offersTikTok { TikTokConnectSection() }
                 accountSection
                 subscriptionSection
                 if let quota = session.quota { quotaSection(quota) }
@@ -743,6 +746,7 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .task { offersTikTok = await TikTokConnectSection.isOffered() }
             .sheet(isPresented: $showPaywall) {
                 NavigationStack {
                     PaywallView(showsAccountLinks: false)

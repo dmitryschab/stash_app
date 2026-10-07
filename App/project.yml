@@ -6,6 +6,11 @@ options:
 packages:
   TikTokBrainKit:
     path: ../TikTokBrainKit
+  # TikTok sign-in (Settings → TikTok). Opens the TikTok app when installed and the SDK's own
+  # in-app browser when not. The app target only: the Kit and the share extension never see it.
+  TikTokOpenSDK:
+    url: https://github.com/tiktok/tiktok-opensdk-ios
+    from: 2.5.0
 targets:
   Stash:
     type: application
@@ -24,6 +29,11 @@ targets:
         buildPhase: resources
     dependencies:
       - package: TikTokBrainKit
+      - package: TikTokOpenSDK
+        product: TikTokOpenAuthSDK
+      # `TikTokURLHandler` lives here, and the SDK's README has apps link it alongside Auth.
+      - package: TikTokOpenSDK
+        product: TikTokOpenSDKCore
       # Embeds the share extension in the app bundle.
       - target: StashShare
     # Sign in with Apple is the only auth method; without this entitlement the
@@ -41,6 +51,10 @@ targets:
         com.apple.developer.applesignin: [Default]
         # The share extension's only channel into the app; see SharedInbox.
         com.apple.security.application-groups: [group.dev.dmitryschab.Stash]
+        # TikTok only accepts an https redirect URI, so the in-app browser's return to
+        # https://stash.dmitrijs.dev/tiktok/callback has to open the app as a universal link.
+        # The site serves the matching apple-app-site-association file.
+        com.apple.developer.associated-domains: ["applinks:stash.dmitrijs.dev"]
     info:
       path: Info.plist
       properties:
@@ -66,6 +80,13 @@ targets:
           - dev.dmitryschab.Stash.process
           - dev.dmitryschab.Stash.deeppass
           - dev.dmitryschab.Stash.refresh
+        # TikTok sign-in. The SDK reads the client key from here, the TikTok app returns to the
+        # client-key URL scheme, and the three query schemes are how the SDK tells whether the
+        # TikTok app is installed. The key is public by design; the secret stays on the box.
+        TikTokClientKey: $(TIKTOK_CLIENT_KEY)
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [$(TIKTOK_CLIENT_KEY)]
+        LSApplicationQueriesSchemes: [tiktokopensdk, snssdk1180, snssdk1233]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash
@@ -76,6 +97,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3  # personal team (Dmitrijs Sabelniks) — hosts Orivox too
         CODE_SIGN_STYLE: Automatic
+        # The sandbox "Stash iOS" app's client key until P2 switches to production credentials.
+        TIKTOK_CLIENT_KEY: REPLACE_WITH_SANDBOX_CLIENT_KEY
 
   # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
   # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build

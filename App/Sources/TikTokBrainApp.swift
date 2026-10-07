@@ -18,6 +18,7 @@ import SwiftUI
 import SwiftData
 import CoreText
 import TikTokBrainKit
+import TikTokOpenSDKCore
 
 @main
 struct TikTokBrainApp: App {
@@ -59,6 +60,11 @@ struct TikTokBrainApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                // TikTok sign-in (Settings → TikTok) returns here from the TikTok app, through
+                // the https redirect URI: SwiftUI hands a universal link over as a plain URL, so
+                // no onContinueUserActivity is needed. The SDK's in-app browser never comes
+                // through here — its ASWebAuthenticationSession catches the callback itself.
+                .onOpenURL { url in _ = TikTokURLHandler.handleOpenURL(url) }
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, phase in
