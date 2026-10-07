@@ -242,8 +242,8 @@ final class PipelineCenter {
         return pill() == nil
             && pill(importing: true) == .reading
             && pill(importing: true, progress: (3, 40)) == .syncing(done: 3, total: 40)
-            && pill(importing: true, progress: (0, 959), deepPass: "transcripts")
-                == .readingLibrary("transcripts", done: 0, total: 959)
+            && pill(importing: true, progress: (0, 959), deepPass: "Transcripts")
+                == .readingLibrary("Transcripts", done: 0, total: 959)
             && pill(cloud: box(.fastPass, 412, 941)) == .syncing(done: 412, total: 941)
             && pill(cloud: box(.accepted, 0, 941)) == .syncing(done: 0, total: 941)
             && pill(shares: [PendingShare(id: "a"), PendingShare(id: "b")]) == .shares(2)
@@ -846,11 +846,11 @@ final class PipelineCenter {
             progress = nil
             deepPassReading = nil
         }
-        deepPassReading = "transcripts"
+        deepPassReading = "Transcripts"
         let transcripts = await runner.backfillTranscripts { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
-        deepPassReading = "on-screen text"
+        deepPassReading = "Screen text"
         let visual = await runner.backfillVisualText(deepPass: read) { done, total in
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }

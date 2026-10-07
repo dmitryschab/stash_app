@@ -513,6 +513,9 @@ private struct ImportSyncPill: View {
                     leading
                     Micro(text: text, size: 9.5, tracking: 0.9, color: .stashOnInk)
                         .lineLimit(1)
+                        // "TRANSCRIPTS 959 OF 959" fits with ~7 pt to spare on a 393 pt phone; a
+                        // four-digit library would not, so it gives a little before it truncates.
+                        .minimumScaleFactor(0.85)
                     if case .syncing(let done, let total) = status {
                         track(done: done, total: total)
                     } else if case .readingLibrary(_, let done, let total) = status {
@@ -554,7 +557,7 @@ private struct ImportSyncPill: View {
         switch status {
         case .reading: "Reading your export…"
         case .syncing(let done, let total): "Syncing \(done) of \(total)"
-        case .readingLibrary(let what, let done, let total): "Reading \(what) \(done) of \(total)"
+        case .readingLibrary(let what, let done, let total): "\(what) \(done) of \(total)"
         // A shared TikTok has no done/total — the pill just says one is in flight.
         case .shares(let count): count == 1 ? "Syncing 1 share" : "Syncing \(count) shares"
         case .finished(let sorted): "\(sorted) videos sorted"
