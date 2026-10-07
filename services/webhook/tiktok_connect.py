@@ -23,7 +23,7 @@ from pydantic import Field
 
 import stash_secrets
 from cloud_import_models import ContractModel
-from cloud_import_store import shared_table
+from cloud_import_store import _is_conditional_failure, shared_table
 from stash_auth import _tiktok_key, current_user
 
 log = logging.getLogger("stash-webhook")
@@ -37,9 +37,9 @@ TIKTOK_USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 TIKTOK_REDIRECT_URI = "https://stash.dmitrijs.dev/tiktok/callback"
 TIKTOK_TIMEOUT = 15
 
-# A 24 h access token this close to lapsing is refreshed before it is revoked: revoking a dead
-# token ends nothing, and the grant would live on at TikTok.
-REFRESH_BEFORE_REVOKE_SECONDS = 60
+# A 24 h access token this close to lapsing is refreshed before it is used: revoking a dead
+# token ends nothing, and the grant would live on at TikTok; a sync with one is refused.
+REFRESH_MARGIN_SECONDS = 60
 
 
 def _json(response) -> dict:
@@ -137,20 +137,11 @@ def revoke_tiktok(table, user_id: str) -> None:
         return
     try:
         token = row["accessToken"]
-        now = int(time.time())
-        if (int(row["accessExpiresAt"]) - now < REFRESH_BEFORE_REVOKE_SECONDS
-                and int(row["refreshExpiresAt"]) > now):
-            refreshed = requests.post(
-                TIKTOK_TOKEN_URL,
-                data={"client_key": client_key, "client_secret": client_secret,
-                      "grant_type": "refresh_token", "refresh_token": row["refreshToken"]},
-                timeout=TIKTOK_TIMEOUT,
-            )
-            fresh = _json(refreshed).get("access_token")
-            if fresh:
-                token = fresh
-            else:
-                log.warning("tiktok refresh before revoke returned %s", refreshed.status_code)
+        try:
+            # A refresh TikTok refused or failed leaves the old token, which is still worth a try.
+            token = live_access_token(table, user_id, row, client_key, client_secret) or token
+        except requests.RequestException:
+            log.warning("tiktok refresh before revoke failed")
         response = requests.post(
             TIKTOK_REVOKE_URL,
             data={"client_key": client_key, "client_secret": client_secret, "token": token},
@@ -160,3 +151,56 @@ def revoke_tiktok(table, user_id: str) -> None:
             log.warning("tiktok revoke returned %s", response.status_code)
     except Exception:
         log.exception("tiktok revoke failed")
+
+
+def live_access_token(table, user_id: str, row: dict, client_key: str,
+                      client_secret: str) -> str | None:
+    """The row's access token, or a refreshed one when it lapses within REFRESH_MARGIN_SECONDS.
+
+    A refresh is persisted on the row straight away, refresh token included: TikTok may rotate
+    it, and a row left holding the old one could never refresh again. None when the refresh
+    token has lapsed or TikTok rejected the grant, which means the user revoked us. Raises
+    requests.RequestException when TikTok could not be reached, failed (5xx) or was busy (429),
+    so a caller never mistakes TikTok being down for the user leaving.
+
+    ponytail: two calls refreshing at the same moment both spend the same refresh token. If
+    TikTok voids it on rotation, the loser reads that as a revoke and its caller drops the
+    connection. One reconnect per collision; a lock is not worth it at one sync a day.
+    """
+    now = int(time.time())
+    if int(row["accessExpiresAt"]) - now >= REFRESH_MARGIN_SECONDS:
+        return row["accessToken"]
+    if int(row["refreshExpiresAt"]) <= now:
+        return None
+    response = requests.post(
+        TIKTOK_TOKEN_URL,
+        data={"client_key": client_key, "client_secret": client_secret,
+              "grant_type": "refresh_token", "refresh_token": row["refreshToken"]},
+        timeout=TIKTOK_TIMEOUT,
+    )
+    if response.status_code >= 500 or response.status_code == 429:
+        raise requests.HTTPError(f"tiktok refresh returned {response.status_code}")
+    token = _json(response)
+    if not token.get("access_token"):
+        log.warning("tiktok refresh returned %s %s", response.status_code, token.get("error"))
+        return None
+    try:
+        # Conditional, so a connection removed meanwhile is not resurrected as a bare token row.
+        table.update_item(
+            Key=_tiktok_key(user_id),
+            UpdateExpression="SET accessToken = :access, accessExpiresAt = :access_expires, "
+                             "refreshToken = :refresh, refreshExpiresAt = :refresh_expires",
+            ConditionExpression="attribute_exists(PK)",
+            ExpressionAttributeValues={
+                ":access": token["access_token"],
+                ":access_expires": now + int(token.get("expires_in") or 0),
+                ":refresh": token.get("refresh_token") or row["refreshToken"],
+                ":refresh_expires": now + int(token["refresh_expires_in"])
+                                    if token.get("refresh_expires_in")
+                                    else int(row["refreshExpiresAt"]),
+            },
+        )
+    except Exception as error:
+        if not _is_conditional_failure(error):
+            raise
+    return token["access_token"]

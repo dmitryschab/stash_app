@@ -546,8 +546,10 @@ def get_me(user_id: str = Depends(current_user)):
         "entitled": stash_subscription.is_entitled(user),
         "subscriptionExpiresAt": int(user.get("subscriptionExpiresAt", 0) or 0),
         # Null until the account links TikTok. Never carries a token, only what the Settings
-        # row shows.
-        "tiktok": {"displayName": tiktok["displayName"], "connectedAt": int(tiktok["connectedAt"])}
+        # row shows. lastSyncAt and lastSyncCount are absent until the first sync delivers.
+        "tiktok": {"displayName": tiktok["displayName"], "connectedAt": int(tiktok["connectedAt"]),
+                   **{key: int(tiktok[key]) for key in ("lastSyncAt", "lastSyncCount")
+                      if key in tiktok}}
                   if tiktok else None,
     }
 
