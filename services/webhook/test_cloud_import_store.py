@@ -493,6 +493,40 @@ def test_an_import_from_before_slicing_is_left_alone():
     assert len(store.pending_videos(import_id)) == 3
 
 
+def test_a_release_that_fails_midway_frees_the_lease_for_the_next_settle():
+    """Otherwise the last ~20 settles of the slice all find the lease held, finish, and leave
+    nobody to retry until the phone polls again — which can be hours with the app closed."""
+    table, store, import_id = sliced(250)
+    settle(table, store, import_id, 80)
+
+    class ThrottledQueue(SliceQueue):
+        def enqueue(self, *args, **kwargs):
+            raise RuntimeError("sqs is throttling")
+
+    with pytest.raises(RuntimeError):
+        release_due(store, ThrottledQueue(), import_id)
+    assert meta_row(table, store, import_id)["releaseLeaseUntil"] == LEASE_FREE
+    assert meta_row(table, store, import_id)["released"] == 100
+
+    queue = SliceQueue()
+    assert release_due(store, queue, import_id) == 100
+
+
+def test_rows_staged_without_a_usable_order_go_out_with_the_last_slice():
+    """A create this deploy cut short leaves old-code rows with no `order`, and an earlier
+    attempt with a longer body can leave an order past the final total. Neither may strand
+    the import short of its total."""
+    table, store, import_id = sliced(150)
+    rows = {item["videoID"]: item for (_pk, sk), item in table.items.items() if "#VIDEO#" in sk}
+    del rows["1"]["order"]                  # staged by the old code
+    rows["2"]["order"] = 400                # staged by an attempt with a longer body
+    settle(table, store, import_id, 80)
+    queue = SliceQueue()
+
+    assert release_due(store, queue, import_id) == 52     # orders 100–149, then both strays
+    assert queue.sent[-2:] == ["1", "2"] or queue.sent[-2:] == ["2", "1"]
+
+
 def test_draining_an_import_sends_every_video_once_newest_first():
     table, store, import_id = sliced(250)
     queue = SliceQueue()

@@ -503,14 +503,37 @@ class DynamoImportStore:
         return released, min(released + SLICE, total)
 
     def slice_videos(self, import_id: str, lo: int, hi: int) -> list[tuple[str, str | None]]:
-        """(videoID, url) for the rows with lo <= order < hi, newest first."""
-        rows = [
-            item
-            for page in self._pages(f"IMPORT#{import_id}#VIDEO#")
-            for item in page.get("Items", [])
-            if item.get("order") is not None and lo <= int(item["order"]) < hi
-        ]
-        return [(item["videoID"], item.get("url")) for item in sorted(rows, key=lambda item: int(item["order"]))]
+        """(videoID, url) for the rows with lo <= order < hi, newest first.
+
+        The last slice also sweeps up every QUEUED row without a usable order — staged by the
+        old code before a deploy cut its create short, or by an earlier attempt at the same
+        import whose body was longer — so no row is stranded and the import can finish."""
+        last = hi >= int((self._get(self._key(import_id, "META")) or {}).get("total", 0))
+
+        def wanted(item) -> bool:
+            order = item.get("order")
+            if order is not None and lo <= int(order) < hi:
+                return True
+            return last and item.get("state") == VideoState.QUEUED.value and (order is None or int(order) >= hi)
+
+        rows = [item for page in self._pages(f"IMPORT#{import_id}#VIDEO#")
+                for item in page.get("Items", []) if wanted(item)]
+        rows.sort(key=lambda item: hi if item.get("order") is None else int(item["order"]))
+        return [(item["videoID"], item.get("url")) for item in rows]
+
+    def abandon_release(self, import_id: str, lo: int) -> None:
+        """Free a lease whose slice did not go out, so the next settle retries at once."""
+        try:
+            self.table.update_item(
+                Key=self._key(import_id, "META"),
+                UpdateExpression="SET releaseLeaseUntil = :free",
+                ConditionExpression="#released = :lo",
+                ExpressionAttributeNames={"#released": "released"},
+                ExpressionAttributeValues={":free": LEASE_FREE, ":lo": lo},
+            )
+        except Exception as error:
+            if not _is_conditional_failure(error):
+                raise
 
     def finish_release(self, import_id: str, lo: int, hi: int) -> None:
         """Record a sent slice and free the lease. A conditional miss means a caller that took

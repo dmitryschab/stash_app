@@ -64,8 +64,15 @@ def release_due(store, queue, import_id: str) -> int:
     span = store.claim_release(import_id)
     if span is None:
         return 0
-    videos = store.slice_videos(import_id, *span)
-    for video_id, url in videos:
-        queue.enqueue(store.user_id, import_id, video_id, url=url)
-    store.finish_release(import_id, *span)
+    lo, hi = span
+    try:
+        videos = store.slice_videos(import_id, lo, hi)
+        for video_id, url in videos:
+            queue.enqueue(store.user_id, import_id, video_id, url=url)
+    except Exception:
+        # Free the lease now, not in 60 s: the slice's last videos may all settle inside that
+        # minute, and then nothing but a phone poll would ever try again.
+        store.abandon_release(import_id, lo)
+        raise
+    store.finish_release(import_id, lo, hi)
     return len(videos)
