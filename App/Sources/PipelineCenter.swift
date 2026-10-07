@@ -29,8 +29,8 @@ final class PipelineCenter {
     /// user is watching cannot wait for a charger.
     static let deepPassTaskID = "dev.dmitryschab.Stash.deeppass"
     /// A light poll of the box while the app is closed mid-import, so "you can close the app"
-    /// can end in a notification instead of a guess. App refresh, not processing: it wants no
-    /// charger and takes seconds.
+    /// can end in a notification instead of a guess — and of the TikTok sync while one is
+    /// connected (`syncTikTok`). App refresh, not processing: it wants no charger and takes seconds.
     static let refreshTaskID = "dev.dmitryschab.Stash.refresh"
     /// Set by the data guide when the user says they asked TikTok for the export; the empty
     /// states read it, and the next submitted import clears it.
@@ -43,6 +43,10 @@ final class PipelineCenter {
     var lastSummary: String?
     var cloudStatus: CloudImportStatus?
     var cloudSyncing = false
+    /// A TikTok data request is out and the archive is not built yet; Settings says so under the
+    /// connected row. Not persisted: every foreground asks the box again.
+    private(set) var tiktokSyncWaiting = false
+    private var tiktokSyncing = false
     /// Set when the shell's status pill is tapped; the Library reads it, pushes Import and clears
     /// it again. The pill and the Import screen have no other owner in common.
     var importRouteRequested = false
@@ -485,9 +489,17 @@ final class PipelineCenter {
                 + "export, ask again with the format set to JSON."
             return
         }
+        submitted = await submitCloudImport(bookmarks, runner: runner, client: client)
+    }
+
+    /// The half of an import that starts once the bookmarks are known: a picked export's, or the
+    /// favourites a TikTok sync brought (`importSynced`). Ingests, submits what the budget covers
+    /// and starts the poll. The caller holds `isImporting`. Returns whether the box accepted it.
+    private func submitCloudImport(_ bookmarks: [Bookmark], runner: PipelineRunner,
+                                   client: CloudImportClient) async -> Bool {
         guard bookmarks.count <= CloudImportLimits.maxVideosPerImport else {
             lastError = CloudImportError.tooManyVideos(bookmarks.count).localizedDescription
-            return
+            return false
         }
 
         // The box charges one unit per submitted video and refuses an over-budget request
@@ -506,7 +518,7 @@ final class PipelineCenter {
             // box be the judge.
             lastError = quota.map { StashError.quotaExhausted($0).localizedDescription }
                 ?? StashError.unauthenticated.localizedDescription
-            return
+            return false
         }
 
         do {
@@ -537,8 +549,8 @@ final class PipelineCenter {
             } else {
                 lastSummary = "Submitted \(submission.accepted) videos · \(newCount) new"
             }
-            submitted = true
             await syncCloudImport()
+            return true
         } catch let error as StashError {
             // Quota and session failures already read as sentences; prefixing them would not help.
             lastError = error.localizedDescription
@@ -547,6 +559,7 @@ final class PipelineCenter {
             if let cloudError = error as? CloudImportError, cloudError.isRetryable { message += " Will retry automatically." }
             lastError = message
         }
+        return false
     }
 
     /// Continues whatever is pending or parked — no file pick needed. Safe to call
@@ -1005,7 +1018,11 @@ final class PipelineCenter {
         refreshThumbnails()
         // Fires from the Scene-level watcher, which runs while the sign-in gate is still up.
         guard StashSession.shared.isSignedIn else { return }
-        Task { await StashSession.shared.refreshQuota() }
+        // /v1/me first: on a cold launch it is what says a TikTok is connected at all.
+        Task { [weak self] in
+            await StashSession.shared.refreshQuota()
+            await self?.syncTikTok()
+        }
         deepPassBlocked = false   // a new foreground is exactly when retrying is worth it
         backfillEmbeddings()
         backfillOffers()
@@ -1026,7 +1043,7 @@ final class PipelineCenter {
             // The library pass wants a charger and Wi-Fi, which is a description of the night —
             // so the window it is most likely to run in is one iOS grants after this point.
             scheduleDeepPassProcessing()
-            if cloudState.isActive { scheduleCloudRefresh() }
+            if cloudState.isActive || StashSession.shared.tiktok != nil { scheduleCloudRefresh() }
             return
         }
         guard isImporting else { return }
@@ -1079,15 +1096,19 @@ final class PipelineCenter {
     private func handleCloudRefreshTask(_ task: BGAppRefreshTask) {
         let work = Task { [weak self] in
             await StashSession.shared.restore()
-            guard let self, StashSession.shared.isSignedIn, cloudState.isActive else {
+            guard let self, StashSession.shared.isSignedIn else {
                 task.setTaskCompleted(success: true)
                 return
             }
-            await syncCloudImport()
             if cloudState.isActive {
-                scheduleCloudRefresh()   // still cooking — look again next window
-            } else if let status = cloudState.status {
-                Self.notifyLibraryReady(status)
+                await syncCloudImport()
+                if !cloudState.isActive, let status = cloudState.status { Self.notifyLibraryReady(status) }
+            }
+            // A favourite bookmarked in TikTok can land while Stash stays closed; a ready archive
+            // starts an import, which the next window then polls like any other.
+            await syncTikTok()
+            if cloudState.isActive || StashSession.shared.tiktok != nil {
+                scheduleCloudRefresh()   // still cooking, or a TikTok to ask again — next window
             }
             task.setTaskCompleted(success: true)
         }
@@ -1211,6 +1232,59 @@ final class PipelineCenter {
         UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetriesKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetryAtKey)
+    }
+
+    // MARK: - TikTok sync
+
+    /// Asks the box for a connected TikTok's favourites — part two of the integration
+    /// (docs/superpowers/specs/2026-10-07-tiktok-portability-p2-design.md). The box asks TikTok
+    /// for the data archive at most once a day and answers every other call from its own row,
+    /// so this is cheap enough for every foreground and every background refresh.
+    ///
+    /// Only asks while the import slot is free: a finished archive is handed over once, and it
+    /// goes through the same submit as a picked export. While an import runs, TikTok's answer
+    /// waits on the box instead. Errors are only logged — the next foreground asks again.
+    func syncTikTok() async {
+        let session = StashSession.shared
+        guard !tiktokSyncing, session.isSignedIn, session.tiktok != nil, Self.cloudImportEnabled,
+              !isImporting, !cloudState.isActive else { return }
+        tiktokSyncing = true
+        defer { tiktokSyncing = false }
+        do {
+            let result = try await TikTokConnectClient(config: Self.currentConfig()).sync()
+            tiktokSyncWaiting = result == .pending || result == .requested
+            switch result {
+            case .notConnected:
+                session.tiktok = nil   // revoked in TikTok, or disconnected from another phone
+            case .ready(let favorites):
+                await session.refreshQuota()   // the new lastSyncAt for Settings, and the budget
+                await importSynced(favorites)
+            case .notEnabled, .pending, .requested, .idle:
+                break
+            }
+        } catch {
+            NSLog("PipelineCenter: TikTok sync failed: %@", String(describing: error))
+        }
+    }
+
+    /// A finished archive's favourites, minus every one the library already has
+    /// (`TikTokSyncResult.toSubmit`), through the import a picked export takes. Nothing new
+    /// means no import at all. An import started while the box was answering wins the slot;
+    /// these favourites are not stored, so the next archive brings them again.
+    private func importSynced(_ favorites: [Bookmark]) async {
+        guard !isImporting, !cloudState.isActive, let container, let runner = makeRunner(),
+              let client = Self.makeCloudClient() else {
+            NSLog("PipelineCenter: import slot busy, %@ synced favourites left for the next archive",
+                  "\(favorites.count)")
+            return
+        }
+        let libraryIDs = Set(((try? ModelContext(container).fetch(FetchDescriptor<Video>())) ?? []).map(\.videoID))
+        let budget = StashSession.shared.quota?.remaining ?? CloudImportLimits.maxVideosPerImport
+        let picks = TikTokSyncResult.toSubmit(favorites, libraryIDs: libraryIDs, budget: budget)
+        guard !picks.isEmpty else { return }
+        isImporting = true
+        defer { isImporting = false }
+        _ = await submitCloudImport(picks, runner: runner, client: client)
     }
 
     // MARK: - Archive retries

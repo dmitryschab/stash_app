@@ -74,7 +74,8 @@ targets:
         # started and must not wait for a charger, while `.deeppass` deepens the whole library
         # and asks for external power (PipelineCenter.scheduleDeepPassProcessing). `.refresh`
         # is the third: a seconds-long poll of the box while the app is closed, so a finished
-        # cloud import ends in a notification (PipelineCenter.scheduleCloudRefresh).
+        # cloud import ends in a notification (PipelineCenter.scheduleCloudRefresh) and a
+        # connected TikTok keeps syncing (PipelineCenter.syncTikTok).
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - dev.dmitryschab.Stash.process
@@ -84,6 +85,8 @@ targets:
         # client-key URL scheme, and the three query schemes are how the SDK tells whether the
         # TikTok app is installed. The key is public by design; the secret stays on the box.
         TikTokClientKey: $(TIKTOK_CLIENT_KEY)
+        # What Settings → TikTok asks for; TikTokConnectSection reads it instead of a literal.
+        TikTokScopes: $(TIKTOK_SCOPES)
         CFBundleURLTypes:
           - CFBundleURLSchemes: [$(TIKTOK_CLIENT_KEY)]
         LSApplicationQueriesSchemes: [tiktokopensdk, snssdk1180, snssdk1233]
@@ -99,6 +102,10 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # The sandbox "Stash iOS" app's client key until P2 switches to production credentials.
         TIKTOK_CLIENT_KEY: sbawv73l08u684eumu
+        # Comma-separated. The sandbox has no portability scopes, so this stays at the basic one
+        # until the production key goes in; then add
+        # portability.activity.single,portability.activity.ongoing (the P2 sync).
+        TIKTOK_SCOPES: user.info.basic
 
   # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
   # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build
