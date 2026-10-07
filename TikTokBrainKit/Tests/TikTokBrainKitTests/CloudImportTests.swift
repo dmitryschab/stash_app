@@ -37,7 +37,8 @@ final class CloudImportTests: XCTestCase {
         total: Int = 2,
         unavailable: Int = 0,
         partialFailures: Int = 0,
-        updatedAt: Date = Date(timeIntervalSince1970: 10)
+        updatedAt: Date = Date(timeIntervalSince1970: 10),
+        map: CloudImportMap? = nil
     ) -> CloudImportStatus {
         CloudImportStatus(
             importID: "import-1",
@@ -46,8 +47,103 @@ final class CloudImportTests: XCTestCase {
             unavailable: unavailable,
             partialFailures: partialFailures,
             estimatedCostUSD: 0.25,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            map: map
         )
+    }
+
+    // MARK: - Map and guesses
+
+    func testStatusDecodesWithAndWithoutAMapAndDropsUnknownCategories() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let base = """
+        {"importID":"i","state":"fast_pass","fastPass":{"done":0,"total":10},"unavailable":0,
+         "partialFailures":0,"estimatedCostUSD":0,"updatedAt":"2026-10-07T10:00:00Z"
+        """
+        let without = try decoder.decode(CloudImportStatus.self, from: Data((base + "}").utf8))
+        XCTAssertNil(without.map)
+
+        let with = try decoder.decode(CloudImportStatus.self, from: Data((base + """
+        ,"map":{"sampled":3,"done":2,"counts":{"coding":1,"gardening":1},"guesses":{"7":"coding","8":"gardening"}}}
+        """).utf8))
+        let map = try XCTUnwrap(with.map)
+        XCTAssertEqual(map.sampled, 3)
+        XCTAssertEqual(map.done, 2)
+        XCTAssertEqual(map.counts, [.coding: 1])
+        XCTAssertEqual(map.guesses, ["7": .coding])
+
+        // Round-trips through the persisted sync state.
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let encoded = try encoder.encode(with)
+        XCTAssertEqual(try decoder.decode(CloudImportStatus.self, from: encoded).map, map)
+    }
+
+    func testSyncStateKeepsTheMapWithTheHigherDone() {
+        var state = CloudImportSyncState(importID: "import-1")
+        let early = CloudImportMap(sampled: 60, done: 10, counts: [.coding: 10])
+        let late = CloudImportMap(sampled: 60, done: 40, counts: [.coding: 30, .recipe: 10])
+        state.apply(status: status(state: .fastPass, done: 1, map: late))
+        state.apply(status: status(state: .fastPass, done: 2, map: early))
+        XCTAssertEqual(state.status?.map, late)
+        state.apply(status: status(state: .fastPass, done: 3, map: nil))
+        XCTAssertEqual(state.status?.map, late)   // a poll without a map does not erase it
+    }
+
+    func testGuessesFillOnlyEmptyUnanalysedRowsAndTheFastPassOverridesThem() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        for id in ["1", "2", "3"] {
+            context.insert(Video(videoID: id, url: URL(string: "https://www.tiktok.com/@x/video/\(id)")!,
+                                 bookmarkedAt: Date(timeIntervalSince1970: 1)))
+        }
+        try context.save()
+        // "2" was analysed in an earlier import.
+        _ = try CloudImportResultUpserter.apply([CloudImportResult(videoID: "2", analysisRevision: 8, category: "music", title: "Old")], to: context)
+
+        let changed = try CloudImportResultUpserter.applyGuesses(["1": .coding, "2": .recipe, "9": .film], to: context)
+        XCTAssertEqual(changed, 1)
+        let videos = Dictionary(uniqueKeysWithValues: try context.fetch(FetchDescriptor<Video>()).map { ($0.videoID, $0) })
+        XCTAssertEqual(videos["1"]?.categoryRaw, "coding")
+        XCTAssertEqual(videos["1"]?.isGuessed, true)               // a guess is not an analysis
+        XCTAssertEqual(videos["2"]?.categoryRaw, "music")          // analysed rows are left alone
+        XCTAssertEqual(videos["2"]?.isGuessed, false)
+        XCTAssertEqual(videos["3"]?.categoryRaw, "")
+        XCTAssertEqual(videos["3"]?.isGuessed, false)              // nothing is not a guess
+
+        XCTAssertEqual(try CloudImportResultUpserter.applyGuesses(["1": .coding], to: context), 0)   // idempotent
+
+        _ = try CloudImportResultUpserter.apply([CloudImportResult(videoID: "1", analysisRevision: 8, category: "learning", title: "Real")], to: context)
+        XCTAssertEqual(videos["1"]?.categoryRaw, "learning")       // the fast pass wins a disagreement
+        XCTAssertEqual(videos["1"]?.isGuessed, false)
+    }
+
+    func testARowAnalysedOnDeviceAtRevisionZeroIsNotAGuess() {
+        // The old on-device pipeline and the demo seed both leave revision 0 behind — with a
+        // title. Only a row with a category and nothing else is Clef's.
+        let video = Video(videoID: "1", url: URL(string: "https://www.tiktok.com/@x/video/1")!, bookmarkedAt: Date())
+        video.categoryRaw = "recipe"
+        video.title = "Pasta"
+        XCTAssertFalse(video.isGuessed)
+        video.title = ""
+        video.summary = "A dish."
+        XCTAssertFalse(video.isGuessed)
+        video.summary = ""
+        XCTAssertTrue(video.isGuessed)
+    }
+
+    func testAnUnavailableResultClearsAGuess() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        context.insert(Video(videoID: "1", url: URL(string: "https://www.tiktok.com/@x/video/1")!,
+                             bookmarkedAt: Date(timeIntervalSince1970: 1)))
+        try context.save()
+        _ = try CloudImportResultUpserter.applyGuesses(["1": .coding], to: context)
+        _ = try CloudImportResultUpserter.apply([CloudImportResult(videoID: "1", analysisRevision: 8, unavailable: true, errorCode: "unavailable")], to: context)
+        let video = try XCTUnwrap(context.fetch(FetchDescriptor<Video>()).first)
+        XCTAssertTrue(video.unavailable)
+        XCTAssertEqual(video.categoryRaw, "")
     }
 
     func testSubmissionEncodesRequestUsingWireNames() async throws {

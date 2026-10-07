@@ -77,6 +77,11 @@ import SwiftData
 }
 
 public extension Video {
+    /// A row Clef has filed but nothing has read: a category and no words. The old on-device
+    /// pipeline and the demo seed also leave `cloudAnalysisRevision == 0` behind, but with a
+    /// title — so the revision is not the test, the emptiness is.
+    var isGuessed: Bool { !categoryRaw.isEmpty && title.isEmpty && summary.isEmpty }
+
     /// The transcript backfill's queue, shared with the count Settings puts on its button: a
     /// count that also included videos already tried (no speech) read "(277)" over a tap that
     /// found nothing to do.
