@@ -122,3 +122,67 @@ Submitted version verified field-by-field in the portal:
 
 ## On approval
 - Data Portability API → "View scopes to apply" → request `portability.all.ongoing` with the use-case text above (scope application is gated until the app is approved — confirmed in portal).
+
+---
+
+# REJECTED — 2026-07-15 (icon mismatch only)
+
+Reviewer: *"Icon does not match brand. The app icon submitted in the Basic Info does not match the icon displayed on the website. Please ensure the same icon is used consistently across both the TikTok, the website and Browser tab (favicon), then resubmit."*
+
+**The complaint was accurate.** Four different icons existed:
+| Where | Was |
+|---|---|
+| TikTok Basic Info | needle-branch logo (`App/branding/stash-logo-needle-branch-1024.png`) |
+| Website header | generic purple `#4f46e5` bookmark glyph (inline SVG) |
+| Website favicon | same purple bookmark, as an SVG data-URI |
+| iOS `AppIcon.appiconset` | brutalist logo — a 4th, unrelated image |
+
+**Fix applied — DONE and DEPLOYED 2026-07-15.** `stash-logo-brutalist-1024.png` is the **canonical Stash brand** (user decision, 2026-07-15). Every icon surface now uses it.
+
+> **Brand decision — read before touching any icon.** There are two similar logos in `App/branding/`, same design family (bookmark + vinyl + blue arm), *inverted palettes*, both 1024². They are NOT resolution variants of each other — they are different artwork, and mixing them is exactly what caused this rejection:
+> - **`stash-logo-brutalist-1024.png` — CANONICAL.** Cream background, black bookmark, blue "Y" arm with red tip.
+> - `stash-logo-needle-branch-1024.png` — *superseded.* Navy background, cream bookmark, sprouting branch. This was in the original Jul 11 submission; **do not use it.**
+
+| Surface | File | State |
+|---|---|---|
+| Branding source | `App/branding/stash-logo-brutalist-1024.png` | **canonical** |
+| TikTok Basic Info | brutalist, re-uploaded by user | in draft, pending submit |
+| Website header + favicon | `services/webhook/site/icon.png` (256², from brutalist) | **deployed live** |
+| iOS `AppIcon.appiconset/icon-1024.png` | already brutalist — left untouched | correct as-is |
+
+- `index.html`, `terms.html`, `privacy.html`: favicon data-URI → `/icon.png`; header brand `<svg>` → `<img src="/icon.png">`.
+- Deployed to the box (`site/` → `/var/www/stash`, owned `caddy:caddy`). Verified live: `https://stash.dmitrijs.dev/icon.png` → 200, md5 matches repo (`4a4682d…`), all three pages reference `/icon.png`, zero occurrences of the old purple glyph remain, and `/health` still returns ok.
+
+**Trap — `Return to Draft` silently clears the App icon.** Text fields, the demo video, redirect URI, webhook callback and Platform all survive; the icon field comes back **empty** and must be re-uploaded by hand. Budget for that on any future resubmit.
+
+**Deploy gotcha (bit us once — the box served the Jul 10 purple-bookmark site for 4 days):** Caddy file-serves `site/` from `/var/www/stash`, but `deploy.sh` only installs `app.py` — it does **NOT** sync the site. Static-site changes must be copied separately:
+```sh
+KEY=infra/aws-box/stash-box-key.pem ; IP=13.50.196.28   # key is gitignored, lives in the main checkout, not worktrees
+ssh -i $KEY ubuntu@$IP 'rm -rf /tmp/stash-site && mkdir -p /tmp/stash-site'
+scp -i $KEY services/webhook/site/* ubuntu@$IP:/tmp/stash-site/
+ssh -i $KEY ubuntu@$IP 'sudo cp /tmp/stash-site/* /var/www/stash/ && sudo chown caddy:caddy /var/www/stash/*'
+```
+
+**Do NOT switch Platform back to iOS to dodge this.** Already tried and blocked on 2026-07-11 (see above): TikTok requires a live App Store URL for the iOS platform, and Stash has no App Store listing. It would also not avoid the icon check — the icon would just be compared against the App Store listing instead. Platform Web is correct anyway; Data Portability is a server-side OAuth + webhook flow.
+
+---
+
+# RESUBMITTED — 2026-07-15 12:46 PM
+
+**Status: In review (Staging).** Changelog confirms: `Updated App icon` · `Updated Status from Rejected to Staging` · asset id `7661196493772179463` → `7662675508886505480`. Portal banner: "This version of Stash is in review."
+
+Submitted with:
+- **App icon:** brutalist (re-uploaded by hand — `Return to Draft` had cleared the field).
+- **App review text (958/1000)**, ending with: *"REVISION (Jul 15): Fixes the icon mismatch from the previous review. The Basic Info app icon and our website now use the identical Stash logo — stash.dmitrijs.dev displays that same logo in the page header and as the browser-tab favicon on every page."*
+- **Submission reason (116/120):** *"Fixes icon mismatch: the app icon and our website (stash.dmitrijs.dev header + favicon) now use the same Stash logo."*
+- Everything else unchanged from the Jul 11 submission.
+
+**Do NOT press "Recall"** — it withdraws the submission.
+
+## Known residual risk
+`stash-demo.mp4` was recorded 2026-07-11, when the site still served the **purple placeholder favicon** — it does not show the current brutalist logo. Judged low-risk (the revision note explains the fix, and the reviewer's complaint was about the Basic Info icon vs the live site, both of which now match). If the next review bounces on the demo video, re-record it against the current site and resubmit.
+
+## Portal gotchas learned the hard way
+1. **`Return to Draft` clears the App icon.** Everything else survives (text, demo video, redirect URI, webhook, platform). Re-upload the icon by hand every time.
+2. **The submit dialog's reason field rejects programmatic `value` setting** — React ignores it and the Submit button stays disabled. It must receive real keystrokes.
+3. **Two similar logos exist.** See the brand-decision callout above. Do not mix them.
