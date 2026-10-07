@@ -53,3 +53,19 @@ class SQSImportQueue:
             ReceiptHandle=receipt_handle,
             VisibilityTimeout=timeout_seconds,
         )
+
+
+def release_due(store, queue, import_id: str) -> int:
+    """Hand the queue the next slice if it is due. Returns how many were sent.
+
+    Messages go out before the counter moves: a crash in between leaves the lease to go
+    stale and the next caller re-sends the slice. `claim_video` already drops a message for
+    a row that is running or settled, so a re-send costs messages, not work."""
+    span = store.claim_release(import_id)
+    if span is None:
+        return 0
+    videos = store.slice_videos(import_id, *span)
+    for video_id, url in videos:
+        queue.enqueue(store.user_id, import_id, video_id, url=url)
+    store.finish_release(import_id, *span)
+    return len(videos)

@@ -58,6 +58,16 @@ MAX_FAST_PASS_ATTEMPTS = 5
 # be retried against our model bill forever.
 MAX_FREE_RETRIES = 3
 
+# The import goes to the queue in slices, newest first, so the saves a person reaches for
+# first are sorted in the first few minutes. The next slice goes out while REFILL_AT of the
+# current one are still in flight, so the workers never wait at a slice boundary.
+SLICE = 100
+REFILL_AT = 20
+# A release that dies between sending a slice and recording it is retaken after this long.
+RELEASE_LEASE_SECONDS = 60
+# "Nobody holds the lease": older than any real timestamp, so one `<` compares it.
+LEASE_FREE = "1970-01-01T00:00:00+00:00"
+
 # Compare-and-set retries on the quota row. N writers racing on one row need N attempts in
 # the worst case — each round exactly one wins and the rest re-read — and the shipping app
 # drains its queue at concurrency 3 on the metered transcript route. A budget of 3 was
@@ -69,6 +79,12 @@ QUOTA_CAS_ATTEMPTS = 8
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def newest_first(videos) -> list:
+    """Submission order is the client's business; slice order is ours. `timestamp()` so a
+    naive date cannot raise against an aware one. Stable: equal dates keep their order."""
+    return sorted(videos, key=lambda video: video.bookmarked_at.timestamp(), reverse=True)
 
 
 def _next_month_reset(now: datetime) -> int:
@@ -223,7 +239,7 @@ class DynamoImportStore:
         # items, so a 900-video import cannot be one transaction; and the import only
         # counts as "created" once the client+META anchor below lands, so a crash
         # mid-stage is safely resumed by the client's retry onto these same rows.
-        self._ensure_videos(import_id, request.videos)
+        self._ensure_videos(import_id, newest_first(request.videos))
 
         meta = {
             **self._key(import_id, "META"),
@@ -234,6 +250,8 @@ class DynamoImportStore:
             "unavailable": 0,
             "partialFailures": 0,
             "deferred": deferred,
+            "released": min(SLICE, len(request.videos)),
+            "releaseLeaseUntil": LEASE_FREE,
             "estimatedCostUSD": Decimal("0"),
             "updatedAt": now,
         }
@@ -263,12 +281,13 @@ class DynamoImportStore:
     def _ensure_videos(self, import_id: str, videos) -> None:
         """Create one QUEUED row per video if absent — idempotent across client retries."""
         now = _now()
-        for video in videos:
+        for order, video in enumerate(videos):
             item = {
                 **self._key(import_id, f"VIDEO#{video.video_id}"),
                 "videoID": video.video_id,
                 "url": video.url,
                 "bookmarkedAt": video.bookmarked_at.isoformat(),
+                "order": order,
                 "state": VideoState.QUEUED.value,
                 "attempts": 0,
                 "updatedAt": now,
@@ -324,11 +343,14 @@ class DynamoImportStore:
         will ever see. Nothing else in the system revisits a QUEUED row.
         """
         waiting = {VideoState.QUEUED.value, VideoState.RETRYABLE.value}
+        released = (self._get(self._key(import_id, "META")) or {}).get("released")
         return [
             (item["videoID"], item.get("url"))
             for page in self._pages(f"IMPORT#{import_id}#VIDEO#")
             for item in page.get("Items", [])
             if item.get("state") in waiting
+            # A row past the released slices waits for release_due, not for a client retry.
+            and (released is None or item.get("order") is None or int(item["order"]) < int(released))
         ]
 
     def failure_counts(self, video_ids: set[str]) -> dict[str, int]:
@@ -447,6 +469,63 @@ class DynamoImportStore:
             UpdateExpression="SET mapDone = mapDone + :one",
             ExpressionAttributeValues={":one": 1},
         )
+
+    # ------------------------------------------------------------------ slices
+
+    def claim_release(self, import_id: str) -> tuple[int, int] | None:
+        """If the next slice is due, take the lease and return its `order` span [lo, hi).
+        None when nothing is due, the lease is held, or the import predates slicing."""
+        meta = self._get(self._key(import_id, "META"))
+        if not meta or "released" not in meta:
+            return None
+        released, total = int(meta["released"]), int(meta["total"])
+        if released >= total or int(meta.get("fastDone", 0)) < released - REFILL_AT:
+            return None
+        now = datetime.now(timezone.utc)
+        try:
+            self.table.update_item(
+                Key=self._key(import_id, "META"),
+                UpdateExpression="SET releaseLeaseUntil = :until",
+                # Aliased like #total: cheaper than finding out in production which words
+                # DynamoDB reserves.
+                ConditionExpression="#released = :seen AND releaseLeaseUntil < :now",
+                ExpressionAttributeNames={"#released": "released"},
+                ExpressionAttributeValues={
+                    ":until": (now + timedelta(seconds=RELEASE_LEASE_SECONDS)).isoformat(),
+                    ":seen": released,
+                    ":now": now.isoformat(),
+                },
+            )
+        except Exception as error:
+            if _is_conditional_failure(error):
+                return None
+            raise
+        return released, min(released + SLICE, total)
+
+    def slice_videos(self, import_id: str, lo: int, hi: int) -> list[tuple[str, str | None]]:
+        """(videoID, url) for the rows with lo <= order < hi, newest first."""
+        rows = [
+            item
+            for page in self._pages(f"IMPORT#{import_id}#VIDEO#")
+            for item in page.get("Items", [])
+            if item.get("order") is not None and lo <= int(item["order"]) < hi
+        ]
+        return [(item["videoID"], item.get("url")) for item in sorted(rows, key=lambda item: int(item["order"]))]
+
+    def finish_release(self, import_id: str, lo: int, hi: int) -> None:
+        """Record a sent slice and free the lease. A conditional miss means a caller that took
+        over a stale lease already recorded it — nothing left to do."""
+        try:
+            self.table.update_item(
+                Key=self._key(import_id, "META"),
+                UpdateExpression="SET #released = :hi, releaseLeaseUntil = :free",
+                ConditionExpression="#released = :lo",
+                ExpressionAttributeNames={"#released": "released"},
+                ExpressionAttributeValues={":hi": hi, ":free": LEASE_FREE, ":lo": lo},
+            )
+        except Exception as error:
+            if not _is_conditional_failure(error):
+                raise
 
     def fail_video(self, import_id: str, video_id: str, retryable: bool, code: str) -> bool:
         key = self._key(import_id, f"VIDEO#{video_id}")
