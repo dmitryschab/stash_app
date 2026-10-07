@@ -9,6 +9,13 @@ stash.dmitrijs.dev {
 	handle /health {
 		reverse_proxy 127.0.0.1:8000
 	}
+	# Universal links: iOS fetches this exact path, wants JSON, and refuses a redirect. The
+	# file has no extension, so Caddy would otherwise guess its type.
+	handle /.well-known/apple-app-site-association {
+		root * /var/www/stash
+		header Content-Type application/json
+		file_server
+	}
 	handle {
 		root * /var/www/stash
 		try_files {path} {path}.html {path}/
