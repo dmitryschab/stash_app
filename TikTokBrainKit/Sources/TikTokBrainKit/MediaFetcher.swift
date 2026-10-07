@@ -160,6 +160,19 @@ public struct FrameReader: Sendable {
     public static let frameMarker = "["
 
     public func recognizeText(in imageURLs: [URL]) async throws -> String {
+        // Vision's `perform` is synchronous and slow, and blocking a Swift-concurrency thread
+        // with it is what froze the deep pass: six reads at once filled the phone's whole
+        // cooperative pool, and nothing queued behind them could resume. A GCD queue has threads
+        // of its own.
+        try await withCheckedThrowingContinuation { continuation in
+            Self.queue.async { continuation.resume(with: Result { try Self.read(imageURLs) }) }
+        }
+    }
+
+    private static let queue = DispatchQueue(label: "dev.dmitryschab.Stash.frame-reader",
+                                             qos: .utility, attributes: .concurrent)
+
+    private static func read(_ imageURLs: [URL]) throws -> String {
         var blocks: [String] = []
         var seen = Set<String>()
 
