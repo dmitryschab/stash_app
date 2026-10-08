@@ -673,6 +673,9 @@ struct SettingsView: View {
     @State private var showPaywall = false
     /// Debug and TestFlight only for now; see `TikTokConnectSection.isOffered`.
     @State private var offersTikTok = false
+    /// See `TikTokConnectSection.regionStorefront`. Read before the section shows, so its
+    /// connect button never flashes in and out.
+    @State private var tiktokStorefront: String?
     /// The pill's slots. See `TabSlots` for the two rules this editor has to respect.
     @AppStorage(TabSlots.key) private var slotsRaw = TabSlots.encode(TabSlots.fallback)
     @AppStorage(MusicService.key) private var musicService = ""
@@ -695,7 +698,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if offersTikTok { TikTokConnectSection() }
+                if offersTikTok { TikTokConnectSection(storefront: tiktokStorefront) }
                 accountSection
                 subscriptionSection
                 if let quota = session.quota { quotaSection(quota) }
@@ -787,7 +790,10 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { offersTikTok = await TikTokConnectSection.isOffered() }
+            .task {
+                tiktokStorefront = await TikTokConnectSection.regionStorefront()
+                offersTikTok = await TikTokConnectSection.isOffered()
+            }
             .sheet(isPresented: $showPaywall) {
                 NavigationStack {
                     PaywallView(showsAccountLinks: false)

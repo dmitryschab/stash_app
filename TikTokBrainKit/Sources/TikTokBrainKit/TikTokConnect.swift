@@ -80,16 +80,32 @@ public struct TikTokConnectClient: Sendable {
     private let config: BoxConfig
     private let session: URLSession
 
+    /// The App Store storefronts TikTok sync is offered in: the EU27, the rest of the EEA, and
+    /// the UK, as the approved Data Portability application declares. ISO 3166-1 alpha-3, the
+    /// form `Storefront.countryCode` reports. The box refuses a connect from anywhere else, from
+    /// its own copy (`ALLOWED_STOREFRONTS` in services/webhook/tiktok_connect.py); change both
+    /// together.
+    public static let allowedStorefronts: Set<String> = [
+        "AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU", "GRC", "HUN",
+        "IRL", "ITA", "LVA", "LTU", "LUX", "MLT", "NLD", "POL", "PRT", "ROU", "SVK", "SVN", "ESP",
+        "SWE",
+        "ISL", "LIE", "NOR",
+        "GBR",
+    ]
+
     public init(config: BoxConfig, session: URLSession = .shared) {
         self.config = config
         self.session = session
     }
 
-    public func connect(code: String, codeVerifier: String) async throws -> TikTokConnection {
+    /// `storefront` is the App Store storefront's alpha-3 code, which the box checks against
+    /// its own copy of `allowedStorefronts` before it calls TikTok.
+    public func connect(code: String, codeVerifier: String, storefront: String) async throws -> TikTokConnection {
         var request = URLRequest(url: config.baseURL.appendingPathComponent("tiktok/connect"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["code": code, "codeVerifier": codeVerifier])
+        request.httpBody = try JSONEncoder().encode(
+            ["code": code, "codeVerifier": codeVerifier, "storefront": storefront])
         let data = try await send(request)
         guard let connection = try? JSONDecoder().decode(TikTokConnection.self, from: data) else {
             throw TikTokConnectError.unreachable

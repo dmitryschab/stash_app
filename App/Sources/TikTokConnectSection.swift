@@ -10,6 +10,10 @@
 // once the build asks for the portability scopes (`TIKTOK_SCOPES`), which the sandbox credentials
 // do not have — so nothing comes in yet, and the section is only offered in Debug and TestFlight
 // builds (`isOffered`).
+//
+// The approved Data Portability application covers the EEA and the UK only, told apart by the
+// App Store storefront (`regionStorefront`). Anywhere else the section says so instead of
+// offering to connect; an account already connected keeps its row and can still disconnect.
 
 import SwiftUI
 import StoreKit
@@ -25,6 +29,12 @@ struct TikTokConnectSection: View {
     /// Connecting or disconnecting; either way the button waits.
     @State private var isWorking = false
     @State private var failure: String?
+    /// The storefront a connect sends, from `regionStorefront`; nil offers no connect button.
+    let storefront: String?
+
+    init(storefront: String?) {
+        self.storefront = storefront
+    }
 
     /// Registered on the TikTok developer portal and claimed by the app as a universal link.
     static let redirectURI = "https://stash.dmitrijs.dev/tiktok/callback"
@@ -46,11 +56,14 @@ struct TikTokConnectSection: View {
                     if isWorking { Text("Disconnecting…") } else { Text("Disconnect") }
                 }
                 .disabled(isWorking)
-            } else {
-                Button { connect() } label: {
+            } else if let storefront {
+                Button { connect(storefront: storefront) } label: {
                     if isWorking { Text("Connecting…") } else { Text("Connect TikTok") }
                 }
                 .disabled(isWorking)
+            } else {
+                Text("TikTok sync is available in the EEA and the UK.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             if let failure {
                 Text(failure).font(.footnote).foregroundStyle(Color.categoryRecipe)
@@ -86,7 +99,16 @@ struct TikTokConnectSection: View {
         #endif
     }
 
-    private func connect() {
+    /// The App Store storefront's alpha-3 code when it is one of
+    /// `TikTokConnectClient.allowedStorefronts`; nil anywhere else and when StoreKit cannot say,
+    /// both of which the box would refuse anyway.
+    static func regionStorefront() async -> String? {
+        guard let code = await Storefront.current?.countryCode.uppercased(),
+              TikTokConnectClient.allowedStorefronts.contains(code) else { return nil }
+        return code
+    }
+
+    private func connect(storefront: String) {
         failure = nil
         let request = TikTokAuthRequest(scopes: Self.scopes, redirectURI: Self.redirectURI)
         // Read now and captured by value: capturing the request in its own completion would
@@ -95,12 +117,14 @@ struct TikTokConnectSection: View {
         self.request = request
         isWorking = true
         let sent = request.send { response in
-            Task { @MainActor in await finish(response as? TikTokAuthResponse, verifier: verifier) }
+            Task { @MainActor in
+                await finish(response as? TikTokAuthResponse, verifier: verifier, storefront: storefront)
+            }
         }
-        if !sent { Task { await finish(nil, verifier: verifier) } }
+        if !sent { Task { await finish(nil, verifier: verifier, storefront: storefront) } }
     }
 
-    private func finish(_ response: TikTokAuthResponse?, verifier: String) async {
+    private func finish(_ response: TikTokAuthResponse?, verifier: String, storefront: String) async {
         defer {
             request = nil
             isWorking = false
@@ -110,7 +134,7 @@ struct TikTokConnectSection: View {
             guard let code = response?.authCode, !code.isEmpty else { break }
             do {
                 session.tiktok = try await TikTokConnectClient(config: PipelineCenter.currentConfig())
-                    .connect(code: code, codeVerifier: verifier)
+                    .connect(code: code, codeVerifier: verifier, storefront: storefront)
             } catch {
                 failure = error.localizedDescription
             }

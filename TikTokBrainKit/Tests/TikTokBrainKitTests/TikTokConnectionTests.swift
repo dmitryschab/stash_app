@@ -39,4 +39,12 @@ struct TikTokConnectionTests {
         #expect(older.userID == "u-1" && older.tiktok == nil)
         #expect(disconnected.userID == "u-1" && disconnected.tiktok == nil)
     }
+
+    /// The EEA and the UK, as the box's `ALLOWED_STOREFRONTS` has them.
+    @Test func theAllowedStorefrontsAreTheEEAAndTheUK() {
+        let allowed = TikTokConnectClient.allowedStorefronts
+        #expect(allowed.count == 31)
+        #expect(allowed.isSuperset(of: ["LVA", "NLD", "GBR", "NOR"]))
+        #expect(allowed.isDisjoint(with: ["USA", "CHE"]))
+    }
 }
