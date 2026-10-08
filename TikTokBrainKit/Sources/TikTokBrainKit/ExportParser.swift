@@ -11,6 +11,9 @@ import Foundation
 /// archive, an already-extracted directory, or a single JSON file, so nobody
 /// has to unpack anything first. `ZipReader` does the archive walk — see its
 /// ceiling there — and every JSON member merges the way directory files do.
+///
+/// Instagram's export goes through the same door: a file named `saved_posts…json`
+/// is read as Instagram saves instead (see `instagramSaves(in:)`).
 public struct ExportParser {
     public init() {}
 
@@ -36,28 +39,19 @@ public struct ExportParser {
         }
 
         if isDirectory.boolValue {
-            var items: [[String: Any]] = []
             let contents = try fm.contentsOfDirectory(
                 at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-            for file in contents where file.pathExtension.lowercased() == "json" {
-                let data = try Data(contentsOf: file)
-                let root = try JSONSerialization.jsonObject(with: data, options: [])
-                items.append(contentsOf: collectFavoriteItems(in: root))
-            }
-            return bookmarks(from: items)
+            return try bookmarks(fromFiles: try contents
+                .filter { $0.pathExtension.lowercased() == "json" }
+                .map { ($0.lastPathComponent, try Data(contentsOf: $0)) })
         }
 
         if url.pathExtension.lowercased() == "json" {
-            return try parse(jsonData: Data(contentsOf: url))
+            return try bookmarks(fromFiles: [(url.lastPathComponent, try Data(contentsOf: url))])
         }
 
         if url.pathExtension.lowercased() == "zip" || Self.startsWithZipMagic(url) {
-            var items: [[String: Any]] = []
-            for member in try ZipReader.jsonMembers(of: url) {
-                let root = try JSONSerialization.jsonObject(with: member, options: [])
-                items.append(contentsOf: collectFavoriteItems(in: root))
-            }
-            return bookmarks(from: items)
+            return try bookmarks(fromFiles: try ZipReader.jsonMembers(of: url))
         }
 
         throw CocoaError(.fileReadUnknown)
@@ -69,6 +63,56 @@ public struct ExportParser {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
         return (try? handle.read(upToCount: 4)) == Data([0x50, 0x4B, 0x03, 0x04])
+    }
+
+    /// Every JSON file of an export, merged. A file is read as either TikTok's or Instagram's,
+    /// never both, so one reel or favourite cannot arrive twice under two readings.
+    private func bookmarks(fromFiles files: [(name: String, data: Data)]) throws -> [Bookmark] {
+        var items: [[String: Any]] = []
+        var instagram: [Bookmark] = []
+        for file in files {
+            let root = try JSONSerialization.jsonObject(with: file.data, options: [])
+            let fileName = file.name.split(separator: "/").last.map(String.init) ?? file.name
+            if fileName.lowercased().contains("saved_posts") {
+                instagram.append(contentsOf: instagramSaves(in: root))
+            } else {
+                items.append(contentsOf: collectFavoriteItems(in: root))
+            }
+        }
+        return newestPerID(bookmarks(from: items) + instagram)
+    }
+
+    // MARK: - Instagram
+
+    /// Instagram's `saved_posts.json`, in both layouts Meta has shipped: the current top-level
+    /// array of `{timestamp, label_values: [{label: "URL", href}, …]}`, and the older
+    /// `{saved_saved_media: [{string_map_data: {"Saved on": {href, timestamp}}}]}`. The
+    /// timestamp is the save, in Unix seconds.
+    ///
+    /// ponytail: reels only. `TikTokLink.videoID` refuses `/p/` links because a post can be a
+    /// carousel the box's extractor cannot take, so saved photos and pre-reel video posts are
+    /// skipped; reading them means teaching the box `/p/` first.
+    private func instagramSaves(in root: Any) -> [Bookmark] {
+        var saves: [(link: Any?, time: Any?)] = []
+        if let entries = root as? [[String: Any]] {
+            for entry in entries {
+                let link = (entry["label_values"] as? [[String: Any]])?
+                    .first { ($0["label"] as? String) == "URL" }
+                saves.append((link?["href"] ?? link?["value"], entry["timestamp"]))
+            }
+        } else if let entries = (root as? [String: Any])?["saved_saved_media"] as? [[String: Any]] {
+            for entry in entries {
+                let saved = (entry["string_map_data"] as? [String: Any])?["Saved on"] as? [String: Any]
+                saves.append((saved?["href"], saved?["timestamp"]))
+            }
+        }
+        return saves.compactMap { link, time in
+            guard let text = link as? String, let url = URL(string: text),
+                  TikTokLink.isInstagram(url), let id = TikTokLink.videoID(in: url),
+                  let seconds = (time as? NSNumber)?.doubleValue else { return nil }
+            return Bookmark(id: id, url: TikTokLink.canonical(url),
+                            date: Date(timeIntervalSince1970: seconds))
+        }
     }
 
     // MARK: - Tree walk
@@ -127,13 +171,19 @@ public struct ExportParser {
     /// here too, so a synced favourite and an exported one are the same `Bookmark`.
     func bookmarks(from items: [[String: Any]]) -> [Bookmark] {
         let formatter = Self.makeDateFormatter()
-        var newestByID: [String: Bookmark] = [:]
-        for object in items {
+        return newestPerID(items.compactMap { object in
             guard let dateText = dateString(object),
                   let linkText = linkString(object),
                   let url = URL(string: linkText),
-                  let date = formatter.date(from: dateText) else { continue }
-            let bookmark = Bookmark(id: videoID(from: url), url: url, date: date)
+                  let date = formatter.date(from: dateText) else { return nil }
+            return Bookmark(id: videoID(from: url), url: url, date: date)
+        })
+    }
+
+    /// One bookmark per id, the most recent save winning, newest first.
+    private func newestPerID(_ bookmarks: [Bookmark]) -> [Bookmark] {
+        var newestByID: [String: Bookmark] = [:]
+        for bookmark in bookmarks {
             if let existing = newestByID[bookmark.id], existing.date >= bookmark.date {
                 continue
             }

@@ -629,8 +629,9 @@ final class PipelineCenter {
         guard !bookmarks.isEmpty else {
             // Names the cause that actually produces this: TXT was picked two days ago, and the
             // old wording sent people looking for the mistake in their favourites instead.
-            lastError = "No favourites found. If you chose TXT when you asked TikTok for the "
-                + "export, ask again with the format set to JSON."
+            lastError = "No saved videos found. If you chose TXT or HTML when you asked for the "
+                + "export, ask again with the format set to JSON. From Instagram, only saved "
+                + "reels come in."
             return
         }
         submitted = await submitCloudImport(bookmarks, runner: runner, client: client)

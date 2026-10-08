@@ -35,7 +35,9 @@ enum ZipReader {
     /// to tell the person the file did not read.
     private static var corrupt: CocoaError { CocoaError(.fileReadCorruptFile) }
 
-    static func jsonMembers(of url: URL) throws -> [Data] {
+    /// Each member's path inside the archive comes with it: Instagram's saves are told apart from
+    /// its likes by file name alone, the two being written in the same shape.
+    static func jsonMembers(of url: URL) throws -> [(name: String, data: Data)] {
         // Mapped, not read: the "All data" export runs to several GB of video, and reading it
         // whole was multiple GB resident before the first member was even inflated. The walk
         // below touches the central directory and the JSON members only, so the pages of
@@ -46,7 +48,7 @@ enum ZipReader {
         guard let entryCount = archive.le16(directory + 10),
               let firstEntry = archive.le32(directory + 16) else { throw corrupt }
 
-        var members: [Data] = []
+        var members: [(name: String, data: Data)] = []
         var cursor = firstEntry
         for _ in 0..<entryCount {
             guard archive.le32(cursor) == centralHeaderSignature,
@@ -93,9 +95,9 @@ enum ZipReader {
             switch method {
             case 0:
                 guard compressedSize == uncompressedSize else { throw corrupt }
-                members.append(Data(payload))
+                members.append((name, Data(payload)))
             case 8:
-                members.append(try inflate(payload, to: uncompressedSize))
+                members.append((name, try inflate(payload, to: uncompressedSize)))
             default:
                 throw corrupt
             }

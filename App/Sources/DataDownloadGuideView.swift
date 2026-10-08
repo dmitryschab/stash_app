@@ -41,7 +41,7 @@ struct DataDownloadGuideView: View {
                     section("Bring it into Stash", steps: [
                         "Back in Download your data → Download data tab → download the .zip",
                         "Open the Files app, find the zip in Downloads",
-                        "In Stash: Import → Choose TikTok export → pick the zip",
+                        "In Stash: Import → Choose your export → pick the zip",
                     ]).padding(.top, 22)
 
                     privacyNote.padding(.top, 24)
@@ -77,29 +77,10 @@ struct DataDownloadGuideView: View {
         }
     }
 
-    /// Ink that stays ink. `categoryOther` is the one jewel that does not change between
-    /// themes, so text on it must not either: `stashInk` flips to cream in dark mode and all
-    /// but disappears against the amber.
-    private static let calloutInk = Color(light: 0x201A12, dark: 0x1D0E06)
-
-    /// The one step that costs two days when it is missed: TXT parses into nothing, and the
-    /// user only finds out after the wait. Promoted out of the numbered list, where it was
-    /// step 3 of 4 and read like any other.
     private var formatCallout: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Micro(text: "The one setting that matters", size: 10, tracking: 1.8,
-                  color: Self.calloutInk.opacity(0.7))
-            Text("Choose JSON, not TXT")
-                .font(.archivo(22, .heavy))
-                .foregroundStyle(Self.calloutInk)
-            Text("Stash cannot read a TXT export, and you would wait two days to find out.")
-                .font(.archivo(13, .semibold))
-                .foregroundStyle(Self.calloutInk.opacity(0.75))
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .stashCard(fill: .categoryOther)
+        guideFormatCallout(
+            title: "Choose JSON, not TXT",
+            body: "Stash cannot read a TXT export, and you would wait two days to find out.")
     }
 
     /// Straight to the page the three steps above describe. `arrow.up.right`: this leaves Stash.
@@ -120,23 +101,7 @@ struct DataDownloadGuideView: View {
     }
 
     private func section(_ title: String, steps: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Micro(text: title, size: 11, tracking: 2, color: .categoryCoding)
-            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                HStack(alignment: .top, spacing: 12) {
-                    Text("\(index + 1)")
-                        .font(.archivo(13, .heavy))
-                        .foregroundStyle(Color.stashOnAccent)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.stashInk))
-                    Text(step)
-                        .font(.archivo(14, .semibold))
-                        .foregroundStyle(Color.stashInk)
-                        .lineSpacing(3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
+        guideSection(title, steps: steps)
     }
 
     private var waitCard: some View {
@@ -166,6 +131,140 @@ struct DataDownloadGuideView: View {
     }
 }
 
+// MARK: - Shared pieces
+
+/// Ink that stays ink. `categoryOther` is the one jewel that does not change between
+/// themes, so text on it must not either: `stashInk` flips to cream in dark mode and all
+/// but disappears against the amber.
+private let calloutInk = Color(light: 0x201A12, dark: 0x1D0E06)
+
+/// The one step that costs days when it is missed: a TXT or HTML export parses into nothing,
+/// and the user only finds out after the wait. Promoted out of the numbered list, where it
+/// read like any other step.
+private func guideFormatCallout(title: String, body: String) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+        Micro(text: "The one setting that matters", size: 10, tracking: 1.8,
+              color: calloutInk.opacity(0.7))
+        Text(title)
+            .font(.archivo(22, .heavy))
+            .foregroundStyle(calloutInk)
+        Text(body)
+            .font(.archivo(13, .semibold))
+            .foregroundStyle(calloutInk.opacity(0.75))
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .stashCard(fill: .categoryOther)
+}
+
+private func guideSection(_ title: String, steps: [String]) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+        Micro(text: title, size: 11, tracking: 2, color: .categoryCoding)
+        ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+            HStack(alignment: .top, spacing: 12) {
+                Text("\(index + 1)")
+                    .font(.archivo(13, .heavy))
+                    .foregroundStyle(Color.stashOnAccent)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.stashInk))
+                Text(step)
+                    .font(.archivo(14, .semibold))
+                    .foregroundStyle(Color.stashInk)
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+// MARK: - Instagram
+
+/// "Get your Instagram saves" — Meta's Accounts Center export, asked for with Saved alone so
+/// it stays small. `ExportParser` reads `saved_posts.json` out of the zip; only reels come in.
+/// No reminders here: those, and the "waiting on TikTok" empty states, are keyed to TikTok's
+/// export and would say the wrong thing.
+struct InstagramSavesGuideView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Get your Instagram saves")
+                        .font(.archivo(28, .heavy))
+                        .foregroundStyle(Color.stashInk)
+                        .padding(.top, 8)
+                    Text("Stash builds your library from the export Instagram gives you. Ask for your saves alone and the file stays small.")
+                        .font(.archivo(14))
+                        .foregroundStyle(Color.stashInk.opacity(0.75))
+                        .lineSpacing(4)
+                        .padding(.top, 10)
+
+                    guideFormatCallout(
+                        title: "Choose JSON, not HTML",
+                        body: "Stash cannot read an HTML export, and you would only find out after the wait.")
+                        .padding(.top, 22)
+
+                    guideSection("Request it", steps: [
+                        "In Instagram: Profile → ☰ → Accounts Center",
+                        "Your information and permissions → Export your information → Create export",
+                        "Pick your profile → Export to device",
+                        "Customize information: tick only Saved · Date range: All time · Format: JSON → Start export",
+                    ]).padding(.top, 22)
+
+                    waitCard.padding(.top, 18)
+
+                    guideSection("Bring it into Stash", steps: [
+                        "Accounts Center → Export your information → download the .zip",
+                        "In Stash: Import → Choose your export → pick the zip",
+                    ]).padding(.top, 22)
+
+                    privacyNote.padding(.top, 24)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 32)
+            }
+            .background(Color.stashBackground.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var waitCard: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "clock")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.stashOnAccent)
+            Text("Meta emails you and notifies you in Instagram when the export is ready. The download stays up for four days.")
+                .font(.archivo(13, .semibold))
+                .foregroundStyle(Color.stashOnAccent)
+                .lineSpacing(3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .stashCard(fill: .categoryMusic)
+    }
+
+    private var privacyNote: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+            Text("Stash reads only your saved reels from the export — saved photo posts are skipped. Everything else in the file is ignored and never leaves your phone.")
+                .font(.archivo(12.5))
+                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .lineSpacing(3)
+        }
+    }
+}
+
 #Preview {
     DataDownloadGuideView()
+}
+
+#Preview("Instagram") {
+    InstagramSavesGuideView()
 }

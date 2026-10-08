@@ -1,7 +1,7 @@
 // ImportView.swift
 //
 // The Import screen (pushed from Library), which doubles as pipeline status/history. It
-// imports a TikTok export (the zip as downloaded, an extracted folder, or the JSON file),
+// imports a TikTok or Instagram export (the zip as downloaded, an extracted folder, or the JSON file),
 // runs the pipeline via `PipelineRunner`, shows live progress and model-box reachability,
 // and hosts the box-config settings sheet.
 //
@@ -83,6 +83,7 @@ struct ImportView: View {
     @State private var showImporter = false
     @State private var showSettings = false
     @State private var showGuide = false
+    @State private var showInstagramGuide = false
     /// Set when the clipboard held nothing importable, cleared by the next paste.
     @State private var pasteNotice: String?
     #if DEBUG
@@ -133,6 +134,7 @@ struct ImportView: View {
         ) { handleImport($0) }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showGuide) { DataDownloadGuideView() }
+        .sheet(isPresented: $showInstagramGuide) { InstagramSavesGuideView() }
         .task {
             // The counter on this screen is the one the user reads before spending, so make it
             // authoritative rather than however fresh the last foreground left it.
@@ -176,7 +178,7 @@ struct ImportView: View {
     private var syncCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Micro(text: "TikTok", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
+                Micro(text: "Your saves", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
                 Spacer()
                 if let quota = session.quota { budgetBadge(quota) }
             }
@@ -344,7 +346,7 @@ struct ImportView: View {
             if let summary = controller.lastSummary { return summary }
             // Reached on a fresh account, and once a finished import is a day old, so it says
             // what to do next rather than what the build is configured for.
-            return "Pick your TikTok data export and Stash builds the library."
+            return "Pick your TikTok or Instagram export and Stash builds the library."
         }
         if let progress = controller.progress {
             return "\(progress.done) of \(progress.total) processed"
@@ -442,12 +444,12 @@ struct ImportView: View {
     /// the zip included, which used to be greyed out in the sheet with no explanation.
     private var primaryAction: some View {
         VStack(spacing: StashSpacing.item) {
-            StashPrimaryButton(title: "Choose TikTok export", systemImage: "square.and.arrow.down") {
+            StashPrimaryButton(title: "Choose your export", systemImage: "square.and.arrow.down") {
                 showImporter = true
             }
             .disabled(controller.isImporting)
             .opacity(controller.isImporting ? 0.5 : 1)
-            Text("Zip, folder or JSON — Stash unpacks it.")
+            Text("TikTok or Instagram · zip, folder or JSON — Stash unpacks it.")
                 .font(.archivo(11.5, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .multilineTextAlignment(.center)
@@ -484,6 +486,14 @@ struct ImportView: View {
                 title: "How to get your TikTok data",
                 subtitle: "TikTok takes up to 2 days",
                 action: { showGuide = true }
+            )
+            Rectangle()
+                .fill(Color.stashInk.opacity(0.15))
+                .frame(height: 1)
+            optionRow(
+                title: "How to get your Instagram saves",
+                subtitle: "Saved reels only · Meta emails you when it's ready",
+                action: { showInstagramGuide = true }
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)

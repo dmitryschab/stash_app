@@ -86,6 +86,35 @@ final class ExportParserTests: XCTestCase {
         }
     }
 
+    // MARK: - Instagram
+
+    private func instagramFixture(_ name: String) -> URL {
+        Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json")!
+    }
+
+    /// Reels only, newest save per reel, canonical `/reel/<code>/` links the box accepts.
+    func testInstagramSavedPostsKeepReelsOnly() throws {
+        let bookmarks = try ExportParser().parse(zipAt: instagramFixture("instagram-saved_posts"))
+        XCTAssertEqual(bookmarks, [
+            Bookmark(id: "C8abcDEF12", url: URL(string: "https://www.instagram.com/reel/C8abcDEF12/")!,
+                     date: Date(timeIntervalSince1970: 1717243200)),
+            Bookmark(id: "C2olderREEL", url: URL(string: "https://www.instagram.com/reel/C2olderREEL/")!,
+                     date: Date(timeIntervalSince1970: 1559390400)),
+        ])
+    }
+
+    func testInstagramOlderLayout() throws {
+        let bookmarks = try ExportParser().parse(zipAt: instagramFixture("instagram-saved_posts-older"))
+        XCTAssertEqual(bookmarks.map(\.id), ["OLDreel123"])
+    }
+
+    /// The zip as Meta hands it over: saved_posts.json nested two folders down, beside other
+    /// activity files in the same shape that are not saves.
+    func testInstagramZipReadsSavesNotLikes() throws {
+        let bookmarks = try ExportParser().parse(zipAt: zipFixture("instagram-export"))
+        XCTAssertEqual(Set(bookmarks.map(\.id)), ["C8abcDEF12", "C2olderREEL"])
+    }
+
     func testGarbageZipThrows() throws {
         let zip = FileManager.default.temporaryDirectory
             .appendingPathComponent("export-\(UUID().uuidString).zip")
