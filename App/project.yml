@@ -111,7 +111,7 @@ targets:
         # YES once TikTok approves Login Kit and the production key is in. Before that only the
         # sandbox's target users can sign in, and a button that fails for App Review is a 2.1
         # rejection.
-        TIKTOK_SIGN_IN: YES
+        TIKTOK_SIGN_IN: NO
 
   # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
   # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build
