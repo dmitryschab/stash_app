@@ -25,6 +25,7 @@ enum StashSessionError: Error, LocalizedError, Equatable {
     /// open, so this never fires for a buyer who left the field alone.
     case codeRejected
     case invalidAppleToken
+    case tiktokRejected
     case notSignedIn
     case server(Int)
     case transport(String)
@@ -33,6 +34,7 @@ enum StashSessionError: Error, LocalizedError, Equatable {
         switch self {
         case .codeRejected: "That code was not accepted."
         case .invalidAppleToken: "Apple could not verify that sign-in. Try again."
+        case .tiktokRejected: "TikTok didn't accept that sign-in. Try again."
         case .notSignedIn: "You are signed out."
         case .server(let status): "The Stash server refused the request (HTTP \(status))."
         case .transport(let message): "Could not reach Stash: \(message)"
@@ -126,12 +128,15 @@ final class StashSession {
         }
         // The user can revoke us in Settings → Apple ID → Sign in with Apple, outside the app.
         // Checked before the state flips, so a revoked account never gets a frame of the shell
-        // or the burst of authenticated work that follows it.
-        let credential = try? await ASAuthorizationAppleIDProvider()
-            .credentialState(forUserID: stored.appleUserID)
-        if credential == .revoked || credential == .notFound {
-            signOut()
-            return
+        // or the burst of authenticated work that follows it. A TikTok session has no Apple ID
+        // to ask about, and Apple would answer .notFound for the empty one.
+        if !stored.appleUserID.isEmpty {
+            let credential = try? await ASAuthorizationAppleIDProvider()
+                .credentialState(forUserID: stored.appleUserID)
+            if credential == .revoked || credential == .notFound {
+                signOut()
+                return
+            }
         }
         self.stored = stored
         isDemoAccount = stored.demo == true
@@ -163,6 +168,21 @@ final class StashSession {
         }
         apply(response, appleUserID: appleUserID, userID: userID)
         lastAuthError = nil
+    }
+
+    /// Signs in with a TikTok Login Kit code. The box trades it for tokens, finds the account
+    /// that TikTok is linked to or creates one, and connects TikTok to it in the same step.
+    func signInWithTikTok(code: String, codeVerifier: String, storefront: String) async throws {
+        let response: AuthResponse = try await post(
+            path: "auth/tiktok",
+            body: TikTokSignInRequest(code: code, codeVerifier: codeVerifier, storefront: storefront),
+            mapping: { $0 == 400 ? .tiktokRejected : .server($0) })
+        guard let userID = response.userID else {
+            throw StashSessionError.transport("sign-in response carried no userID")
+        }
+        apply(response, appleUserID: "", userID: userID)
+        lastAuthError = nil
+        await refreshQuota()   // /v1/me carries the connection Settings shows
     }
 
     /// Drops the session everywhere: Keychain first, so a crash mid-sign-out cannot leave a
@@ -411,6 +431,12 @@ final class StashSession {
         let inviteCode: String?
     }
 
+    private struct TikTokSignInRequest: Encodable {
+        let code: String
+        let codeVerifier: String
+        let storefront: String
+    }
+
     private struct RefreshRequest: Encodable {
         let refreshToken: String
     }
@@ -504,7 +530,8 @@ private enum StashKeychain {
 }
 
 private struct StoredSession: Codable {
-    /// Apple's stable `sub` for this app — the only id `getCredentialState` accepts.
+    /// Apple's stable `sub` for this app — the only id `getCredentialState` accepts. Empty for
+    /// a session that signed in with TikTok.
     let appleUserID: String
     /// The server's opaque id, used for display and as the Dynamo partition key.
     let userID: String

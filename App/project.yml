@@ -87,6 +87,8 @@ targets:
         TikTokClientKey: $(TIKTOK_CLIENT_KEY)
         # What Settings → TikTok asks for; TikTokConnectSection reads it instead of a literal.
         TikTokScopes: $(TIKTOK_SCOPES)
+        # "Continue with TikTok" on the sign-in screen (TikTokLogin.signInEnabled); Debug always.
+        TikTokSignIn: $(TIKTOK_SIGN_IN)
         CFBundleURLTypes:
           - CFBundleURLSchemes: [$(TIKTOK_CLIENT_KEY)]
         LSApplicationQueriesSchemes: [tiktokopensdk, snssdk1180, snssdk1233]
@@ -106,6 +108,10 @@ targets:
         # until the production key goes in; then add
         # portability.activity.single,portability.activity.ongoing (the P2 sync).
         TIKTOK_SCOPES: user.info.basic
+        # YES once TikTok approves Login Kit and the production key is in. Before that only the
+        # sandbox's target users can sign in, and a button that fails for App Review is a 2.1
+        # rejection.
+        TIKTOK_SIGN_IN: NO
 
   # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
   # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build

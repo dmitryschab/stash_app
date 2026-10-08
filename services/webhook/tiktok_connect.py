@@ -2,6 +2,7 @@
 
   POST   /v1/tiktok/connect  {code, codeVerifier, storefront} -> {displayName, connectedAt}
   DELETE /v1/tiktok/connect                       -> 204
+  POST   /v1/auth/tiktok     {code, codeVerifier, storefront} -> a session, as /v1/auth/apple
 
 The app runs TikTok's Login Kit (PKCE, scope user.info.basic) and hands over the authorization
 code and the PKCE verifier. The code is traded for tokens here, because the client secret lives
@@ -15,18 +16,29 @@ server-side encryption, like appleRefreshToken, and GET /v1/me/export strips the
 No entitlement check: connecting spends nothing, so a caller with no subscription may link.
 There is a region check: the approved Data Portability application offers the integration in
 the EEA and the UK only, told apart by the App Store storefront the app reports.
+
+Signing in with TikTok is a connect that also finds the account: the one this TikTok is linked
+to, so a Sign in with Apple account that connected TikTok gets its own library back, and
+otherwise uuid5("stash-tiktok-user/" + open_id), created on first sight. The link is a lookup
+row, PK="TIKTOKLINK#<sha256(open_id)>" SK="META" {userID}, with a mirror row in the account's
+partition (SK="TIKTOKLINK#<digest>") so DELETE /v1/me finds it the way it finds refresh tokens.
+Disconnect removes it; a TikTok-only account still signs back in through its uuid5. One TikTok
+signs in to one account, so a connect from a second account is refused rather than moving it.
 """
 import logging
 import time
+import uuid
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import Field
 
 import stash_secrets
+import stash_subscription
 from cloud_import_models import ContractModel
 from cloud_import_store import _is_conditional_failure, shared_table
-from stash_auth import _tiktok_key, current_user
+from stash_auth import (_create_user, _get_user, _hash, _session_response, _tiktok_key,
+                        current_user)
 
 log = logging.getLogger("stash-webhook")
 
@@ -73,8 +85,8 @@ class ConnectRequest(ContractModel):
     storefront: str | None = None
 
 
-@router.post("/tiktok/connect")
-def connect(body: ConnectRequest, user_id: str = Depends(current_user)):
+def _exchange(body: ConnectRequest) -> tuple[dict, dict]:
+    """The region check, then TikTok's token for the code, and the profile it belongs to."""
     if (body.storefront or "").upper() not in ALLOWED_STOREFRONTS:
         log.info("tiktok connect refused: storefront %r is outside the EEA and the UK",
                  (body.storefront or "")[:16])
@@ -117,12 +129,41 @@ def connect(body: ConnectRequest, user_id: str = Depends(current_user)):
         user = (_json(info).get("data") or {}).get("user") or {}
     except Exception:
         log.exception("tiktok user info failed")
-    display_name = user.get("display_name") or ""
+    return token, user
 
+
+def _open_id(token: dict, user: dict) -> str:
+    return token.get("open_id") or user.get("open_id") or ""
+
+
+def _link_pk(open_id: str) -> str:
+    return f"TIKTOKLINK#{_hash(open_id)}"
+
+
+def tiktok_user_id(open_id: str) -> str:
+    """The id of an account created by signing in with TikTok, as `user_id_for` is Apple's."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"stash-tiktok-user/{open_id}"))
+
+
+def tiktok_account(table, open_id: str) -> str | None:
+    """The existing account TikTok sign-in with this open_id lands in, or None for a new one."""
+    if not open_id:
+        return None
+    link = table.get_item(Key={"PK": _link_pk(open_id), "SK": "META"}).get("Item")
+    if link and _get_user(table, str(link["userID"])):
+        return str(link["userID"])
+    user_id = tiktok_user_id(open_id)
+    return user_id if _get_user(table, user_id) else None
+
+
+def _save(table, user_id: str, token: dict, user: dict) -> dict:
+    """Store the connection and link the TikTok to this account; the connect route's body."""
+    open_id = _open_id(token, user)
+    display_name = user.get("display_name") or ""
     now = int(time.time())
-    shared_table().put_item(Item={
+    table.put_item(Item={
         **_tiktok_key(user_id),
-        "openID": token.get("open_id") or user.get("open_id") or "",
+        "openID": open_id,
         "displayName": display_name,
         "scope": token.get("scope") or "",
         "accessToken": token["access_token"],
@@ -131,15 +172,57 @@ def connect(body: ConnectRequest, user_id: str = Depends(current_user)):
         "refreshExpiresAt": now + int(token.get("refresh_expires_in") or 0),
         "connectedAt": now,
     })
+    if open_id:
+        table.put_item(Item={"PK": _link_pk(open_id), "SK": "META", "userID": user_id})
+        table.put_item(Item={"PK": f"INSTALL#{user_id}", "SK": _link_pk(open_id)})
     return {"displayName": display_name, "connectedAt": now}
+
+
+@router.post("/tiktok/connect")
+def connect(body: ConnectRequest, user_id: str = Depends(current_user)):
+    token, user = _exchange(body)
+    table = shared_table()
+    if tiktok_account(table, _open_id(token, user)) not in (None, user_id):
+        # Nothing stored and nothing revoked: revoking would end the other account's grant too.
+        raise HTTPException(status_code=409,
+                            detail="This TikTok account already signs in to another Stash account.")
+    return _save(table, user_id, token, user)
+
+
+@router.post("/auth/tiktok")
+def auth_tiktok(body: ConnectRequest):
+    token, user = _exchange(body)
+    open_id = _open_id(token, user)
+    if not open_id:
+        log.warning("tiktok sign-in refused: TikTok returned no open_id")
+        raise HTTPException(status_code=502, detail="couldn't reach TikTok")
+    table = shared_table()
+    user_id = tiktok_account(table, open_id)
+    if user_id is None:
+        user_id = tiktok_user_id(open_id)
+        try:
+            _create_user(table, user_id)
+        except Exception as error:
+            # A concurrent or retried sign-in for the same TikTok created it first. Same person.
+            if not _is_conditional_failure(error):
+                raise
+    _save(table, user_id, token, user)
+    account = _get_user(table, user_id) or {}
+    return _session_response(table, user_id, include_user_id=True,
+                             demo=bool(account.get("demo")),
+                             entitled=stash_subscription.is_entitled(account))
 
 
 @router.delete("/tiktok/connect", status_code=204)
 def disconnect(user_id: str = Depends(current_user)):
     """Unlink TikTok. Idempotent: a 204 whether or not a connection existed."""
     table = shared_table()
+    row = table.get_item(Key=_tiktok_key(user_id)).get("Item") or {}
     revoke_tiktok(table, user_id)
     table.delete_item(Key=_tiktok_key(user_id))
+    if row.get("openID"):
+        table.delete_item(Key={"PK": _link_pk(row["openID"]), "SK": "META"})
+        table.delete_item(Key={"PK": f"INSTALL#{user_id}", "SK": _link_pk(row["openID"])})
     return Response(status_code=204)
 
 

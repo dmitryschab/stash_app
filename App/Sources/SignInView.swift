@@ -3,8 +3,10 @@
 // The gate. Nothing else in the app renders until StashSession holds a server-verified
 // session, so this is also the only screen that ever talks to Apple.
 //
-// Sign in with Apple is the sole method — no email/password, no anonymous mode — and the
-// request asks for NO scopes: the contract only needs the identity token's `sub`, and asking
+// Sign in with Apple, plus "Continue with TikTok" in EEA/UK storefronts once TikTok approves
+// Login Kit (`TikTokLogin.signInEnabled`) — no email/password, no anonymous mode. TikTok sits
+// under Apple's button and is drawn quieter: guideline 4.8 wants Apple offered as an equal
+// option next to any third-party login. The Apple request asks for NO scopes: the contract only needs the identity token's `sub`, and asking
 // for .email/.fullName would add data types to PrivacyInfo.xcprivacy and to the App Store
 // privacy answers for nothing. The button is Apple's own `SignInWithAppleButton`; custom-drawn
 // lookalikes get rejected.
@@ -33,6 +35,8 @@ struct SignInView: View {
     @State private var showsCodeField = false
     @State private var isWorking = false
     @State private var error: String?
+    /// The storefront a TikTok sign-in sends; nil hides the button (off, or outside the region).
+    @State private var tiktokStorefront: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,12 +87,33 @@ struct SignInView: View {
             .overlay {
                 if isWorking { ProgressView().tint(.stashOnInk) }
             }
+
+            if let tiktokStorefront {
+                Button { signInWithTikTok(storefront: tiktokStorefront) } label: {
+                    Text("Continue with TikTok")
+                        .font(.archivo(17, .semibold))
+                        .foregroundStyle(Color.stashInk)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .overlay(Capsule().strokeBorder(Color.stashInk.opacity(0.3), lineWidth: 1.5))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+                .opacity(isWorking ? 0.5 : 1)
+                .padding(.top, 12)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.stashBackground.ignoresSafeArea())
         .animation(.easeInOut(duration: 0.2), value: showsCodeField)
+        .task {
+            if TikTokLogin.signInEnabled {
+                tiktokStorefront = await TikTokConnectSection.regionStorefront()
+            }
+        }
     }
 
     /// Guideline 5.1.2(i): the two third parties that see the user's saves, named before the
@@ -99,7 +124,7 @@ struct SignInView: View {
     /// own `InfoChip` above this paragraph, which made three stacked grey blocks out of one
     /// subject: who sees your data.
     private var cloudNote: some View {
-        Text("Apple shares only an anonymous ID. To sort your saves, Stash sends their audio to Groq for speech-to-text and their text to AWS Bedrock for analysis.")
+        Text("\(tiktokStorefront == nil ? "Apple shares only an anonymous ID." : "Apple shares only an anonymous ID, TikTok your display name.") To sort your saves, Stash sends their audio to Groq for speech-to-text and their text to AWS Bedrock for analysis.")
             .font(.archivo(12))
             .foregroundStyle(Color.stashInk.opacity(0.55))
             .multilineTextAlignment(.center)
@@ -167,6 +192,23 @@ struct SignInView: View {
                 .multilineTextAlignment(.leading)
         }
         .foregroundStyle(Color.categoryRecipe)
+    }
+
+    // MARK: - TikTok
+
+    private func signInWithTikTok(storefront: String) {
+        isWorking = true
+        error = nil
+        Task {
+            defer { isWorking = false }
+            do {
+                guard let grant = try await TikTokLogin.authorize() else { return }
+                try await session.signInWithTikTok(code: grant.code, codeVerifier: grant.verifier,
+                                                   storefront: storefront)
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     // MARK: - Apple

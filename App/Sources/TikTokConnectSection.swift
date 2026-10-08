@@ -1,10 +1,9 @@
 // TikTokConnectSection.swift
 //
 // Settings → TikTok: real TikTok sign-in, part one of the integration
-// (docs/superpowers/specs/2026-09-13-tiktok-oauth-p1-design.md). The SDK opens the TikTok app,
-// or its own in-app browser when TikTok is not installed, and ends in an authorization code; the
-// box trades that code and the PKCE verifier for tokens (`TikTokConnectClient`), so the client
-// secret never reaches the phone.
+// (docs/superpowers/specs/2026-09-13-tiktok-oauth-p1-design.md). `TikTokLogin` runs the SDK and
+// the box trades its code for tokens (`TikTokConnectClient`). The sign-in screen's "Continue with
+// TikTok" runs the same `TikTokLogin` and lands on POST /v1/auth/tiktok instead.
 //
 // Part two syncs Favorite Videos through the connection (`PipelineCenter.syncTikTok`), but only
 // once the build asks for the portability scopes (`TIKTOK_SCOPES`), which the sandbox credentials
@@ -23,9 +22,6 @@ import TikTokOpenAuthSDK
 struct TikTokConnectSection: View {
     private var session = StashSession.shared
     private var center = PipelineCenter.shared
-    /// The sign-in in flight. The SDK only keeps a weak reference to it, so a request nobody
-    /// holds is gone before TikTok answers and the answer lands nowhere.
-    @State private var request: TikTokAuthRequest?
     /// Connecting or disconnecting; either way the button waits.
     @State private var isWorking = false
     @State private var failure: String?
@@ -35,9 +31,6 @@ struct TikTokConnectSection: View {
     init(storefront: String?) {
         self.storefront = storefront
     }
-
-    /// Registered on the TikTok developer portal and claimed by the app as a universal link.
-    static let redirectURI = "https://stash.dmitrijs.dev/tiktok/callback"
 
     var body: some View {
         Section("TikTok") {
@@ -80,13 +73,6 @@ struct TikTokConnectSection: View {
         return "Synced \(date.formatted(.relative(presentation: .named)))"
     }
 
-    /// `TIKTOK_SCOPES` in project.yml, comma-separated: `user.info.basic` alone until the build
-    /// switches to production credentials, which add the two portability scopes.
-    private static var scopes: Set<String> {
-        let list = Bundle.main.object(forInfoDictionaryKey: "TikTokScopes") as? String ?? ""
-        return Set(list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
-    }
-
     /// Debug and TestFlight builds only, until part two imports something: in an App Store build
     /// a connect row that brings nothing in risks guideline 2.2. TestFlight and Xcode builds sign
     /// a sandbox AppTransaction; one that cannot be fetched or verified hides the row.
@@ -94,6 +80,8 @@ struct TikTokConnectSection: View {
         #if DEBUG
         return true
         #else
+        // Someone who signed in with TikTok must be able to disconnect it.
+        if TikTokLogin.signInEnabled { return true }
         guard case .verified(let app)? = try? await AppTransaction.shared else { return false }
         return app.environment != .production
         #endif
@@ -110,44 +98,17 @@ struct TikTokConnectSection: View {
 
     private func connect(storefront: String) {
         failure = nil
-        let request = TikTokAuthRequest(scopes: Self.scopes, redirectURI: Self.redirectURI)
-        // Read now and captured by value: capturing the request in its own completion would
-        // keep it alive for good, still registered for every TikTok URL that comes in later.
-        let verifier = request.pkce.codeVerifier
-        self.request = request
         isWorking = true
-        let sent = request.send { response in
-            Task { @MainActor in
-                await finish(response as? TikTokAuthResponse, verifier: verifier, storefront: storefront)
-            }
-        }
-        if !sent { Task { await finish(nil, verifier: verifier, storefront: storefront) } }
-    }
-
-    private func finish(_ response: TikTokAuthResponse?, verifier: String, storefront: String) async {
-        defer {
-            request = nil
-            isWorking = false
-        }
-        switch response?.errorCode {
-        case .noError?:
-            guard let code = response?.authCode, !code.isEmpty else { break }
+        Task {
+            defer { isWorking = false }
             do {
+                guard let grant = try await TikTokLogin.authorize() else { return }
                 session.tiktok = try await TikTokConnectClient(config: PipelineCenter.currentConfig())
-                    .connect(code: code, codeVerifier: verifier, storefront: storefront)
+                    .connect(code: grant.code, codeVerifier: grant.verifier, storefront: storefront)
             } catch {
                 failure = error.localizedDescription
             }
-            return
-        case .cancelled?, .denied?:
-            return   // the user's own no — closing the sheet or declining in TikTok says nothing
-        default:
-            break
         }
-        // The SDK's own words are for whoever is debugging a sandbox setup, not for the row.
-        NSLog("TikTok sign-in failed (%@): %@", "\(response?.errorCode.rawValue ?? 0)",
-              response?.errorDescription ?? "no response")
-        failure = TikTokConnectError.unreachable.localizedDescription
     }
 
     private func disconnect() {
@@ -162,5 +123,70 @@ struct TikTokConnectSection: View {
             }
             isWorking = false
         }
+    }
+}
+
+/// One TikTok Login Kit round trip, for Settings → Connect TikTok and for the sign-in screen. The
+/// SDK opens the TikTok app, or its own in-app browser when TikTok is not installed, and ends in
+/// an authorization code; the box trades it with the PKCE verifier, so the client secret never
+/// reaches the phone.
+@MainActor
+enum TikTokLogin {
+    /// Registered on the TikTok developer portal and claimed by the app as a universal link.
+    static let redirectURI = "https://stash.dmitrijs.dev/tiktok/callback"
+
+    /// The request in flight. The SDK only keeps a weak reference to it, so a request nobody
+    /// holds is gone before TikTok answers and the answer lands nowhere.
+    private static var inFlight: TikTokAuthRequest?
+
+    /// "Continue with TikTok" on the sign-in screen: `TIKTOK_SIGN_IN` in project.yml, and always
+    /// in Debug so the sandbox flow can be tried before TikTok approves Login Kit.
+    static var signInEnabled: Bool {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.object(forInfoDictionaryKey: "TikTokSignIn") as? String == "YES"
+        #endif
+    }
+
+    /// The code and its verifier, or nil when the user closed the sheet or declined in TikTok —
+    /// their own no, which says nothing worth showing. Throws `TikTokConnectError.unreachable`
+    /// for every other failure.
+    static func authorize() async throws -> (code: String, verifier: String)? {
+        let request = TikTokAuthRequest(scopes: scopes, redirectURI: redirectURI)
+        // Read now: capturing the request in its own completion would keep it alive for good,
+        // still registered for every TikTok URL that comes in later.
+        let verifier = request.pkce.codeVerifier
+        inFlight = request
+        defer { inFlight = nil }
+        let response: TikTokAuthResponse? = await withCheckedContinuation { continuation in
+            var answered = false   // the SDK calls back on every response URL; resume only once
+            let sent = request.send { response in
+                guard !answered else { return }
+                answered = true
+                continuation.resume(returning: response as? TikTokAuthResponse)
+            }
+            // A request that was not sent never calls back.
+            if !sent { continuation.resume(returning: nil) }
+        }
+        switch response?.errorCode {
+        case .noError?:
+            if let code = response?.authCode, !code.isEmpty { return (code, verifier) }
+        case .cancelled?, .denied?:
+            return nil
+        default:
+            break
+        }
+        // The SDK's own words are for whoever is debugging a sandbox setup, not for the screen.
+        NSLog("TikTok sign-in failed (%@): %@", "\(response?.errorCode.rawValue ?? 0)",
+              response?.errorDescription ?? "no response")
+        throw TikTokConnectError.unreachable
+    }
+
+    /// `TIKTOK_SCOPES` in project.yml, comma-separated: `user.info.basic` alone until the build
+    /// switches to production credentials, which add the two portability scopes.
+    private static var scopes: Set<String> {
+        let list = Bundle.main.object(forInfoDictionaryKey: "TikTokScopes") as? String ?? ""
+        return Set(list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
     }
 }

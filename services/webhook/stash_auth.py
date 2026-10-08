@@ -17,6 +17,8 @@ Item layout (all in the one imports table):
   PK="INSTALL#<userID>", SK="TIKTOK"        the linked TikTok account and its tokens
                                             (tiktok_connect.py); at most one per user
   PK="RT#<digest>",      SK="META"          the lookup row a refresh call reads
+  PK="TIKTOKLINK#<digest>", SK="META"       which account TikTok sign-in lands in, with a
+                                            mirror row SK="TIKTOKLINK#<digest>" (tiktok_connect.py)
   PK="INVITE#<code>",    SK="META"          invite code, redeemed by conditional write
 
 Invite codes no longer gate sign-up (decided 2026-08-16: the €5 App Store price is the gate,
@@ -635,8 +637,9 @@ def delete_me(user_id: str = Depends(current_user)):
     revoke_tiktok(table, user_id)
     removed = DynamoImportStore(table=table, user_id=user_id).delete_user_items()
     for key in removed:
-        # The mirror row's SK is the lookup row's PK, so no extra bookkeeping is needed.
-        if key["SK"].startswith("RT#"):
+        # The mirror row's SK is the lookup row's PK, so no extra bookkeeping is needed. Same
+        # for the TikTok sign-in link (tiktok_connect.py).
+        if key["SK"].startswith(("RT#", "TIKTOKLINK#")):
             table.delete_item(Key={"PK": key["SK"], "SK": "META"})
     log.info("deleted account %s (%d items)", user_id, len(removed))
     return Response(status_code=204)

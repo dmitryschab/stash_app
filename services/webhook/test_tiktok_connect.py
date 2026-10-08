@@ -303,6 +303,80 @@ def test_the_export_carries_the_connection_but_never_a_token(client, headers, ti
     assert "at-1" not in response.text and "rt-1" not in response.text
 
 
+# ------------------------------------------------------------------ sign in with TikTok
+
+
+def sign_in(client, storefront="LVA"):
+    return client.post("/v1/auth/tiktok",
+                       json={"code": CODE, "codeVerifier": VERIFIER, "storefront": storefront})
+
+
+def bearer(response):
+    return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
+def test_a_new_tiktok_signs_up_a_tiktok_account_that_is_already_connected(client, table, tiktok):
+    response = sign_in(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["userID"] == tiktok_connect.tiktok_user_id("oid-1") != USER
+    assert body["refreshToken"] and body["demo"] is False and body["entitled"] is False
+    assert client.get("/v1/me", headers=bearer(response)).json()["tiktok"]["displayName"] == "Ana"
+    # The second sign-in finds the same account rather than making another.
+    assert sign_in(client).json()["userID"] == body["userID"]
+
+
+def test_a_tiktok_connected_to_an_apple_account_signs_in_to_that_account(client, headers, tiktok):
+    assert connect(client, headers).status_code == 200
+
+    assert sign_in(client).json()["userID"] == USER
+
+
+def test_a_tiktok_that_signs_in_elsewhere_is_refused_by_a_second_account(client, table, tiktok):
+    assert sign_in(client).status_code == 200
+    other = {"Authorization": f"Bearer {stash_auth.mint_stash_jwt(USER)[0]}"}
+
+    response = connect(client, other)
+
+    assert response.status_code == 409
+    assert ROW_KEY not in table.items
+    assert revokes(tiktok) == []
+    assert sign_in(client).json()["userID"] == tiktok_connect.tiktok_user_id("oid-1")
+
+
+def test_after_disconnect_the_tiktok_no_longer_signs_in_to_the_apple_account(client, headers, table,
+                                                                           tiktok):
+    assert connect(client, headers).status_code == 200
+    assert client.delete("/v1/tiktok/connect", headers=headers).status_code == 204
+
+    assert not [key for key in table.items if "TIKTOKLINK#" in key[0] + key[1]]
+    assert sign_in(client).json()["userID"] == tiktok_connect.tiktok_user_id("oid-1")
+
+
+def test_deleting_the_account_removes_the_sign_in_link(client, headers, table, tiktok):
+    assert connect(client, headers).status_code == 200
+
+    assert client.delete("/v1/me", headers=headers).status_code == 204
+
+    assert table.items == {}
+
+
+@pytest.mark.parametrize("storefront", ["USA", "CHE", "", None])
+def test_sign_in_outside_the_eea_and_uk_is_403_with_no_outbound_call(client, table, tiktok,
+                                                                      storefront):
+    assert sign_in(client, storefront).status_code == 403
+    assert tiktok.calls == []
+
+
+def test_a_rejected_sign_in_creates_no_account(client, table, tiktok):
+    tiktok.exchange = reply(400, {"error": "invalid_grant"})
+    before = dict(table.items)
+
+    assert sign_in(client).status_code == 400
+    assert table.items == before
+
+
 # ------------------------------------------------------------------ auth
 
 
