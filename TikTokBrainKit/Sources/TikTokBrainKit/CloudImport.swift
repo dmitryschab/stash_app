@@ -426,6 +426,8 @@ public struct CloudImportClient: Sendable {
                 guard shouldRetry(error), attempt < retryDelays.count else { throw error }
                 try? await Task.sleep(nanoseconds: retryDelays[attempt] * 1_000_000)
             } catch {
+                // A cancelled poll surfaces as URLError(.cancelled): that is the caller leaving, not an outage.
+                try Task.checkCancellation()
                 let mapped = CloudImportError.transport(error.localizedDescription)
                 guard attempt < retryDelays.count else { throw mapped }
                 try? await Task.sleep(nanoseconds: retryDelays[attempt] * 1_000_000)

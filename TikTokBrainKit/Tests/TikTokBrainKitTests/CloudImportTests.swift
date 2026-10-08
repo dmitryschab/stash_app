@@ -418,6 +418,25 @@ final class CloudImportTests: XCTestCase {
         XCTAssertEqual(recorder.bodies.count, 3)
     }
 
+    /// The app cancels the poll when it goes to the background; that is not an outage.
+    func testCancellingAPollRaisesCancellationNotTransport() async throws {
+        let client = makeClient { request in
+            Thread.sleep(forTimeInterval: 0.5)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let poll = Task { try await client.status(importID: "import-1") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        poll.cancel()
+
+        do {
+            _ = try await poll.value
+            XCTFail("expected cancellation")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+    }
+
     func testUpsertPreservesLocalMetadataForUnavailableAndFailedResults() throws {
         let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = ModelContext(container)
