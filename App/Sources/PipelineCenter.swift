@@ -112,6 +112,9 @@ final class PipelineCenter {
     private var libraryDeepPassTask: Task<Void, Never>?
     private var extraTime: UIBackgroundTaskIdentifier = .invalid
     private var cloudState = CloudImportSyncState()
+    /// The first status this session saw for the running import: where the ping's rate is
+    /// measured from.
+    private var firstPollSample: (importID: String, at: Date, done: Int)?
     private static let cloudStateKey = "cloudImport.syncState"
 
     /// A TikTok the share extension handed over, tracked until it is fully processed.
@@ -1162,6 +1165,7 @@ final class PipelineCenter {
 
     func appBecameActive() {
         endExtraTime()
+        cancelPendingFirstSlicePing()
         // Cover art comes from TikTok's public oEmbed endpoint, not the box, so it is worth
         // retrying on a foreground the sign-in gate is still covering.
         refreshThumbnails()
@@ -1193,6 +1197,7 @@ final class PipelineCenter {
             // so the window it is most likely to run in is one iOS grants after this point.
             scheduleDeepPassProcessing()
             if cloudState.isActive || StashSession.shared.tiktok != nil { scheduleCloudRefresh() }
+            scheduleFirstSlicePing()
             return
         }
         guard isImporting else { return }
@@ -1278,6 +1283,90 @@ final class PipelineCenter {
         content.sound = .default
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "library-ready-\(status.importID)", content: content, trigger: nil))
+    }
+
+    // MARK: - First-slice ping
+
+    // ponytail: a timed guess, not a report — the box cannot reach a backgrounded phone and
+    // BGAppRefresh runs 15+ minutes late. Upgrade path: an APNs push from the box.
+    private static let firstSlicePingKey = "firstSlicePing"
+
+    /// Seconds until the newest slice is likely sorted, or nil when there is nothing to wait
+    /// for: a library that fits in one slice, or a first slice already done.
+    static func firstSliceDelay(done: Int, total: Int, rate: Double?) -> TimeInterval? {
+        let slice = CloudImportLimits.firstSlice
+        guard total > slice, done < slice else { return nil }
+        let perSecond = rate.flatMap { $0 > 0 ? $0 : nil } ?? 0.5   // 4 workers ÷ ~8 s a video
+        return min(max(Double(slice - done) / perSecond, 60), 900)
+    }
+
+    /// The stored ping, "<importID>|<fire time in epoch seconds>".
+    static func parsePing(_ stored: String?) -> (importID: String, fireAt: Date)? {
+        guard let parts = stored?.split(separator: "|"), parts.count == 2,
+              let epoch = TimeInterval(parts[1]) else { return nil }
+        return (String(parts[0]), Date(timeIntervalSince1970: epoch))
+    }
+
+    /// One ping per import: only a ping for this same import that has already gone off stops
+    /// another. A previous import's ping, or one still pending, does not.
+    static func shouldSchedulePing(stored: String?, importID: String, now: Date) -> Bool {
+        guard let ping = parsePing(stored), ping.importID == importID else { return true }
+        return ping.fireAt > now
+    }
+
+    #if DEBUG
+    static func firstSliceSelfTest() -> Bool {
+        let now = Date()
+        let past = "imp-1|\(now.addingTimeInterval(-5).timeIntervalSince1970)"
+        let future = "imp-1|\(now.addingTimeInterval(120).timeIntervalSince1970)"
+        return firstSliceDelay(done: 20, total: 941, rate: 0.5) == 160
+            && firstSliceDelay(done: 20, total: 941, rate: nil) == 160     // no measurement yet
+            && firstSliceDelay(done: 20, total: 941, rate: 0) == 160       // no progress yet
+            && firstSliceDelay(done: 99, total: 941, rate: 0.5) == 60      // clamped up
+            && firstSliceDelay(done: 0, total: 941, rate: 0.01) == 900     // clamped down
+            && firstSliceDelay(done: 100, total: 941, rate: 0.5) == nil    // already sorted
+            && firstSliceDelay(done: 0, total: 100, rate: 0.5) == nil      // one slice is the library
+            && parsePing(past)?.importID == "imp-1"
+            && parsePing("imp-1") == nil && parsePing(nil) == nil
+            && !shouldSchedulePing(stored: past, importID: "imp-1", now: now)   // it went off
+            && shouldSchedulePing(stored: future, importID: "imp-1", now: now)  // still pending: reschedule
+            && shouldSchedulePing(stored: past, importID: "imp-2", now: now)    // a new import
+            && shouldSchedulePing(stored: nil, importID: "imp-1", now: now)
+    }
+    #endif
+
+    private func scheduleFirstSlicePing() {
+        guard cloudState.isActive, let status = cloudState.status else { return }
+        let now = Date()
+        let rate = firstPollSample.flatMap { sample -> Double? in
+            let elapsed = now.timeIntervalSince(sample.at)
+            guard sample.importID == status.importID, elapsed > 0 else { return nil }
+            return Double(status.fastPass.done - sample.done) / elapsed
+        }
+        let defaults = UserDefaults.standard
+        guard let delay = Self.firstSliceDelay(done: status.fastPass.done, total: status.fastPass.total, rate: rate),
+              Self.shouldSchedulePing(stored: defaults.string(forKey: Self.firstSlicePingKey),
+                                      importID: status.importID, now: now) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Your newest saves are sorted"
+        content.body = "Open Stash to browse — the rest keeps sorting."
+        content.sound = .default
+        // Same identifier on every background: a second schedule replaces the first.
+        UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: "first-slice-\(status.importID)", content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)))
+        defaults.set("\(status.importID)|\(now.addingTimeInterval(delay).timeIntervalSince1970)",
+                     forKey: Self.firstSlicePingKey)
+    }
+
+    /// Back in the app before the ping went off: the card says it now, so the ping would be noise.
+    private func cancelPendingFirstSlicePing() {
+        let defaults = UserDefaults.standard
+        guard let ping = Self.parsePing(defaults.string(forKey: Self.firstSlicePingKey)),
+              ping.fireAt > Date() else { return }
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: ["first-slice-\(ping.importID)"])
+        defaults.removeObject(forKey: Self.firstSlicePingKey)
     }
 
     /// Pull-to-refresh: one full poll now, ahead of the 8-second repoll. Waits out a poll that
@@ -1575,6 +1664,9 @@ final class PipelineCenter {
             let status = try await client.status(importID: importID)
             cloudState.apply(status: status)
             persistCloudState()
+            if firstPollSample?.importID != status.importID {
+                firstPollSample = (status.importID, Date(), status.fastPass.done)
+            }
             if let guesses = status.map?.guesses, !guesses.isEmpty, let container,
                try await Self.applyGuesses(guesses, to: container) > 0 {
                 refreshTallies()

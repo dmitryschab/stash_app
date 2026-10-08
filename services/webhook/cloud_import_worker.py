@@ -16,7 +16,7 @@ from threading import Event
 import requests
 
 from cloud_import_pipeline import FastPassPipeline, PipelineError
-from cloud_import_queue import MESSAGE_SCHEMA, SQSImportQueue
+from cloud_import_queue import MESSAGE_SCHEMA, SQSImportQueue, release_due
 from cloud_import_store import DynamoImportStore, shared_table
 from cloud_import_models import VideoState
 
@@ -46,6 +46,15 @@ def _classify(error: Exception) -> PipelineError:
     # fail_video records a terminal failure.
     retryable = status is None or status == 429 or status >= 500
     return PipelineError(str(error), retryable, f"provider_{status}" if status else "worker_error")
+
+
+def _release(store, queue, import_id: str) -> None:
+    """A settled video may make the next slice due. Never raises: the video's outcome is
+    already recorded, and a release that fails here is retaken by the next settle or poll."""
+    try:
+        release_due(store, queue, import_id)
+    except Exception:
+        log.exception("slice release failed import=%s", import_id)
 
 
 def handle_message(message: dict, store_for, pipeline, queue) -> HandleResult:
@@ -83,6 +92,7 @@ def handle_message(message: dict, store_for, pipeline, queue) -> HandleResult:
         log.warning("fast pass failed video=%s code=%s retryable=%s: %s",
                     video_id, error.code, error.retryable, error)
         store.fail_video(import_id, video_id, error.retryable, error.code)
+        _release(store, queue, import_id)
         if error.retryable:
             return HandleResult(deleted=False, retryable=True)
         _delete(queue, message)
@@ -92,12 +102,15 @@ def handle_message(message: dict, store_for, pipeline, queue) -> HandleResult:
         log.exception("unexpected error processing video=%s import=%s", video_id, import_id)
         classified = _classify(error)
         store.fail_video(import_id, video_id, classified.retryable, classified.code)
+        _release(store, queue, import_id)
         if classified.retryable:
             return HandleResult(deleted=False, retryable=True)
         _delete(queue, message)
         return HandleResult(deleted=True, retryable=False)
 
-    if store.complete_video(import_id, result):
+    completed = store.complete_video(import_id, result)
+    _release(store, queue, import_id)
+    if completed:
         _delete(queue, message)
         return HandleResult(deleted=True, retryable=False)
     return HandleResult(deleted=False, retryable=True)

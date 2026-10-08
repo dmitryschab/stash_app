@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +16,7 @@ from cloud_import_models import (
     ResultPage,
     VideoResult,
 )
-from cloud_import_store import CreateImportResult
+from cloud_import_store import SLICE, CreateImportResult
 
 USER_ID = "user-a"
 
@@ -39,6 +39,7 @@ class FakeStore:
         self.initial = INITIAL_LIMIT
         self.month = MONTH_LIMIT
         self.failures = {}  # videoID -> failed/unavailable rows already stored
+        self.release_checks = []
 
     # -- quota
     def get_quota(self):
@@ -82,6 +83,11 @@ class FakeStore:
     def pending_videos(self, import_id):
         # No worker runs in these tests, so every staged row is still waiting.
         return self.staged.get(import_id, [])
+
+    def claim_release(self, import_id):
+        # Records the nudge; the real slice arithmetic is tested against the store.
+        self.release_checks.append(import_id)
+        return None
 
     def get_status(self, import_id):
         return ImportStatus(
@@ -226,9 +232,10 @@ def test_an_oversized_first_import_is_partly_accepted_not_refused(dependencies):
     body = response.json()
     assert (body["accepted"], body["deferred"]) == (500, 220)
     assert body["quota"]["initialRemaining"] == 0
-    # Charged for exactly what was taken, and only those videos are queued for processing.
+    # Charged for exactly what was taken; the newest slice of it is queued now, the rest as
+    # that slice settles.
     assert store.initial == 0
-    assert len(queue.messages) == 500
+    assert len(queue.messages) == SLICE
     assert [message["videoID"] for message in queue.messages[:3]] == ["1", "2", "3"]
 
 
@@ -244,9 +251,10 @@ def test_a_retry_of_a_truncated_import_charges_nothing_more(dependencies):
     assert (retry.json()["accepted"], retry.json()["deferred"]) == (500, 220)
     assert store.initial == 0  # nothing was taken the second time round
     # The retry re-drives whatever is still waiting rather than trusting the first call's
-    # enqueue loop to have finished. Here nothing has been claimed yet, so all 500 go again;
-    # the worker drops the duplicates.
-    assert len(queue.messages) == 1000
+    # enqueue loop to have finished. This fake re-drives every staged row (the real store
+    # keeps it to released slices — test_the_retry_redrive_sends_only_released_rows), so
+    # the first slice plus all 500 go out; the worker drops the duplicates.
+    assert len(queue.messages) == SLICE + 500
     assert {message["videoID"] for message in queue.messages} == {str(n) for n in range(1, 501)}
 
 
@@ -443,3 +451,57 @@ def test_a_failing_store_write_is_logged_not_lost(map_dependencies, monkeypatch,
         response = client.post("/v1/imports", json=payload(1))
     assert response.status_code == 202
     assert "map write failed" in caplog.text
+
+
+def dated_payload(count):
+    """Video "n" was saved n hours before a fixed instant; submitted oldest-first on purpose."""
+    base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    return {
+        "clientImportID": "33333333-3333-4333-8333-333333333333",
+        "videos": [
+            {"videoID": str(n), "url": f"https://www.tiktok.com/@x/video/{n}",
+             "bookmarkedAt": (base - timedelta(hours=n)).isoformat()}
+            for n in range(count, 0, -1)
+        ],
+    }
+
+
+def test_a_first_submission_enqueues_only_the_newest_slice(dependencies):
+    _, queue = dependencies
+    with TestClient(app) as client:
+        assert client.post("/v1/imports", json=dated_payload(250)).status_code == 202
+
+    assert [message["videoID"] for message in queue.messages] == [str(n) for n in range(1, 101)]
+
+
+def test_a_free_retry_of_an_old_save_does_not_jump_the_newest_slice(dependencies):
+    store, queue = dependencies
+    store.failures = {"150": 1}     # the oldest save failed once before: free, and placed first in body
+    with TestClient(app) as client:
+        assert client.post("/v1/imports", json=dated_payload(150)).status_code == 202
+
+    assert [message["videoID"] for message in queue.messages] == [str(n) for n in range(1, 101)]
+
+
+def test_the_status_poll_nudges_a_stalled_release(dependencies):
+    store, _ = dependencies
+    with TestClient(app) as client:
+        created = client.post("/v1/imports", json=payload()).json()
+        client.get(f"/v1/imports/{created['importID']}")
+
+    assert store.release_checks == [created["importID"]]
+
+
+def test_a_failing_release_does_not_break_the_status_poll(dependencies):
+    store, _ = dependencies
+
+    def throttled(import_id):
+        raise RuntimeError("sqs is throttling")
+
+    store.claim_release = throttled
+    with TestClient(app) as client:
+        created = client.post("/v1/imports", json=payload()).json()
+        status = client.get(f"/v1/imports/{created['importID']}")
+
+    assert status.status_code == 200
+    assert status.json()["fastPass"] == {"done": 1, "total": 2}
