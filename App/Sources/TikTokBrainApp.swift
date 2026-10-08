@@ -45,6 +45,9 @@ struct TikTokBrainApp: App {
         assert(SearchIndex.selfTest(), "SearchIndex self-test failed")
         assert(TabSlots.selfTest(), "TabSlots self-test failed")
         assert(PipelineCenter.shellStatusSelfTest(), "PipelineCenter shell status self-test failed")
+        assert(PipelineCenter.expectedSelfTest(), "PipelineCenter expected self-test failed")
+        assert(PipelineCenter.firstSliceSelfTest(), "PipelineCenter first-slice self-test failed")
+        assert(FocusPickerView.selfTest(), "FocusPickerView self-test failed")
         assert(SearchSuggestions.selfTest(), "SearchSuggestions self-test failed")
         assert(ImportView.selfTest(), "ImportView self-test failed")
         assert(MusicView.selfTest(), "MusicView self-test failed")
@@ -83,7 +86,11 @@ struct TikTokBrainApp: App {
 /// Settings offers it and the order slots are drawn in; what is actually on screen is whatever
 /// subset `TabSlots` holds.
 enum StashTab: String, CaseIterable, Identifiable {
-    case today, code, cook, music, films, haul, library
+    // The four rich sections first, then every plain category in `librarySegments` order,
+    // Library last. The order is the pill's and the Settings list's.
+    case today, code, cook, music, films, haul
+    case fitness, style, travel, home, learning, comedy, dining, wellness
+    case library
 
     var id: String { rawValue }
 
@@ -95,6 +102,14 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: "Music"
         case .films: "Films"
         case .haul: "Haul"
+        case .fitness: "Fitness"
+        case .style: "Style"
+        case .travel: "Travel"
+        case .home: "Home"
+        case .learning: "Learning"
+        case .comedy: "Comedy"
+        case .dining: "Dining"
+        case .wellness: "Wellness"
         case .library: "Library"
         }
     }
@@ -108,6 +123,8 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .films: "movieclapper"
         case .haul: "bag.fill"
         case .library: "square.grid.2x2.fill"
+        case .fitness, .style, .travel, .home, .learning, .comedy, .dining, .wellness:
+            ownedCategory!.symbol
         }
     }
 
@@ -120,6 +137,14 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: "Records and recommendation lists."
         case .films: "Every film your saves named, as a poster wall."
         case .haul: "Everything your saves are selling."
+        case .fitness: "Workouts and training saves."
+        case .style: "Outfits, beauty and hair."
+        case .travel: "Places and trips."
+        case .home: "Decor, cleaning and DIY."
+        case .learning: "Facts, how-tos and explainers."
+        case .comedy: "The ones that made you laugh."
+        case .dining: "Restaurants, cafés and bars."
+        case .wellness: "Health, sleep and habits."
         case .library: "Every shelf, plus Import and Settings."
         }
     }
@@ -133,8 +158,21 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: .music
         case .code: .coding
         case .films: .film
+        case .fitness: .fitness
+        case .style: .style
+        case .travel: .travel
+        case .home: .home
+        case .learning: .learning
+        case .comedy: .comedy
+        case .dining: .dining
+        case .wellness: .wellness
         case .today, .haul, .library: nil
         }
+    }
+
+    /// The tab that shows `category`, rich or plain; nil for `other`, which has no tab.
+    static func tab(owning category: Category) -> StashTab? {
+        allCases.first { $0.ownedCategory == category }
     }
 }
 
@@ -235,6 +273,12 @@ enum TabSlots {
             && decode("cook,cook,cook") == [.cook, .library]            // duplicates collapse
             && decode("today,code,cook,music,haul") == [.today, .code, .cook, .music, .haul, .library]
             && encode([.haul, .today]) == "today,haul"
+            && librarySegments.filter { $0 != .other }.allSatisfy { StashTab.tab(owning: $0) != nil }
+            && StashTab.tab(owning: .other) == nil
+            && StashTab.tab(owning: .recipe) == .cook && StashTab.tab(owning: .home) == .home
+            && decode("home,style") == [.style, .home, .library]                   // catalogue order
+            && decode("today,code,cook,music,films,haul,home,style,wellness")       // nine asked for
+                == [.music, .films, .haul, .style, .home, .wellness, .library]        // seven kept, Library pinned
             && decode(encode([.today, .haul, .library])) == [.today, .haul, .library]
     }
     #endif
@@ -274,6 +318,39 @@ struct RootView: View {
     /// reads, because a plain `UserDefaults.set` does not invalidate a SwiftUI body — without
     /// this the screen would still be there after Continue.
     @State private var welcomeDismissed = false
+
+    /// The focus picker, once per account. The key is set on every way out — picked, skipped
+    /// or swiped away — so it is seen once and Settings is where tabs change after that.
+    @State private var focusPickerShown = false
+    private static func focusKey(_ userID: String) -> String { "focusPicked-\(userID)" }
+    private var focusPicked: Bool {
+        guard let userID = session.userID else { return true }
+        return UserDefaults.standard.bool(forKey: Self.focusKey(userID))
+    }
+    private func markFocusPicked() {
+        if let userID = session.userID { UserDefaults.standard.set(true, forKey: Self.focusKey(userID)) }
+    }
+
+    /// Presents the picker when every condition holds. Nothing is presented over Import or
+    /// Settings, and nothing for a demo account or an import that is not the account's first.
+    private func considerFocusPicker() {
+        guard !focusPickerShown, !center.screenBusy, !center.importRouteRequested, !session.isDemoAccount else { return }
+        #if DEBUG
+        if Self.forcesFocusPicker { focusPickerShown = true; return }
+        #endif
+        if FocusPickerView.shouldShow(map: center.cloudStatus?.map, shaping: center.isShapingLibrary,
+                                      picked: focusPicked,
+                                      eligible: center.cloudStatus?.importID == center.focusEligibleImportID) {
+            focusPickerShown = true
+        }
+    }
+    #if DEBUG
+    /// `-showFocusPicker` presents the sheet over a seeded library with sample shares — the
+    /// only way to screenshot it without an import.
+    private static var forcesFocusPicker: Bool { CommandLine.arguments.contains("-showFocusPicker") }
+    private static let sampleShares: [(category: Category, count: Int)] =
+        [(.coding, 230), (.recipe, 180), (.music, 90), (.home, 60), (.film, 40), (.style, 25)]
+    #endif
 
     // Observes import progress so the sync pill shows on every tab, not just Import.
     private var center = PipelineCenter.shared
@@ -410,6 +487,8 @@ struct RootView: View {
                 case .music: MusicView()
                 case .films: FilmsView()
                 case .haul: HaulView()
+                case .fitness, .style, .travel, .home, .learning, .comedy, .dining, .wellness:
+                    CategoryView(tab: tab)
                 case .library: LibraryView(shelves: libraryShelves(visible: slots),
                                            includeBuyShelf: !slots.contains(.haul))
                 }
@@ -451,6 +530,24 @@ struct RootView: View {
         // shell rendering a tab no slot points at, with no way back but a relaunch.
         .onChange(of: slotsRaw) { _, _ in
             if !slots.contains(tab) { tab = slots.first ?? .library }
+        }
+        // Every signal that can complete the picker's conditions: the map settling, Import or
+        // Settings closing, the pill's route to Import finishing. The map usually settles while
+        // the user is on Import watching it, so the close is the trigger that matters most.
+        .onChange(of: center.cloudStatus?.map?.done, initial: true) { _, _ in considerFocusPicker() }
+        .onChange(of: center.screenBusy) { _, _ in considerFocusPicker() }
+        .onChange(of: center.importRouteRequested) { _, _ in considerFocusPicker() }
+        .sheet(isPresented: $focusPickerShown, onDismiss: markFocusPicked) {
+            #if DEBUG
+            let shares = Self.forcesFocusPicker ? Self.sampleShares : center.mapShares
+            #else
+            let shares = center.mapShares
+            #endif
+            FocusPickerView(shares: shares) { picks in
+                if !picks.isEmpty { slotsRaw = TabSlots.encode(FocusPickerView.slots(for: picks)) }
+                focusPickerShown = false
+            }
+            .presentationDetents([.large])
         }
         .animation(.easeOut(duration: 0.25), value: searchOpen)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: center.shellStatus)

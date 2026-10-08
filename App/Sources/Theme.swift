@@ -793,3 +793,110 @@ private final class SwipeBackDelegate: NSObject, UIGestureRecognizerDelegate {
         return nil
     }
 }
+
+// MARK: - Sorting skeletons
+
+/// A save that is on its way: the category's tint where the thumbnail and two lines will be,
+/// a light sweep across every 1.4 s, and the category's symbol breathing in the square. Under
+/// Reduce Motion it is a still, tinted placeholder.
+struct SkeletonRow: View {
+    let tint: Color
+    let symbol: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sweep = false
+    @State private var breathe = false
+
+    var body: some View {
+        HStack(spacing: 11) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(tint.opacity(0.12))
+                .frame(width: 52, height: 52)
+                .overlay {
+                    Image(systemName: symbol)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(tint.opacity(reduceMotion ? 0.5 : (breathe ? 0.7 : 0.35)))
+                }
+            VStack(alignment: .leading, spacing: 8) {
+                Capsule().fill(tint.opacity(0.12)).frame(width: 180, height: 12)
+                Capsule().fill(tint.opacity(0.12)).frame(width: 110, height: 9)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 68)
+        .overlay {
+            if !reduceMotion {
+                GeometryReader { geo in
+                    LinearGradient(colors: [.clear, tint.opacity(0.10), .clear],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: geo.size.width * 0.5)
+                        .offset(x: sweep ? geo.size.width : -geo.size.width * 0.5)
+                }
+                .allowsHitTesting(false)
+            }
+        }
+        .clipped()
+        .accessibilityLabel("Sorting a save")
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { sweep = true }
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { breathe = true }
+        }
+    }
+}
+
+/// Up to five skeleton rows and a count of the rest — the same cap every shelf has, because
+/// building hundreds of animated placeholders is what made Library slow the first time.
+struct SkeletonShelf: View {
+    let count: Int
+    let tint: Color
+    let symbol: String
+
+    static let visible = 5
+
+    var body: some View {
+        if count > 0 {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(0..<min(count, Self.visible), id: \.self) { _ in
+                    SkeletonRow(tint: tint, symbol: symbol)
+                    Divider().overlay(Color.stashInk.opacity(0.12))
+                }
+                if count > Self.visible {
+                    Micro(text: "+\(count - Self.visible) more sorting", size: 9.5, tracking: 1.2, color: tint)
+                        .padding(.top, 8)
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+}
+
+/// The library's shape as one bar: a tinted segment per category, proportional to its share,
+/// and the four largest named under it. `ink` is the legend's colour — cream on the Import
+/// hero's green card, ink everywhere else.
+struct MapBar: View {
+    let shares: [(category: Category, count: Int)]
+    var ink: Color = .stashInk.opacity(0.62)
+
+    var body: some View {
+        let total = max(1, shares.reduce(0) { $0 + $1.count })
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { geo in
+                let gaps = CGFloat(max(0, shares.count - 1)) * 2
+                HStack(spacing: 2) {
+                    ForEach(shares, id: \.category) { share in
+                        Capsule()
+                            .fill(share.category.color)
+                            .frame(width: max(3, (geo.size.width - gaps) * CGFloat(share.count) / CGFloat(total)))
+                    }
+                }
+            }
+            .frame(height: 6)
+            Micro(text: shares.prefix(4).map { "\($0.category.displayName) ~\($0.count)" }.joined(separator: " · "),
+                  size: 9.5, tracking: 1, color: ink)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(shares.prefix(4).map { "\($0.category.displayName), about \($0.count)" }.joined(separator: ", "))
+    }
+}

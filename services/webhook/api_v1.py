@@ -127,8 +127,7 @@ OPENROUTER_VISION_MODEL = "google/gemini-3.7-flash"
 VISION_MAX_OUTPUT_TOKENS = 4096
 
 
-def _openrouter_key() -> str:
-    return stash_secrets.secret("OPENROUTER_API_KEY")
+from clef import openrouter_key as _openrouter_key  # one key helper for every OpenRouter call
 
 
 # ---------------------------------------------------------------- deep-pass cap

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +16,7 @@ from cloud_import_models import (
     ResultPage,
     VideoResult,
 )
-from cloud_import_store import CreateImportResult
+from cloud_import_store import SLICE, CreateImportResult
 
 USER_ID = "user-a"
 
@@ -39,6 +39,7 @@ class FakeStore:
         self.initial = INITIAL_LIMIT
         self.month = MONTH_LIMIT
         self.failures = {}  # videoID -> failed/unavailable rows already stored
+        self.release_checks = []
 
     # -- quota
     def get_quota(self):
@@ -82,6 +83,11 @@ class FakeStore:
     def pending_videos(self, import_id):
         # No worker runs in these tests, so every staged row is still waiting.
         return self.staged.get(import_id, [])
+
+    def claim_release(self, import_id):
+        # Records the nudge; the real slice arithmetic is tested against the store.
+        self.release_checks.append(import_id)
+        return None
 
     def get_status(self, import_id):
         return ImportStatus(
@@ -226,9 +232,10 @@ def test_an_oversized_first_import_is_partly_accepted_not_refused(dependencies):
     body = response.json()
     assert (body["accepted"], body["deferred"]) == (500, 220)
     assert body["quota"]["initialRemaining"] == 0
-    # Charged for exactly what was taken, and only those videos are queued for processing.
+    # Charged for exactly what was taken; the newest slice of it is queued now, the rest as
+    # that slice settles.
     assert store.initial == 0
-    assert len(queue.messages) == 500
+    assert len(queue.messages) == SLICE
     assert [message["videoID"] for message in queue.messages[:3]] == ["1", "2", "3"]
 
 
@@ -244,9 +251,10 @@ def test_a_retry_of_a_truncated_import_charges_nothing_more(dependencies):
     assert (retry.json()["accepted"], retry.json()["deferred"]) == (500, 220)
     assert store.initial == 0  # nothing was taken the second time round
     # The retry re-drives whatever is still waiting rather than trusting the first call's
-    # enqueue loop to have finished. Here nothing has been claimed yet, so all 500 go again;
-    # the worker drops the duplicates.
-    assert len(queue.messages) == 1000
+    # enqueue loop to have finished. This fake re-drives every staged row (the real store
+    # keeps it to released slices — test_the_retry_redrive_sends_only_released_rows), so
+    # the first slice plus all 500 go out; the worker drops the duplicates.
+    assert len(queue.messages) == SLICE + 500
     assert {message["videoID"] for message in queue.messages} == {str(n) for n in range(1, 501)}
 
 
@@ -314,3 +322,186 @@ def test_a_free_retry_goes_through_on_an_empty_budget(dependencies):
     assert response.status_code == 202
     assert (response.json()["accepted"], response.json()["deferred"]) == (2, 1)
     assert [message["videoID"] for message in queue.messages] == ["1", "2"]
+
+
+# ---------------------------------------------------------------- map pass
+
+class InlinePool:
+    """Runs each submission on the spot, so a test sees the map finished when the route returns."""
+    def __init__(self):
+        self.submitted = 0
+
+    def submit(self, fn, *args):
+        self.submitted += 1
+        fn(*args)
+
+
+class MapStore(FakeStore):
+    def __init__(self):
+        super().__init__()
+        self.map = None
+
+    def start_map(self, import_id, sampled):
+        self.map = {"importID": import_id, "sampled": sampled, "done": 0, "counts": {}, "guesses": {}}
+
+    def guess_video(self, import_id, video_id, category):
+        self.map["done"] += 1
+        self.map["counts"][category] = self.map["counts"].get(category, 0) + 1
+        self.map["guesses"][video_id] = category
+
+    def skip_map_video(self, import_id):
+        self.map["done"] += 1
+
+
+@pytest.fixture
+def map_dependencies(monkeypatch):
+    store = MapStore()
+    queue = FakeQueue()
+    pool = InlinePool()
+    app.dependency_overrides[stash_auth.current_user] = lambda: USER_ID
+    app.dependency_overrides[stash_auth.user_store] = lambda: store
+    app.dependency_overrides[stash_auth.entitled_store] = lambda: store
+    app.dependency_overrides[cloud_import_api.get_queue] = lambda: queue
+    monkeypatch.setattr(cloud_import_api, "_MAP_POOL", pool)
+    monkeypatch.setattr(cloud_import_api, "fetch_metadata",
+                        lambda url: {"description": f"video {url.rsplit('/', 1)[1]} #linux", "tags": ["linux"]})
+    monkeypatch.setattr(cloud_import_api.clef, "classify", lambda state: ("coding", 0.9))
+    yield store, queue, pool
+    app.dependency_overrides.clear()
+
+
+def test_sample_is_evenly_spaced_and_capped():
+    videos = list(range(300))
+    sample = cloud_import_api.sample_for_map(videos)
+    assert len(sample) == 60
+    assert sample[:3] == [0, 5, 10]            # every fifth, from the first
+    assert sample[-1] == 295
+    assert cloud_import_api.sample_for_map(list(range(7))) == list(range(7))   # fewer than 60: all
+    assert cloud_import_api.sample_for_map([]) == []
+
+
+def test_a_new_import_starts_the_map_and_tallies_guesses(map_dependencies):
+    store, queue, pool = map_dependencies
+    with TestClient(app) as client:
+        response = client.post("/v1/imports", json=payload(3))
+    import_id = response.json()["importID"]
+    assert pool.submitted == 3
+    assert store.map == {"importID": import_id, "sampled": 3, "done": 3,
+                         "counts": {"coding": 3}, "guesses": {"1": "coding", "2": "coding", "3": "coding"}}
+    assert len(queue.messages) == 3           # the fast pass is untouched
+    assert store.initial == INITIAL_LIMIT - 3  # the map charged nothing extra
+
+
+def test_a_clef_failure_still_counts_as_done(map_dependencies, monkeypatch):
+    store, _, _ = map_dependencies
+    answers = iter([("coding", 0.9), None, ("recipe", 0.8)])
+    monkeypatch.setattr(cloud_import_api.clef, "classify", lambda state: next(answers))
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(3))
+    assert store.map["done"] == 3
+    assert store.map["counts"] == {"coding": 1, "recipe": 1}
+
+
+def test_missing_metadata_is_a_skip_not_a_crash(map_dependencies, monkeypatch):
+    store, _, _ = map_dependencies
+    monkeypatch.setattr(cloud_import_api, "fetch_metadata", lambda url: None)
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(2))
+    assert store.map == {"importID": store.map["importID"], "sampled": 2, "done": 2, "counts": {}, "guesses": {}}
+
+
+def test_a_retry_does_not_start_a_second_map(map_dependencies):
+    store, _, pool = map_dependencies
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(2))
+        client.post("/v1/imports", json=payload(2))
+    assert pool.submitted == 2
+    assert store.map["sampled"] == 2
+
+
+def test_a_lost_create_race_with_free_retries_starts_no_second_map(map_dependencies, monkeypatch):
+    store, _, pool = map_dependencies
+    store.failures = {"1": 1, "2": 1}                                    # every video a free retry: nothing charged
+    monkeypatch.setattr(store, "get_client_import", lambda cid: None)   # the race: the dedupe row is not visible yet
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=payload(2))
+        client.post("/v1/imports", json=payload(2))                     # create_import replays: created=False
+    assert pool.submitted == 2
+    assert store.map["sampled"] == 2
+
+
+def test_the_map_fetches_the_canonical_url(map_dependencies, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cloud_import_api, "fetch_metadata", lambda url: seen.append(url) or {"description": "x"})
+    body = payload(1)
+    body["videos"][0]["url"] = "https://www.tiktok.com/@x/photo/1"
+    with TestClient(app) as client:
+        client.post("/v1/imports", json=body)
+    assert seen == ["https://www.tiktok.com/@x/video/1"]
+
+
+def test_a_failing_store_write_is_logged_not_lost(map_dependencies, monkeypatch, caplog):
+    store, _, _ = map_dependencies
+
+    def boom(import_id, video_id, category):
+        raise RuntimeError("dynamo down")
+
+    monkeypatch.setattr(store, "guess_video", boom)
+    with TestClient(app) as client, caplog.at_level("ERROR"):
+        response = client.post("/v1/imports", json=payload(1))
+    assert response.status_code == 202
+    assert "map write failed" in caplog.text
+
+
+def dated_payload(count):
+    """Video "n" was saved n hours before a fixed instant; submitted oldest-first on purpose."""
+    base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    return {
+        "clientImportID": "33333333-3333-4333-8333-333333333333",
+        "videos": [
+            {"videoID": str(n), "url": f"https://www.tiktok.com/@x/video/{n}",
+             "bookmarkedAt": (base - timedelta(hours=n)).isoformat()}
+            for n in range(count, 0, -1)
+        ],
+    }
+
+
+def test_a_first_submission_enqueues_only_the_newest_slice(dependencies):
+    _, queue = dependencies
+    with TestClient(app) as client:
+        assert client.post("/v1/imports", json=dated_payload(250)).status_code == 202
+
+    assert [message["videoID"] for message in queue.messages] == [str(n) for n in range(1, 101)]
+
+
+def test_a_free_retry_of_an_old_save_does_not_jump_the_newest_slice(dependencies):
+    store, queue = dependencies
+    store.failures = {"150": 1}     # the oldest save failed once before: free, and placed first in body
+    with TestClient(app) as client:
+        assert client.post("/v1/imports", json=dated_payload(150)).status_code == 202
+
+    assert [message["videoID"] for message in queue.messages] == [str(n) for n in range(1, 101)]
+
+
+def test_the_status_poll_nudges_a_stalled_release(dependencies):
+    store, _ = dependencies
+    with TestClient(app) as client:
+        created = client.post("/v1/imports", json=payload()).json()
+        client.get(f"/v1/imports/{created['importID']}")
+
+    assert store.release_checks == [created["importID"]]
+
+
+def test_a_failing_release_does_not_break_the_status_poll(dependencies):
+    store, _ = dependencies
+
+    def throttled(import_id):
+        raise RuntimeError("sqs is throttling")
+
+    store.claim_release = throttled
+    with TestClient(app) as client:
+        created = client.post("/v1/imports", json=payload()).json()
+        status = client.get(f"/v1/imports/{created['importID']}")
+
+    assert status.status_code == 200
+    assert status.json()["fastPass"] == {"done": 1, "total": 2}

@@ -129,27 +129,33 @@ def _provider_error(error: Exception) -> PipelineError:
     return PipelineError(str(error), retryable, f"provider_{status}" if status else "provider_error")
 
 
+def fetch_metadata(url: str) -> dict | None:
+    """One yt-dlp metadata record for `url` — caption, tags, sound, cover — with no download.
+    None when the video is gone or private; raises PipelineError on a timeout or bad JSON."""
+    try:
+        completed = subprocess.run(
+            [YTDLP, "--dump-single-json", "--skip-download", "--no-warnings", "--socket-timeout", "30", url],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise PipelineError("yt-dlp timed out", True, "metadata_timeout") from error
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    try:
+        metadata = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise PipelineError("yt-dlp returned invalid JSON", False, "invalid_metadata") from error
+    return metadata if isinstance(metadata, dict) and metadata else None
+
+
 class FastPassPipeline:
     def __init__(self, analyzer: Callable[[dict], dict] | None = None):
         self.analyzer = analyzer or analyze_metadata
 
     def _metadata(self, url: str) -> dict | None:
-        try:
-            completed = subprocess.run(
-                [YTDLP, "--dump-single-json", "--skip-download", "--no-warnings", "--socket-timeout", "30", url],
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise PipelineError("yt-dlp timed out", True, "metadata_timeout") from error
-        if completed.returncode != 0 or not completed.stdout.strip():
-            return None
-        try:
-            metadata = json.loads(completed.stdout)
-        except json.JSONDecodeError as error:
-            raise PipelineError("yt-dlp returned invalid JSON", False, "invalid_metadata") from error
-        return metadata if isinstance(metadata, dict) and metadata else None
+        return fetch_metadata(url)
 
     def process(self, url: str, video_id: str | None = None) -> VideoResult:
         url = _canonical(url)

@@ -339,3 +339,205 @@ def test_failure_counts_tally_failed_and_unavailable_rows_across_imports():
         table.items[(PARTITION, f"IMPORT#{import_id}#VIDEO#{video_id}")]["state"] = state
 
     assert store.failure_counts({"1", "2", "3", "4"}) == {"1": 2, "2": 1}
+
+
+# ---------------------------------------------------------------- map pass
+
+from conftest import ConditionalTable  # noqa: E402 — appended with its tests
+
+
+def test_the_map_counts_guesses_and_skips_on_meta_only():
+    table = ConditionalTable()
+    store = DynamoImportStore(table=table, user_id=USER)
+    created = store.create_import(request(("1", "2", "3")))
+
+    assert store.get_status(created.import_id).map is None     # no map until it starts
+
+    store.start_map(created.import_id, sampled=3)
+    store.guess_video(created.import_id, "1", "coding")
+    store.guess_video(created.import_id, "2", "coding")
+    store.skip_map_video(created.import_id)
+
+    status = store.get_status(created.import_id)
+    assert status.map.sampled == 3
+    assert status.map.done == 3
+    assert status.map.counts == {"coding": 2}
+    assert status.map.guesses == {"1": "coding", "2": "coding"}
+    # Nothing landed on the video rows: the status poll must not have to scan them.
+    assert "guess" not in table.items[(store.partition, f"IMPORT#{created.import_id}#VIDEO#1")]
+
+
+def test_two_categories_keep_separate_counters():
+    store = DynamoImportStore(table=ConditionalTable(), user_id=USER)
+    created = store.create_import(request(("1", "2")))
+    store.start_map(created.import_id, sampled=2)
+    store.guess_video(created.import_id, "1", "recipe")
+    store.guess_video(created.import_id, "2", "music")
+    assert store.get_status(created.import_id).map.counts == {"recipe": 1, "music": 1}
+
+
+from cloud_import_queue import release_due  # noqa: E402
+from cloud_import_store import LEASE_FREE, REFILL_AT, SLICE  # noqa: E402
+
+
+class SliceQueue:
+    def __init__(self):
+        self.sent = []
+
+    def enqueue(self, user_id, import_id, video_id, url=None):
+        self.sent.append(video_id)
+
+
+def dated_request(count, client_import_id="22222222-2222-4222-8222-222222222222"):
+    """Video "n" was saved n hours ago, and the list is submitted oldest-first on purpose:
+    the box, not the client, decides what "newest" means."""
+    now = datetime.now(timezone.utc)
+    return CreateImportRequest(
+        clientImportID=client_import_id,
+        videos=[
+            BookmarkInput(videoID=str(n), url=f"https://www.tiktok.com/@x/video/{n}",
+                          bookmarkedAt=now - timedelta(hours=n))
+            for n in range(count, 0, -1)
+        ],
+    )
+
+
+def sliced(count):
+    table = ConditionalTable()
+    store = DynamoImportStore(table=table, user_id=USER)
+    import_id = store.create_import(dated_request(count)).import_id
+    return table, store, import_id
+
+
+def meta_row(table, store, import_id):
+    return table.items[(store.partition, f"IMPORT#{import_id}#META")]
+
+
+def settle(table, store, import_id, count):
+    meta_row(table, store, import_id)["fastDone"] += count
+
+
+def test_create_orders_rows_newest_first_and_releases_one_slice():
+    table, store, import_id = sliced(250)
+    rows = {item["videoID"]: item for (_pk, sk), item in table.items.items() if "#VIDEO#" in sk}
+
+    assert rows["1"]["order"] == 0 and rows["250"]["order"] == 249
+    assert meta_row(table, store, import_id)["released"] == SLICE
+    assert store.slice_videos(import_id, 0, 3) == [
+        (str(n), f"https://www.tiktok.com/@x/video/{n}") for n in (1, 2, 3)]
+
+
+def test_the_next_slice_goes_out_only_when_the_current_one_is_nearly_settled():
+    table, store, import_id = sliced(250)
+    queue = SliceQueue()
+
+    settle(table, store, import_id, SLICE - REFILL_AT - 1)            # 79 settled
+    assert release_due(store, queue, import_id) == 0
+    settle(table, store, import_id, 1)                                 # 80
+    assert release_due(store, queue, import_id) == 100
+    assert queue.sent == [str(n) for n in range(101, 201)]
+    assert meta_row(table, store, import_id)["released"] == 200
+    assert meta_row(table, store, import_id)["releaseLeaseUntil"] == LEASE_FREE
+
+    settle(table, store, import_id, 100)                               # 180
+    assert release_due(store, queue, import_id) == 50                  # the tail
+    assert meta_row(table, store, import_id)["released"] == 250
+    settle(table, store, import_id, 70)                                # all 250
+    assert release_due(store, queue, import_id) == 0
+
+
+def test_two_releases_racing_send_the_slice_once():
+    table, store, import_id = sliced(250)
+    settle(table, store, import_id, 80)
+
+    assert store.claim_release(import_id) == (100, 200)
+    assert store.claim_release(import_id) is None                      # the lease is held
+
+
+def test_a_release_that_died_is_retaken_after_the_lease():
+    table, store, import_id = sliced(250)
+    settle(table, store, import_id, 80)
+    assert store.claim_release(import_id) == (100, 200)                # …and then the caller died
+    meta_row(table, store, import_id)["releaseLeaseUntil"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    queue = SliceQueue()
+
+    assert release_due(store, queue, import_id) == 100
+    assert queue.sent == [str(n) for n in range(101, 201)]
+    assert meta_row(table, store, import_id)["released"] == 200
+
+
+def test_an_import_of_exactly_one_slice_never_releases_again():
+    table, store, import_id = sliced(SLICE)
+    assert meta_row(table, store, import_id)["released"] == SLICE
+    settle(table, store, import_id, SLICE)
+
+    assert store.claim_release(import_id) is None
+
+
+def test_the_retry_redrive_sends_only_released_rows():
+    _table, store, import_id = sliced(250)
+
+    assert {video_id for video_id, _url in store.pending_videos(import_id)} == {
+        str(n) for n in range(1, 101)}
+
+
+def test_an_import_from_before_slicing_is_left_alone():
+    table, store, import_id = sliced(3)
+    del meta_row(table, store, import_id)["released"]
+    for (_pk, sk), item in table.items.items():
+        if "#VIDEO#" in sk:
+            del item["order"]
+
+    assert store.claim_release(import_id) is None
+    assert len(store.pending_videos(import_id)) == 3
+
+
+def test_a_release_that_fails_midway_frees_the_lease_for_the_next_settle():
+    """Otherwise the last ~20 settles of the slice all find the lease held, finish, and leave
+    nobody to retry until the phone polls again — which can be hours with the app closed."""
+    table, store, import_id = sliced(250)
+    settle(table, store, import_id, 80)
+
+    class ThrottledQueue(SliceQueue):
+        def enqueue(self, *args, **kwargs):
+            raise RuntimeError("sqs is throttling")
+
+    with pytest.raises(RuntimeError):
+        release_due(store, ThrottledQueue(), import_id)
+    assert meta_row(table, store, import_id)["releaseLeaseUntil"] == LEASE_FREE
+    assert meta_row(table, store, import_id)["released"] == 100
+
+    queue = SliceQueue()
+    assert release_due(store, queue, import_id) == 100
+
+
+def test_rows_staged_without_a_usable_order_go_out_with_the_last_slice():
+    """A create this deploy cut short leaves old-code rows with no `order`, and an earlier
+    attempt with a longer body can leave an order past the final total. Neither may strand
+    the import short of its total."""
+    table, store, import_id = sliced(150)
+    rows = {item["videoID"]: item for (_pk, sk), item in table.items.items() if "#VIDEO#" in sk}
+    del rows["1"]["order"]                  # staged by the old code
+    rows["2"]["order"] = 400                # staged by an attempt with a longer body
+    settle(table, store, import_id, 80)
+    queue = SliceQueue()
+
+    assert release_due(store, queue, import_id) == 52     # orders 100–149, then both strays
+    assert queue.sent[-2:] == ["1", "2"] or queue.sent[-2:] == ["2", "1"]
+
+
+def test_draining_an_import_sends_every_video_once_newest_first():
+    table, store, import_id = sliced(250)
+    queue = SliceQueue()
+    queue.sent = [video_id for video_id, _url in store.slice_videos(import_id, 0, SLICE)]  # what create_import sends
+    settled = 0
+    while settled < len(queue.sent):
+        settle(table, store, import_id, 1)
+        settled += 1
+        before = len(queue.sent)
+        release_due(store, queue, import_id)
+        if len(queue.sent) > before:
+            assert before - settled <= REFILL_AT    # a slice only goes out once the last is nearly done
+
+    assert queue.sent == [str(n) for n in range(1, 251)]

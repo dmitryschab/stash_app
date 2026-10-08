@@ -26,6 +26,47 @@ public struct CloudImportProgress: Codable, Equatable, Sendable {
     }
 }
 
+/// The first sort of a sample of the import, as the box reports it on every status poll:
+/// how many it sampled, how many Clef has answered (skips included), those answers tallied
+/// by category, and each sampled video's guess. Shares are the phone's to scale — the box
+/// does not know how many of the import's rows the phone already holds.
+public struct CloudImportMap: Codable, Equatable, Sendable {
+    public var sampled: Int
+    public var done: Int
+    public var counts: [Category: Int]
+    public var guesses: [String: Category]
+
+    public init(sampled: Int, done: Int, counts: [Category: Int] = [:], guesses: [String: Category] = [:]) {
+        self.sampled = sampled
+        self.done = done
+        self.counts = counts
+        self.guesses = guesses
+    }
+
+    private enum CodingKeys: String, CodingKey { case sampled, done, counts, guesses }
+
+    /// Keys and values arrive as strings. A category this build does not know is dropped,
+    /// not folded into `.other` the way `Category.init(from:)` would — a skeleton shelf
+    /// counting an unknown category as "other" would be a shelf the user cannot find.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        sampled = try values.decodeIfPresent(Int.self, forKey: .sampled) ?? 0
+        done = try values.decodeIfPresent(Int.self, forKey: .done) ?? 0
+        let rawCounts = try values.decodeIfPresent([String: Int].self, forKey: .counts) ?? [:]
+        counts = rawCounts.reduce(into: [:]) { if let category = Category(rawValue: $1.key) { $0[category] = $1.value } }
+        let rawGuesses = try values.decodeIfPresent([String: String].self, forKey: .guesses) ?? [:]
+        guesses = rawGuesses.reduce(into: [:]) { if let category = Category(rawValue: $1.value) { $0[$1.key] = category } }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sampled, forKey: .sampled)
+        try container.encode(done, forKey: .done)
+        try container.encode(Dictionary(uniqueKeysWithValues: counts.map { ($0.key.rawValue, $0.value) }), forKey: .counts)
+        try container.encode(guesses.mapValues(\.rawValue), forKey: .guesses)
+    }
+}
+
 public struct CloudImportSubmission: Codable, Equatable, Sendable {
     public var importID: String
     public var state: CloudImportState
@@ -52,6 +93,8 @@ public struct CloudImportStatus: Codable, Equatable, Sendable {
     public var partialFailures: Int
     public var estimatedCostUSD: Double
     public var updatedAt: Date
+    /// Nil until the box has started a map for this import, and from a box that predates it.
+    public var map: CloudImportMap?
 
     public init(
         importID: String,
@@ -60,7 +103,8 @@ public struct CloudImportStatus: Codable, Equatable, Sendable {
         unavailable: Int,
         partialFailures: Int,
         estimatedCostUSD: Double,
-        updatedAt: Date
+        updatedAt: Date,
+        map: CloudImportMap? = nil
     ) {
         self.importID = importID
         self.state = state
@@ -69,6 +113,7 @@ public struct CloudImportStatus: Codable, Equatable, Sendable {
         self.partialFailures = partialFailures
         self.estimatedCostUSD = estimatedCostUSD
         self.updatedAt = updatedAt
+        self.map = map
     }
 }
 
@@ -197,6 +242,9 @@ public struct CloudImportSyncState: Codable, Equatable, Sendable {
         }
         guard incoming.state.rank >= current.state.rank else { return }
 
+        // The newer map, by how much of it has settled — and never nil over something: a
+        // poll that answered before the map started must not take the skeletons down.
+        let map = (incoming.map?.done ?? -1) >= (current.map?.done ?? -1) ? incoming.map : current.map
         status = CloudImportStatus(
             importID: incoming.importID,
             state: incoming.state,
@@ -206,7 +254,8 @@ public struct CloudImportSyncState: Codable, Equatable, Sendable {
             unavailable: max(current.unavailable, incoming.unavailable),
             partialFailures: max(current.partialFailures, incoming.partialFailures),
             estimatedCostUSD: max(current.estimatedCostUSD, incoming.estimatedCostUSD),
-            updatedAt: max(current.updatedAt, incoming.updatedAt)
+            updatedAt: max(current.updatedAt, incoming.updatedAt),
+            map: map ?? current.map
         )
     }
 }
@@ -217,6 +266,11 @@ public enum CloudImportLimits {
     /// account never holds more than 600 of them, so `PipelineCenter.runCloudImport` trims a
     /// submission to the remaining budget long before this cap comes into play.
     public static let maxVideosPerImport = 1200
+
+    /// The box releases an import to its queue in slices of this many, newest first
+    /// (services/webhook/cloud_import_store.SLICE). The phone mirrors it to know when the saves
+    /// people reach for first are in.
+    public static let firstSlice = 100
 }
 
 public enum CloudImportFeatureFlag {
@@ -461,6 +515,12 @@ public enum CloudImportResultUpserter {
                 }
                 if !result.buys.isEmpty { video.buysJSON = try? JSONEncoder().encode(result.buys) }
             }
+            // A row that only ever held a guess, and whose fast pass then failed or found the
+            // video gone, must not keep the category it was guessed into: a guessed row is not
+            // in "Needs a look", not archived and never retried, so it would be a shimmer the
+            // user can neither open nor fix. Cleared, it is a plain failure — the archive
+            // retries it, and a retry at the same revision lands through `replacesFailure`.
+            if result.unavailable || result.errorCode != nil, video.isGuessed { video.categoryRaw = "" }
             video.unavailable = result.unavailable
             video.cloudAnalysisRevision = result.analysisRevision
             video.stageStatesJSON = stageStates(for: result)
@@ -469,6 +529,25 @@ public enum CloudImportResultUpserter {
 
         if applied > 0 { try context.save() }
         return applied
+    }
+
+    /// Writes Clef's first guesses into rows that have nothing yet: no analysis (revision 0)
+    /// and no category. Returns how many changed. The fast pass overwrites these through
+    /// `apply` — every result carries a revision above 0 and a title, and a title is what
+    /// turns a guess into a save (`Video.isGuessed`).
+    public static func applyGuesses(_ guesses: [String: Category], to context: ModelContext) throws -> Int {
+        guard !guesses.isEmpty else { return 0 }
+        let ids = Array(guesses.keys)
+        let videos = try context.fetch(FetchDescriptor<Video>(
+            predicate: #Predicate { ids.contains($0.videoID) }))
+        var changed = 0
+        for video in videos where video.cloudAnalysisRevision == 0 && video.categoryRaw.isEmpty {
+            guard let category = guesses[video.videoID] else { continue }
+            video.categoryRaw = category.rawValue
+            changed += 1
+        }
+        if changed > 0 { try context.save() }
+        return changed
     }
 
     private static func stageStates(for result: CloudImportResult) -> Data {

@@ -45,6 +45,29 @@ final class PipelineCenter {
     var lastError: String?
     var lastSummary: String?
     var cloudStatus: CloudImportStatus?
+    /// How many rows the library holds per category, split by whether an analysis has
+    /// written them (`analysed`) or only Clef has (`guessed`, see `Video.isGuessed`). Refreshed
+    /// after every batch of results or guesses on the poll's own context, so the views that
+    /// draw skeletons read a dictionary instead of fetching the library per body.
+    struct CategoryTally: Equatable { var analysed = 0; var guessed = 0 }
+    private(set) var tallies: [Category: CategoryTally] = [:]
+
+    /// Raised while Import or Settings is on screen — a count, because Settings opens over
+    /// Import. The focus picker waits for both to close: a sheet over the import screen would
+    /// cover the very map the user is watching settle, and a sheet under Settings' sheet
+    /// silently fails to present.
+    private var screenBusyCount = 0
+    var screenBusy: Bool { screenBusyCount > 0 }
+    func screenDidAppear() { screenBusyCount += 1 }
+    func screenDidDisappear() { screenBusyCount = max(0, screenBusyCount - 1) }
+
+    /// The one import the focus picker may follow: the first submitted onto a library with no
+    /// filed saves. A sync, a retry or a second export onto an existing library is not a first
+    /// import, and the picker is for first impressions only — it also replaces the bar, which
+    /// an account that already chose its tabs would not thank us for. Persisted so a relaunch
+    /// mid-import still knows which import it was.
+    private(set) var focusEligibleImportID: String?
+    private static let focusEligibleKey = "focusEligibleImportID"
     var cloudSyncing = false
     /// A TikTok data request is out and the archive is not built yet; Settings says so under the
     /// connected row. Not persisted: every foreground asks the box again.
@@ -89,6 +112,9 @@ final class PipelineCenter {
     private var libraryDeepPassTask: Task<Void, Never>?
     private var extraTime: UIBackgroundTaskIdentifier = .invalid
     private var cloudState = CloudImportSyncState()
+    /// The first status this session saw for the running import: where the ping's rate is
+    /// measured from.
+    private var firstPollSample: (importID: String, at: Date, done: Int)?
     private static let cloudStateKey = "cloudImport.syncState"
 
     /// A TikTok the share extension handed over, tracked until it is fully processed.
@@ -125,7 +151,9 @@ final class PipelineCenter {
             shareImports = imports
         }
         dismissedImportID = UserDefaults.standard.string(forKey: Self.dismissedImportKey)
+        focusEligibleImportID = UserDefaults.standard.string(forKey: Self.focusEligibleKey)
         Self.discardLegacyState()
+        refreshTallies()   // a cold launch mid-import has skeletons to size
         MediaFetcher.sweepInterruptedReads()
         Self.startPowerAndPathWatch()
         refreshThumbnails()
@@ -215,6 +243,113 @@ final class PipelineCenter {
             return .finished(sorted: max(0, cloud.fastPass.done - cloud.unavailable))
         }
         return nil
+    }
+
+    // MARK: - Library map
+
+    /// True while an import is running and its map has at least one answer — the window in
+    /// which skeletons and the picker exist.
+    var isShapingLibrary: Bool {
+        #if DEBUG
+        if Self.debugSorting != nil { return true }
+        #endif
+        guard let status = cloudStatus, status.state == .accepted || status.state == .fastPass,
+              let map = status.map else { return false }
+        return map.done > 0
+    }
+
+    /// The map's counts scaled to the import's total, largest first: what the picker's chips
+    /// and the Import hero's bar show.
+    var mapShares: [(category: Category, count: Int)] {
+        guard isShapingLibrary, let status = cloudStatus, let map = status.map else { return [] }
+        return map.counts
+            .map { (category: $0.key, count: Self.scaled(count: $0.value, done: map.done, total: status.fastPass.total)) }
+            .filter { $0.count > 0 }
+            .sorted { ($0.count, $1.category.rawValue) > ($1.count, $0.category.rawValue) }
+    }
+
+    /// Skeleton rows still owed to `category`: the sample's share scaled to the import, minus
+    /// every row already carrying that category (analysed or guessed). Zero outside an import.
+    func expected(_ category: Category) -> Int {
+        #if DEBUG
+        if let forced = Self.debugSorting { return forced }
+        #endif
+        guard isShapingLibrary, let status = cloudStatus, let map = status.map else { return 0 }
+        let tally = tallies[category] ?? CategoryTally()
+        return Self.expected(count: map.counts[category] ?? 0, done: map.done,
+                             total: status.fastPass.total, landed: tally.analysed + tally.guessed)
+    }
+
+    /// The same, per desk shelf, over the categories Library still owns.
+    func expected(_ intent: SaveIntent, includeBuy: Bool, shelves: [Category]) -> Int {
+        Self.categories(filing: intent, among: shelves, includeBuy: includeBuy).reduce(0) { $0 + expected($1) }
+    }
+
+    /// The categories whose saves file under `intent` when nothing but the category is known —
+    /// which is all a guessed row has — limited to `shelves`: a recipe lands on Cook, and Cook
+    /// draws its own skeletons, so a desk that counted it would hold placeholders that never fill.
+    static func categories(filing intent: SaveIntent, among shelves: [Category], includeBuy: Bool) -> [Category] {
+        shelves.filter { SaveIntent.classify(category: $0, topics: [], hasBuys: false, includeBuy: includeBuy) == intent }
+    }
+
+    /// Whether any save in the library has a category yet — the test for a first import. Read
+    /// before the new rows go in; they have no category either way.
+    private func hasFiledSaves() -> Bool {
+        guard let container else { return true }   // unknown: never claim a first import
+        let descriptor = FetchDescriptor<Video>(predicate: #Predicate { $0.categoryRaw != "" })
+        return ((try? ModelContext(container).fetchCount(descriptor)) ?? 1) > 0
+    }
+
+    static func scaled(count: Int, done: Int, total: Int) -> Int {
+        guard done > 0, total > 0 else { return 0 }
+        return Int((Double(count) / Double(done) * Double(total)).rounded())
+    }
+
+    static func expected(count: Int, done: Int, total: Int, landed: Int) -> Int {
+        max(0, scaled(count: count, done: done, total: total) - landed)
+    }
+
+    #if DEBUG
+    /// `-debugSorting 12` draws twelve skeletons under every category, with no import running
+    /// — the only way to screenshot a shelf mid-sort from a seeded simulator.
+    static let debugSorting: Int? = UserDefaults.standard.string(forKey: "debugSorting").flatMap(Int.init)
+
+    /// The skeleton arithmetic, checked at launch like the pill's: it is a ratio of three
+    /// numbers from two different sources and a clamp, none of it visible from any one screen.
+    static func expectedSelfTest() -> Bool {
+        expected(count: 30, done: 50, total: 1000, landed: 100) == 500
+            && expected(count: 20, done: 50, total: 1000, landed: 450) == 0        // clamped
+            && expected(count: 0, done: 50, total: 1000, landed: 0) == 0
+            && expected(count: 30, done: 0, total: 1000, landed: 0) == 0           // nothing settled yet
+            && expected(count: 30, done: 50, total: 0, landed: 0) == 0             // nothing to scale to
+            && expected(count: 1, done: 3, total: 10, landed: 0) == 3              // rounds, not truncates
+            // A desk only expects the categories Library still owns: a recipe files on Cook.
+            && categories(filing: .tryIt, among: librarySegments, includeBuy: false).contains(.recipe)
+            && !categories(filing: .tryIt, among: [.fitness, .travel, .home], includeBuy: false).contains(.recipe)
+            && categories(filing: .tryIt, among: [.fitness, .travel, .home], includeBuy: false) == [.fitness, .travel]
+    }
+    #endif
+
+    /// Recount the library by category on a detached context, then publish.
+    private func refreshTallies() {
+        guard let container else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let context = ModelContext(container)
+            guard let videos = try? context.fetch(FetchDescriptor<Video>()) else { return }
+            var tallies: [Category: CategoryTally] = [:]
+            for video in videos where !video.unavailable {
+                guard let category = Category(rawValue: video.categoryRaw) else { continue }
+                if video.isGuessed { tallies[category, default: CategoryTally()].guessed += 1 }
+                else { tallies[category, default: CategoryTally()].analysed += 1 }
+            }
+            await MainActor.run { self?.tallies = tallies }
+        }
+    }
+
+    private static func applyGuesses(_ guesses: [String: Category], to container: ModelContainer) async throws -> Int {
+        try await Task.detached(priority: .utility) {
+            try CloudImportResultUpserter.applyGuesses(guesses, to: ModelContext(container))
+        }.value
     }
 
     #if DEBUG
@@ -531,6 +666,7 @@ final class PipelineCenter {
         }
 
         do {
+            let firstImport = !hasFiledSaves()
             let newCount = try await runner.ingest(bookmarks: bookmarks)
             let fingerprint = CloudImportSyncState.fingerprint(of: submitting)
             let clientImportID: UUID
@@ -547,6 +683,10 @@ final class PipelineCenter {
             let submission = try await client.submit(bookmarks: submitting, clientImportID: clientImportID)
             cloudState.importID = submission.importID
             persistCloudState()
+            if firstImport {
+                focusEligibleImportID = submission.importID
+                UserDefaults.standard.set(submission.importID, forKey: Self.focusEligibleKey)
+            }
             UserDefaults.standard.removeObject(forKey: Self.exportRequestedKey)
             cancelExportReminders()   // the export is in — stop nagging about downloading it
             // Asked here, where the answer buys something visible: the "library is ready" ping.
@@ -1025,6 +1165,7 @@ final class PipelineCenter {
 
     func appBecameActive() {
         endExtraTime()
+        cancelPendingFirstSlicePing()
         // Cover art comes from TikTok's public oEmbed endpoint, not the box, so it is worth
         // retrying on a foreground the sign-in gate is still covering.
         refreshThumbnails()
@@ -1056,6 +1197,7 @@ final class PipelineCenter {
             // so the window it is most likely to run in is one iOS grants after this point.
             scheduleDeepPassProcessing()
             if cloudState.isActive || StashSession.shared.tiktok != nil { scheduleCloudRefresh() }
+            scheduleFirstSlicePing()
             return
         }
         guard isImporting else { return }
@@ -1141,6 +1283,90 @@ final class PipelineCenter {
         content.sound = .default
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "library-ready-\(status.importID)", content: content, trigger: nil))
+    }
+
+    // MARK: - First-slice ping
+
+    // ponytail: a timed guess, not a report — the box cannot reach a backgrounded phone and
+    // BGAppRefresh runs 15+ minutes late. Upgrade path: an APNs push from the box.
+    private static let firstSlicePingKey = "firstSlicePing"
+
+    /// Seconds until the newest slice is likely sorted, or nil when there is nothing to wait
+    /// for: a library that fits in one slice, or a first slice already done.
+    static func firstSliceDelay(done: Int, total: Int, rate: Double?) -> TimeInterval? {
+        let slice = CloudImportLimits.firstSlice
+        guard total > slice, done < slice else { return nil }
+        let perSecond = rate.flatMap { $0 > 0 ? $0 : nil } ?? 0.5   // 4 workers ÷ ~8 s a video
+        return min(max(Double(slice - done) / perSecond, 60), 900)
+    }
+
+    /// The stored ping, "<importID>|<fire time in epoch seconds>".
+    static func parsePing(_ stored: String?) -> (importID: String, fireAt: Date)? {
+        guard let parts = stored?.split(separator: "|"), parts.count == 2,
+              let epoch = TimeInterval(parts[1]) else { return nil }
+        return (String(parts[0]), Date(timeIntervalSince1970: epoch))
+    }
+
+    /// One ping per import: only a ping for this same import that has already gone off stops
+    /// another. A previous import's ping, or one still pending, does not.
+    static func shouldSchedulePing(stored: String?, importID: String, now: Date) -> Bool {
+        guard let ping = parsePing(stored), ping.importID == importID else { return true }
+        return ping.fireAt > now
+    }
+
+    #if DEBUG
+    static func firstSliceSelfTest() -> Bool {
+        let now = Date()
+        let past = "imp-1|\(now.addingTimeInterval(-5).timeIntervalSince1970)"
+        let future = "imp-1|\(now.addingTimeInterval(120).timeIntervalSince1970)"
+        return firstSliceDelay(done: 20, total: 941, rate: 0.5) == 160
+            && firstSliceDelay(done: 20, total: 941, rate: nil) == 160     // no measurement yet
+            && firstSliceDelay(done: 20, total: 941, rate: 0) == 160       // no progress yet
+            && firstSliceDelay(done: 99, total: 941, rate: 0.5) == 60      // clamped up
+            && firstSliceDelay(done: 0, total: 941, rate: 0.01) == 900     // clamped down
+            && firstSliceDelay(done: 100, total: 941, rate: 0.5) == nil    // already sorted
+            && firstSliceDelay(done: 0, total: 100, rate: 0.5) == nil      // one slice is the library
+            && parsePing(past)?.importID == "imp-1"
+            && parsePing("imp-1") == nil && parsePing(nil) == nil
+            && !shouldSchedulePing(stored: past, importID: "imp-1", now: now)   // it went off
+            && shouldSchedulePing(stored: future, importID: "imp-1", now: now)  // still pending: reschedule
+            && shouldSchedulePing(stored: past, importID: "imp-2", now: now)    // a new import
+            && shouldSchedulePing(stored: nil, importID: "imp-1", now: now)
+    }
+    #endif
+
+    private func scheduleFirstSlicePing() {
+        guard cloudState.isActive, let status = cloudState.status else { return }
+        let now = Date()
+        let rate = firstPollSample.flatMap { sample -> Double? in
+            let elapsed = now.timeIntervalSince(sample.at)
+            guard sample.importID == status.importID, elapsed > 0 else { return nil }
+            return Double(status.fastPass.done - sample.done) / elapsed
+        }
+        let defaults = UserDefaults.standard
+        guard let delay = Self.firstSliceDelay(done: status.fastPass.done, total: status.fastPass.total, rate: rate),
+              Self.shouldSchedulePing(stored: defaults.string(forKey: Self.firstSlicePingKey),
+                                      importID: status.importID, now: now) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Your newest saves are sorted"
+        content.body = "Open Stash to browse — the rest keeps sorting."
+        content.sound = .default
+        // Same identifier on every background: a second schedule replaces the first.
+        UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: "first-slice-\(status.importID)", content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)))
+        defaults.set("\(status.importID)|\(now.addingTimeInterval(delay).timeIntervalSince1970)",
+                     forKey: Self.firstSlicePingKey)
+    }
+
+    /// Back in the app before the ping went off: the card says it now, so the ping would be noise.
+    private func cancelPendingFirstSlicePing() {
+        let defaults = UserDefaults.standard
+        guard let ping = Self.parsePing(defaults.string(forKey: Self.firstSlicePingKey)),
+              ping.fireAt > Date() else { return }
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: ["first-slice-\(ping.importID)"])
+        defaults.removeObject(forKey: Self.firstSlicePingKey)
     }
 
     /// Pull-to-refresh: one full poll now, ahead of the 8-second repoll. Waits out a poll that
@@ -1244,6 +1470,8 @@ final class PipelineCenter {
         UserDefaults.standard.removeObject(forKey: Self.shareImportsKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetriesKey)
         UserDefaults.standard.removeObject(forKey: Self.archiveRetryAtKey)
+        focusEligibleImportID = nil
+        UserDefaults.standard.removeObject(forKey: Self.focusEligibleKey)
     }
 
     // MARK: - TikTok sync
@@ -1436,6 +1664,13 @@ final class PipelineCenter {
             let status = try await client.status(importID: importID)
             cloudState.apply(status: status)
             persistCloudState()
+            if firstPollSample?.importID != status.importID {
+                firstPollSample = (status.importID, Date(), status.fastPass.done)
+            }
+            if let guesses = status.map?.guesses, !guesses.isEmpty, let container,
+               try await Self.applyGuesses(guesses, to: container) > 0 {
+                refreshTallies()
+            }
 
             var cursor = cloudState.nextResultsCursor
             var seenCursors = Set<String>()
@@ -1444,6 +1679,7 @@ final class PipelineCenter {
                 if let container {
                     let applied = try await Self.apply(page.results, to: container)
                     if applied > 0 {
+                        refreshTallies()
                         lastSummary = "Synced \(applied) cloud results"
                         refreshThumbnails()
                         backfillEmbeddings()
