@@ -97,7 +97,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.4"
-        CURRENT_PROJECT_VERSION: "55"
+        CURRENT_PROJECT_VERSION: "56"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3  # personal team (Dmitrijs Sabelniks) — hosts Orivox too
@@ -111,7 +111,7 @@ targets:
         # YES once TikTok approves Login Kit and the production key is in. Before that only the
         # sandbox's target users can sign in, and a button that fails for App Review is a 2.1
         # rejection.
-        TIKTOK_SIGN_IN: NO
+        TIKTOK_SIGN_IN: YES
 
   # The share sheet entry point. Writes the shared link into the app-group inbox and quits;
   # everything else happens in the app (PipelineCenter.drainSharedInbox). Version and build
@@ -147,7 +147,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dmitryschab.Stash.Share
         MARKETING_VERSION: "1.4"
-        CURRENT_PROJECT_VERSION: "55"
+        CURRENT_PROJECT_VERSION: "56"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: S76KJ8Y6C3
