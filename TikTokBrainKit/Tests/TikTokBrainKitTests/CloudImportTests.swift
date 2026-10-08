@@ -236,6 +236,47 @@ final class CloudImportTests: XCTestCase {
         XCTAssertEqual(results.map(\.videoID), ["1", "2"])
     }
 
+    func testLibraryDecodesTheServersPageAndSendsTheCursor() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/v1/library")
+            let cursor = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first?.value
+            XCTAssertEqual(cursor, "IMPORT#a#VIDEO#0")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"""
+                {"items":[{"url":"https://www.tiktok.com/@x/video/1","bookmarkedAt":"2026-07-01T00:00:00Z",
+                 "result":{"videoID":"1","analysisRevision":5,"category":"recipe","title":"Pasta"}}],
+                 "nextCursor":"IMPORT#a#VIDEO#1"}
+                """#.utf8))
+        }
+
+        let page = try await client.library(cursor: "IMPORT#a#VIDEO#0")
+
+        XCTAssertEqual(page.nextCursor, "IMPORT#a#VIDEO#1")
+        XCTAssertEqual(page.items.map(\.result.title), ["Pasta"])
+        XCTAssertEqual(page.items.first?.bookmarkedAt, Date(timeIntervalSince1970: 1_782_864_000))
+    }
+
+    func testRestoreRecreatesTheRowsAndKeepsTheHigherRevision() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        func item(_ id: String, _ revision: Int, _ title: String) -> CloudLibraryItem {
+            CloudLibraryItem(url: URL(string: "https://www.tiktok.com/@x/video/\(id)")!,
+                             bookmarkedAt: Date(timeIntervalSince1970: 1_751_363_200),
+                             result: CloudImportResult(videoID: id, analysisRevision: revision,
+                                                       category: "recipe", title: title))
+        }
+
+        // The same video sorted by two imports, on two pages, newer one first.
+        XCTAssertEqual(try CloudImportResultUpserter.restore([item("1", 5, "New"), item("2", 5, "Two")], to: context), 2)
+        XCTAssertEqual(try CloudImportResultUpserter.restore([item("1", 4, "Old")], to: context), 0)
+
+        let videos = Dictionary(uniqueKeysWithValues: try context.fetch(FetchDescriptor<Video>()).map { ($0.videoID, $0) })
+        XCTAssertEqual(videos.count, 2)
+        XCTAssertEqual(videos["1"]?.title, "New")
+        XCTAssertEqual(videos["1"]?.categoryRaw, "recipe")
+        XCTAssertEqual(videos["1"]?.url.absoluteString, "https://www.tiktok.com/@x/video/1")
+        XCTAssertEqual(videos["1"]?.bookmarkedAt, Date(timeIntervalSince1970: 1_751_363_200))
+    }
+
     func testResultUpsertAcceptsNewerRevisionAndDeduplicatesOlderResults() throws {
         let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = ModelContext(container)

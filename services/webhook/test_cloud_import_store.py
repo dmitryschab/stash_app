@@ -541,3 +541,41 @@ def test_draining_an_import_sends_every_video_once_newest_first():
             assert before - settled <= REFILL_AT    # a slice only goes out once the last is nearly done
 
     assert queue.sent == [str(n) for n in range(1, 251)]
+
+
+def test_the_library_walks_every_import_and_keeps_only_completed_saves():
+    table = FakeTable()
+    store = DynamoImportStore(table=table, user_id=USER)
+    first = store.create_import(request(("1", "2"), "55555555-5555-4555-8555-555555555555"))
+    second = store.create_import(request(("1", "3"), "66666666-6666-4666-8666-666666666666"))
+    for created, video_id in ((first, "1"), (second, "1"), (second, "3")):
+        store.claim_video(created.import_id, video_id)
+        store.complete_video(created.import_id, VideoResult(videoID=video_id, category="recipe"))
+    # "2" stays queued: nothing sorted, nothing to restore.
+
+    items, cursor, pages = [], None, 0
+    while True:
+        page = store.list_library(cursor=cursor, limit=2)
+        items += page.items
+        pages += 1
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+
+    assert pages > 1
+    assert sorted(item.result.video_id for item in items) == ["1", "1", "3"]
+    assert {item.url for item in items} == {"https://www.tiktok.com/@x/video/1",
+                                           "https://www.tiktok.com/@x/video/3"}
+    assert all(item.bookmarked_at.tzinfo and item.result.category == "recipe" for item in items)
+
+
+def test_the_library_never_reads_another_users_partition():
+    table = FakeTable()
+    other = DynamoImportStore(table=table, user_id="user-b")
+    created = other.create_import(request(("9",)))
+    other.claim_video(created.import_id, "9")
+    other.complete_video(created.import_id, VideoResult(videoID="9"))
+
+    store = DynamoImportStore(table=table, user_id=USER)
+    assert store.list_library().items == []
+    assert store.list_library(cursor=f"IMPORT#{created.import_id}#VIDEO#0").items == []

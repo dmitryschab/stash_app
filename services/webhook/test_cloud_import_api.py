@@ -505,3 +505,31 @@ def test_a_failing_release_does_not_break_the_status_poll(dependencies):
 
     assert status.status_code == 200
     assert status.json()["fastPass"] == {"done": 1, "total": 2}
+
+
+def test_the_library_route_returns_bookmarks_with_their_results():
+    from cloud_import_models import BookmarkInput, CreateImportRequest
+    from cloud_import_store import DynamoImportStore
+    from conftest import FakeTable
+
+    store = DynamoImportStore(table=FakeTable(), user_id=USER_ID)
+    created = store.create_import(CreateImportRequest(
+        clientImportID="77777777-7777-4777-8777-777777777777",
+        videos=[BookmarkInput(videoID="1", url="https://www.tiktok.com/@x/video/1",
+                              bookmarkedAt=datetime(2026, 7, 1, tzinfo=timezone.utc))]))
+    store.claim_video(created.import_id, "1")
+    store.complete_video(created.import_id, VideoResult(videoID="1", title="Pasta"))
+    app.dependency_overrides[stash_auth.user_store] = lambda: store
+    try:
+        with TestClient(app) as client:
+            response = client.get("/v1/library")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["nextCursor"] is None
+    [item] = body["items"]
+    assert item["url"] == "https://www.tiktok.com/@x/video/1"
+    assert item["bookmarkedAt"].startswith("2026-07-01T00:00:00")
+    assert item["result"]["videoID"] == "1" and item["result"]["title"] == "Pasta"

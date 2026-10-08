@@ -29,6 +29,8 @@ from cloud_import_models import (
     ImportMap,
     ImportState,
     ImportStatus,
+    LibraryItem,
+    LibraryPage,
     Progress,
     Quota,
     ResultPage,
@@ -873,6 +875,24 @@ class DynamoImportStore:
                 raise
             return True
         raise RuntimeError("deep-pass cap contention: compare-and-set did not settle")
+
+    def list_library(self, cursor: str | None = None, limit: int = 200) -> LibraryPage:
+        """Every completed save across all of this user's imports, one Query page per call,
+        for a phone whose library is empty (GET /v1/library). Rows come in key order, so a
+        video two imports both sorted comes twice; the app keeps the higher analysisRevision,
+        as its upserter already does for any result. `cursor` is the last key read, and it
+        only ever addresses this user's own partition."""
+        start_key = {"PK": self.partition, "SK": cursor} if cursor else None
+        page = next(self._pages("IMPORT#", start_key=start_key, limit=limit))
+        items = [
+            LibraryItem(url=item["url"], bookmarkedAt=item["bookmarkedAt"],
+                        result=VideoResult.model_validate(item["result"]))
+            for item in page.get("Items", [])
+            if "#VIDEO#" in item["SK"] and item.get("state") == VideoState.COMPLETED.value
+            and item.get("result")
+        ]
+        last = page.get("LastEvaluatedKey")
+        return LibraryPage(items=items, nextCursor=last["SK"] if last else None)
 
     def list_results(self, import_id: str, cursor: str | None = None, limit: int = 50) -> ResultPage:
         prefix = f"IMPORT#{import_id}#VIDEO#"

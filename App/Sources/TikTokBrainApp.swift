@@ -563,6 +563,8 @@ struct RootView: View {
             if session.isDemoAccount, let userID = session.userID {
                 SampleData.seedDemoLibrary(into: context, userID: userID)
             }
+            // Before the pipeline wakes: an empty library comes back from the account first.
+            await center.restoreLibraryIfEmpty()
             center.appBecameActive()
         }
     }

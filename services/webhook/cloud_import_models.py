@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 
 ALLOWED_TIKTOK_HOSTS = {
@@ -338,4 +338,22 @@ class VideoResult(ContractModel):
 
 class ResultPage(ContractModel):
     results: list[VideoResult]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
+
+
+class LibraryItem(ContractModel):
+    """One sorted save with the bookmark it came from, so a phone can recreate the row."""
+    url: str
+    bookmarked_at: datetime = Field(alias="bookmarkedAt")
+    result: VideoResult
+
+    @field_serializer("bookmarked_at")
+    def whole_seconds(self, value: datetime) -> str:
+        # The app decodes with JSONDecoder's .iso8601, which rejects fractional seconds, and
+        # one bad date would fail the whole page — so the restore with it.
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class LibraryPage(ContractModel):
+    items: list[LibraryItem]
     next_cursor: str | None = Field(default=None, alias="nextCursor")

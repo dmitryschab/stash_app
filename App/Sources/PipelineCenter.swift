@@ -1527,6 +1527,41 @@ final class PipelineCenter {
         _ = await submitCloudImport(picks, runner: runner, client: client)
     }
 
+    // MARK: - Library restore
+
+    /// Refills an empty library from what the box already sorted for this account: a
+    /// reinstall, a new phone, or the wipe when another account signed in here
+    /// (`discardForeignLibrary`). Reads only, so nothing is charged or analysed again. Only an
+    /// empty library, or a restore that was cut off, is refilled: a save deleted on the phone
+    /// must stay deleted. RootView awaits this before `appBecameActive`, so a TikTok sync
+    /// never takes restored saves for new ones and pays for them again.
+    func restoreLibraryIfEmpty() async {
+        guard Self.cloudImportEnabled, !isImporting, let container,
+              let userID = StashSession.shared.userID, let client = Self.makeCloudClient() else { return }
+        let unfinishedKey = "libraryRestoreUnfinished.\(userID)"
+        let unfinished = UserDefaults.standard.bool(forKey: unfinishedKey)
+        guard unfinished || (try? ModelContext(container).fetchCount(FetchDescriptor<Video>())) == 0 else { return }
+        UserDefaults.standard.set(true, forKey: unfinishedKey)
+        isImporting = true
+        defer { isImporting = false }
+        var cursor: String?
+        var restored = 0
+        do {
+            repeat {
+                let page = try await client.library(cursor: cursor)
+                restored += try await Task.detached(priority: .utility) {
+                    try CloudImportResultUpserter.restore(page.items, to: ModelContext(container))
+                }.value
+                cursor = page.nextCursor
+            } while cursor != nil
+            UserDefaults.standard.removeObject(forKey: unfinishedKey)
+        } catch {
+            // The flag stays, so the next launch picks the rest up where this left off.
+            NSLog("PipelineCenter: library restore stopped after %d saves: %@", restored, "\(error)")
+        }
+        if restored > 0 { lastSummary = "Restored \(restored) saves from your account" }
+    }
+
     // MARK: - Archive retries
 
     private static let archiveRetriesKey = "archive.autoRetries"

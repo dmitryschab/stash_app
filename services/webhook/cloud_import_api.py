@@ -20,7 +20,8 @@ from functools import lru_cache
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 import clef
-from cloud_import_models import CreateImportRequest, CreateImportResponse, ImportStatus, ResultPage
+from cloud_import_models import (CreateImportRequest, CreateImportResponse, ImportStatus, LibraryPage,
+                                 ResultPage)
 from cloud_import_pipeline import _canonical, fetch_metadata
 from cloud_import_queue import SQSImportQueue, release_due
 from cloud_import_store import MAX_FREE_RETRIES, SLICE, DynamoImportStore, newest_first
@@ -196,3 +197,14 @@ def get_import_results(
     if store.get_status(import_id) is None:
         raise HTTPException(status_code=404, detail="import not found")
     return store.list_results(import_id, cursor=cursor)
+
+
+@router.get("/library", response_model=LibraryPage, response_model_by_alias=True)
+def get_library(
+    cursor: str | None = Query(None, max_length=512),
+    store: DynamoImportStore = Depends(user_store),
+):
+    """What the box already sorted for this account, so an empty phone can be refilled — a
+    reinstall, a new phone, or the wipe when another account signed in on this one. Only
+    reads, so it charges nothing and needs no entitlement."""
+    return store.list_library(cursor=cursor)

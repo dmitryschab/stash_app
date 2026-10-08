@@ -371,6 +371,20 @@ public struct CloudImportClient: Sendable {
         return (page.results, page.nextCursor)
     }
 
+    /// One page of everything the box sorted for this account, across every import — what an
+    /// empty phone is refilled from (`CloudImportResultUpserter.restore`). Only reads.
+    public func library(cursor: String? = nil) async throws -> (items: [CloudLibraryItem], nextCursor: String?) {
+        guard var components = URLComponents(url: try makeURL(path: "library"), resolvingAgainstBaseURL: false) else {
+            throw CloudImportError.invalidBaseURL
+        }
+        if let cursor { components.queryItems = [URLQueryItem(name: "cursor", value: cursor)] }
+        guard let url = components.url else { throw CloudImportError.invalidBaseURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let page = try await send(request, as: LibraryPage.self)
+        return (page.items, page.nextCursor)
+    }
+
     public func allResults(importID: String) async throws -> [CloudImportResult] {
         var cursor: String?
         var seenCursors = Set<String>()
@@ -469,7 +483,43 @@ private struct ResultPage: Decodable {
     let nextCursor: String?
 }
 
+private struct LibraryPage: Decodable {
+    let items: [CloudLibraryItem]
+    let nextCursor: String?
+}
+
+/// A save as GET /v1/library returns it: the bookmark it came from and what the box made of it.
+public struct CloudLibraryItem: Decodable, Equatable, Sendable {
+    public var url: URL
+    public var bookmarkedAt: Date
+    public var result: CloudImportResult
+
+    public init(url: URL, bookmarkedAt: Date, result: CloudImportResult) {
+        self.url = url
+        self.bookmarkedAt = bookmarkedAt
+        self.result = result
+    }
+}
+
 public enum CloudImportResultUpserter {
+    /// Recreates saves from GET /v1/library: a row for every bookmark not stored yet, then the
+    /// results applied exactly as an import's are — so a video two imports sorted keeps the
+    /// higher revision, whichever page it comes on. Returns the number of rows created.
+    @discardableResult
+    public static func restore(_ items: [CloudLibraryItem], to context: ModelContext) throws -> Int {
+        let ids = items.map(\.result.videoID)
+        var known = Set(try context.fetch(FetchDescriptor<Video>(
+            predicate: #Predicate { ids.contains($0.videoID) })).map(\.videoID))
+        var created = 0
+        for item in items where known.insert(item.result.videoID).inserted {
+            context.insert(Video(videoID: item.result.videoID, url: item.url, bookmarkedAt: item.bookmarkedAt))
+            created += 1
+        }
+        try context.save()
+        try apply(items.map(\.result), to: context)
+        return created
+    }
+
     @discardableResult
     public static func apply(_ results: [CloudImportResult], to context: ModelContext) throws -> Int {
         // Only the rows this page names: the whole library was fetched per page before, which
