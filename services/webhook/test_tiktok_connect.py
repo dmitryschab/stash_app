@@ -84,9 +84,11 @@ def tiktok(monkeypatch):
     return state
 
 
-def connect(client, headers, code=CODE, verifier=VERIFIER):
-    return client.post("/v1/tiktok/connect", json={"code": code, "codeVerifier": verifier},
-                       headers=headers)
+def connect(client, headers, code=CODE, verifier=VERIFIER, storefront="LVA"):
+    body = {"code": code, "codeVerifier": verifier}
+    if storefront is not None:
+        body["storefront"] = storefront
+    return client.post("/v1/tiktok/connect", json=body, headers=headers)
 
 
 def seed_row(table, **fields):
@@ -190,6 +192,33 @@ def test_a_failed_user_info_call_still_connects_with_an_empty_name(client, heade
     assert table.items[ROW_KEY]["accessToken"] == "at-1"
 
 
+@pytest.mark.parametrize("storefront", ["LVA", "lva", "NLD", "GBR", "NOR"])
+def test_an_eea_or_uk_storefront_connects_in_any_case(client, headers, table, tiktok, storefront):
+    response = connect(client, headers, storefront=storefront)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["displayName"] == "Ana"
+    assert table.items[ROW_KEY]["accessToken"] == "at-1"
+
+
+@pytest.mark.parametrize("storefront", ["USA", "CHE", "", None])
+def test_a_storefront_outside_the_eea_and_uk_is_403_with_no_outbound_call(
+        client, headers, table, tiktok, storefront):
+    response = connect(client, headers, storefront=storefront)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "TikTok sync is available in the EEA and the UK."}
+    assert tiktok.calls == []
+    assert ROW_KEY not in table.items
+
+
+def test_the_allowed_storefronts_are_the_eea_and_the_uk():
+    allowed = tiktok_connect.ALLOWED_STOREFRONTS
+    assert len(allowed) == 31
+    assert {"LVA", "NLD", "GBR", "NOR", "ISL", "LIE"} <= allowed
+    assert not {"USA", "CHE"} & allowed
+
+
 @pytest.mark.parametrize("body", [{"code": "", "codeVerifier": VERIFIER},
                                   {"code": "c" * 1025, "codeVerifier": VERIFIER},
                                   {"code": CODE, "codeVerifier": "v" * 42},
@@ -278,7 +307,7 @@ def test_the_export_carries_the_connection_but_never_a_token(client, headers, ti
 
 
 def test_both_routes_refuse_a_caller_with_no_bearer_token(client, table, tiktok):
-    body = {"code": CODE, "codeVerifier": VERIFIER}
+    body = {"code": CODE, "codeVerifier": VERIFIER, "storefront": "LVA"}
 
     assert client.post("/v1/tiktok/connect", json=body).status_code == 401
     assert client.delete("/v1/tiktok/connect").status_code == 401

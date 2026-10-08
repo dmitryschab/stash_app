@@ -1,6 +1,6 @@
 """Stash /v1 TikTok connection — link, unlink, and revoke when the account is deleted.
 
-  POST   /v1/tiktok/connect  {code, codeVerifier} -> {displayName, connectedAt}
+  POST   /v1/tiktok/connect  {code, codeVerifier, storefront} -> {displayName, connectedAt}
   DELETE /v1/tiktok/connect                       -> 204
 
 The app runs TikTok's Login Kit (PKCE, scope user.info.basic) and hands over the authorization
@@ -13,6 +13,8 @@ of the partition and connecting again replaces it. The tokens sit in that row un
 server-side encryption, like appleRefreshToken, and GET /v1/me/export strips them.
 
 No entitlement check: connecting spends nothing, so a caller with no subscription may link.
+There is a region check: the approved Data Portability application offers the integration in
+the EEA and the UK only, told apart by the App Store storefront the app reports.
 """
 import logging
 import time
@@ -41,6 +43,19 @@ TIKTOK_TIMEOUT = 15
 # token ends nothing, and the grant would live on at TikTok; a sync with one is refused.
 REFRESH_MARGIN_SECONDS = 60
 
+# The storefronts TikTok sync is offered in: the EU27, the rest of the EEA, and the UK, in the
+# ISO 3166-1 alpha-3 form StoreKit's `Storefront.countryCode` reports. The app keeps the same
+# list as `TikTokConnectClient.allowedStorefronts` in TikTokBrainKit's TikTokConnect.swift;
+# change both together.
+ALLOWED_STOREFRONTS = frozenset({
+    "AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU", "GRC", "HUN",
+    "IRL", "ITA", "LVA", "LTU", "LUX", "MLT", "NLD", "POL", "PRT", "ROU", "SVK", "SVN", "ESP",
+    "SWE",
+    "ISL", "LIE", "NOR",
+    "GBR",
+})
+OUTSIDE_REGION = "TikTok sync is available in the EEA and the UK."
+
 
 def _json(response) -> dict:
     """The response body as a dict, or {} for anything that is not one."""
@@ -54,10 +69,16 @@ def _json(response) -> dict:
 class ConnectRequest(ContractModel):
     code: str = Field(min_length=1, max_length=1024)
     code_verifier: str = Field(alias="codeVerifier", min_length=43, max_length=128)
+    # Optional in the schema so an app too old to send it gets the region's 403, not a 422.
+    storefront: str | None = None
 
 
 @router.post("/tiktok/connect")
 def connect(body: ConnectRequest, user_id: str = Depends(current_user)):
+    if (body.storefront or "").upper() not in ALLOWED_STOREFRONTS:
+        log.info("tiktok connect refused: storefront %r is outside the EEA and the UK",
+                 (body.storefront or "")[:16])
+        raise HTTPException(status_code=403, detail=OUTSIDE_REGION)
     client_key = stash_secrets.secret("TIKTOK_CLIENT_KEY")
     client_secret = stash_secrets.secret("TIKTOK_CLIENT_SECRET")
     if not (client_key and client_secret):
