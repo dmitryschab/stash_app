@@ -186,7 +186,7 @@ final class AlbumStore {
 
     /// Not private: account deletion has to be able to remove it, and it holds resolved album
     /// and tracklist data derived from the user's saves.
-    static let cacheURL: URL = {
+    nonisolated static let cacheURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("MusicAlbumCache.json")
@@ -249,7 +249,31 @@ final class AlbumStore {
         return true
     }
 
-    private static func pickKey(_ videoID: String, _ index: Int) -> String { "\(videoID)#\(index)" }
+    private nonisolated static func pickKey(_ videoID: String, _ index: Int) -> String { "\(videoID)#\(index)" }
+
+    /// The sleeves the wall draws first — `saves` newest first, each as its video id and how
+    /// many picks it carries — for the launch prewarm (`CoverPrewarm`). Reads the snapshot
+    /// rather than an instance, because the store itself is only born with the tab; a sleeve
+    /// whose bytes are gone is skipped by the cache. Off the main actor: it runs on the
+    /// prewarm's background fetch.
+    nonisolated static func cachedSleeves(for saves: [(videoID: String, pickCount: Int)],
+                                          limit: Int) -> [URL] {
+        guard let data = try? Data(contentsOf: cacheURL),
+              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
+              let sleeves = snapshot.sleeves else { return [] }
+        let pickRefs = snapshot.pickRefs ?? [:]
+        var urls: [URL] = []
+        for save in saves where urls.count < limit {
+            if save.pickCount == 1 {
+                if let ref = snapshot.refs[save.videoID], let url = sleeves[ref.collectionID] { urls.append(url) }
+            } else {
+                for index in 0..<save.pickCount {
+                    if let ref = pickRefs[pickKey(save.videoID, index)], let url = sleeves[ref.collectionID] { urls.append(url) }
+                }
+            }
+        }
+        return urls
+    }
 
     /// The sleeve for a wall cell, or nil when it is unresolved, art-less, or not fetched yet.
     func sleeve(for album: MusicAlbum) -> URL? {

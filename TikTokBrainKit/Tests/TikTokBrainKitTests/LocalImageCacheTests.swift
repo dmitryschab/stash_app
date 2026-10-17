@@ -29,6 +29,17 @@ struct LocalImageCacheTests {
         #expect(cache.cachedImage(for: url.appendingPathExtension("other")) == nil)
     }
 
+    @Test func prewarmedImagesBecomeSynchronousHitsWithoutAnyoneDisplayingThem() async throws {
+        let urls = try (0..<6).map { _ in try imageFile() }
+        defer { urls.forEach { try? FileManager.default.removeItem(at: $0) } }
+        let cache = LocalImageCache()
+        cache.prewarm(urls + [URL(string: "https://example.com/not-local.png")!])
+        for _ in 0..<200 where urls.contains(where: { cache.cachedImage(for: $0) == nil }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        for url in urls { #expect(cache.cachedImage(for: url) != nil) }
+    }
+
     @Test func largeImagesAreDownsampledBeforeCaching() async throws {
         let url = try imageFile(width: 2400, height: 1200)
         defer { try? FileManager.default.removeItem(at: url) }

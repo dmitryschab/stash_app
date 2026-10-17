@@ -2,17 +2,22 @@ import Foundation
 import ImageIO
 
 /// Decoded previews for immutable local image URLs. Cache reads never touch disk.
-/// NSCache is thread-safe; all file access and decoding is confined to the serial queue.
+/// NSCache is thread-safe, and ImageIO decodes are independent, so the queue is concurrent:
+/// a wall of forty sleeves used to arrive one per decode, now a few per frame.
 public final class LocalImageCache: @unchecked Sendable {
     public static let shared = LocalImageCache()
 
     private let cache = NSCache<NSURL, CGImage>()
     private let lock = NSLock()
     private var generation: UInt = 0
-    private let decodeQueue = DispatchQueue(label: "dev.stash.local-image-decode", qos: .userInitiated)
+    // ponytail: GCD caps the width itself; a semaphore if a cold wall ever starves the UI thread.
+    private let decodeQueue = DispatchQueue(label: "dev.stash.local-image-decode",
+                                            qos: .userInitiated, attributes: .concurrent)
 
     public init() {
-        cache.totalCostLimit = 96 * 1024 * 1024
+        // A 600 px decode costs ~1 MB; the launch prewarm holds up to ~90 of them for seven
+        // slots, and the limit has to leave room for the tab being scrolled on top of that.
+        cache.totalCostLimit = 128 * 1024 * 1024
         cache.countLimit = 0
     }
 
@@ -21,6 +26,14 @@ public final class LocalImageCache: @unchecked Sendable {
         lock.withLock {
             generation &+= 1
             cache.removeAllObjects()
+        }
+    }
+
+    /// Decodes ahead of display so the first frame of a tab is a cache hit, not a placeholder.
+    /// Runs off the caller's thread and returns at once; a URL already cached costs a lookup.
+    public func prewarm(_ urls: [URL]) {
+        for url in urls where url.isFileURL && cachedImage(for: url) == nil {
+            Task(priority: .utility) { _ = await self.image(for: url) }
         }
     }
 

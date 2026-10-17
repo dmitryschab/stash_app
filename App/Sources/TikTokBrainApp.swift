@@ -566,6 +566,8 @@ struct RootView: View {
             // Before the pipeline wakes: an empty library comes back from the account first.
             await center.restoreLibraryIfEmpty()
             center.appBecameActive()
+            // After the wipe and the restore, so the covers warmed are this account's.
+            await CoverPrewarm.run(container: context.container, slots: slots)
         }
     }
 
