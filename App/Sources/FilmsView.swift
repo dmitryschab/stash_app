@@ -5,8 +5,9 @@
 // puts ten posters on the wall and the same movie named by two clips is still one poster.
 //
 // A save that named two or more films is a "list" (the "10 best sci-fi movies" TikTok). A
-// film that came out of one wears a deck edge behind its poster and says where it placed
-// ("4 of 10"); a film from a single-movie save is a plain poster. Posters and the Wikipedia
+// film that came out of one wears a deck edge behind its poster; the list itself gets a card
+// (the Films / Lists switch, and the newest one above the wall). A long press marks a film
+// seen: a tick lands on the poster and it sinks below the unseen ones in its month. Posters and the Wikipedia
 // link come from `FilmResolver`, resolved lazily per film, and an unresolved title renders
 // as a typographic sleeve and is *not* a link — the same honesty rule as FilmSection.
 
@@ -52,11 +53,6 @@ enum FilmWall {
         var isFromList: Bool { listMark != nil }
         /// Where the most recent list save placed it, e.g. "4 of 10".
         var placement: String? { listMark.map { "\($0.position) of \($0.outOf)" } }
-
-        /// The line under the poster: "2023 · 4 of 10", or just whichever half exists.
-        var microLine: String {
-            [year.map(String.init), placement].compactMap { $0 }.joined(separator: " · ")
-        }
 
         var accessibilityLabel: String {
             var parts = [title]
@@ -108,6 +104,28 @@ enum FilmWall {
             }
     }
 
+    // MARK: Seen
+
+    /// The seen flag is one set of identity keys for the whole wall, kept the way `codeChecks`
+    /// is: a JSON-encoded sorted array, nil once empty. It lives in defaults rather than on a
+    /// save because it is the user's mark, not analysis — a pipeline re-run must not clear it.
+    static let seenKey = "filmSeen"
+
+    static func seenKeys(_ data: Data?) -> Set<String> {
+        guard let data, let keys = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(keys)
+    }
+
+    static func seenData(_ keys: Set<String>) -> Data? {
+        keys.isEmpty ? nil : try? JSONEncoder().encode(keys.sorted())
+    }
+
+    /// Seen films sink below the unseen ones; each half keeps the wall's own order. Applied
+    /// per month run, so a film never leaves its month for having been watched.
+    static func ordered(_ films: [Film], seen: Set<String>) -> [Film] {
+        films.filter { !seen.contains($0.id) } + films.filter { seen.contains($0.id) }
+    }
+
     #if DEBUG
     /// Runs on every debug launch, next to the other shell asserts.
     static func selfTest() -> Bool {
@@ -129,7 +147,9 @@ enum FilmWall {
             && wall[1].placement == "2 of 4"                            // the list mark, not the single
             && wall[2].placement == "1 of 4"
             && !wall[0].isFromList && wall[0].placement == nil          // a single-film save is no list
-            && wall[0].microLine == "2021" && wall[2].microLine == "2016 · 1 of 4"
+            && ordered(wall, seen: ["dune|2021", "arrival|2016"]).map(\.title)
+                == ["Aftersun", "Past Lives", "Amélie", "Dune", "Arrival"]           // seen sink, both halves keep their order
+            && seenKeys(seenData(["b", "a"])) == ["a", "b"] && seenData([]) == nil   // the codeChecks round trip
             && wall[0].accessibilityLabel == "Dune, 2021"
             && wall[2].accessibilityLabel == "Arrival, 2016, from a list of 4"
     }
@@ -141,14 +161,17 @@ enum FilmWall {
 struct FilmsView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     @State private var focus: Filter = .all
+    @State private var mode: Mode = .films
     @State private var browsingTopics = false
+    @AppStorage(FilmWall.seenKey) private var seenJSON: Data?
     /// Poster lookups, keyed by `FilmWall.Film.id`, so scrolling back does not re-resolve.
     /// An absent key is "still asking Wikipedia"; a `nil` value is a recorded miss. The tile
     /// draws those differently — a poster that will never arrive should not shimmer (F34).
     @State private var refs: [String: FilmRef?] = [:]
 
-    /// One more state than Cook's `String?`: "lists" is a filter that is not a topic.
-    private enum Filter: Equatable { case all, lists, topic(String) }
+    private enum Filter: Equatable { case all, topic(String) }
+    /// The switch under the header: the wall of films, or one card per list save.
+    private enum Mode { case films, lists }
 
     /// Read once per body pass (see `body`): each access decodes every video's film payload.
     private var saves: [Video] {
@@ -159,11 +182,18 @@ struct FilmsView: View {
         switch focus {
         case .all:
             return films
-        case .lists:
-            return films.filter(\.isFromList)
         case .topic(let name):
             let ids = Set(saves.filter { $0.topics.contains(name) }.map(\.videoID))
             return films.filter { film in film.marks.contains { ids.contains($0.sourceID) } }
+        }
+    }
+
+    /// The list saves — those that named two or more films — newest first, under the same chip.
+    private func lists(in saves: [Video]) -> [Video] {
+        saves.filter { save in
+            guard save.films.count >= 2 else { return false }
+            if case .topic(let name) = focus { return save.topics.contains(name) }
+            return true
         }
     }
 
@@ -203,21 +233,39 @@ struct FilmsView: View {
             FilmWall.Source(id: $0.videoID, savedAt: $0.bookmarkedAt, picks: $0.films)
         })
         let shown = shown(in: films, saves: saves)
-        let runs = monthRuns(shown) { $0.savedAt }
+        let seen = FilmWall.seenKeys(seenJSON)
+        let runs = monthRuns(shown) { $0.savedAt }.map { run in
+            var run = run
+            run.items = FilmWall.ordered(run.items, seen: seen)
+            return run
+        }
+        let lists = lists(in: saves)
         let savesByID = Dictionary(saves.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
+        let filmsByID = Dictionary(films.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         NavigationStack {
             ScrollViewReader { proxy in
                 StashScrollView(tab: .films) {
                     VStack(alignment: .leading, spacing: 0) {
-                        StashHeader(title: "Films", trailing: trailing(films: films, shown: shown, saves: saves))
+                        StashHeader(title: "Films", trailing: trailing(films: films, shown: shown, lists: lists, seen: seen))
                             .padding(.top, 8)
                         if !saves.isEmpty {
-                            chips(films: films, saves: saves).padding(.top, 8)
+                            // A switch that can only show an empty page is not a switch.
+                            if films.contains(where: \.isFromList) {
+                                segment.padding(.top, 10)
+                            }
+                            chips(saves: saves).padding(.top, 4)
                         }
                         if films.isEmpty {
                             emptyState.padding(.top, 48)
+                        } else if mode == .lists {
+                            listCards(lists, filmsByID: filmsByID, seen: seen).padding(.top, 10)
                         } else {
-                            wall(runs: runs, savesByID: savesByID).padding(.top, 4)
+                            if focus == .all, let newest = lists.first {
+                                listCard(newest, filmsByID: filmsByID, seen: seen,
+                                         label: "Newest list · \(newest.bookmarkedAt.formatted(.relative(presentation: .named)))")
+                                    .padding(.top, 10)
+                            }
+                            wall(runs: runs, savesByID: savesByID, seen: seen).padding(.top, 4)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -227,7 +275,7 @@ struct FilmsView: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .overlay(alignment: .trailing) {
                     let entries = timeRailEntries(for: runs)
-                    if entries.count >= 2 {
+                    if mode == .films, entries.count >= 2 {
                         TimeRail(entries: entries, proxy: proxy)
                     }
                 }
@@ -236,24 +284,42 @@ struct FilmsView: View {
     }
 
     /// Cook's rule for the header: totals until a chip is on, then how much of the wall it left.
-    private func trailing(films: [FilmWall.Film], shown: [FilmWall.Film], saves: [Video]) -> String {
-        guard focus != .all else {
-            return "\(films.count) \(films.count == 1 ? "film" : "films") · \(saves.count) \(saves.count == 1 ? "save" : "saves")"
-        }
-        return "\(shown.count) of \(films.count)"
+    /// The films total counts what is left to see, so the seen flag has a number to move.
+    private func trailing(films: [FilmWall.Film], shown: [FilmWall.Film], lists: [Video], seen: Set<String>) -> String {
+        if mode == .lists { return "\(lists.count) \(lists.count == 1 ? "list" : "lists")" }
+        guard focus == .all else { return "\(shown.count) of \(films.count)" }
+        let toSee = films.filter { !seen.contains($0.id) }.count
+        let total = "\(films.count) \(films.count == 1 ? "film" : "films")"
+        return toSee == 0 && !films.isEmpty ? "\(total) · all seen" : "\(total) · \(toSee) to see"
     }
 
-    private func chips(films: [FilmWall.Film], saves: [Video]) -> some View {
+    /// Films / Lists. Drawn like the chips — ink capsule on, outline off — but it is one
+    /// control with two states rather than two filters, so it sits on its own line.
+    private var segment: some View {
+        HStack(spacing: 2) {
+            segmentPill("Films", .films)
+            segmentPill("Lists", .lists)
+        }
+        .padding(2)
+        .background(Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2))
+    }
+
+    private func segmentPill(_ label: String, _ value: Mode) -> some View {
+        let isOn = mode == value
+        return Micro(text: label, size: 9.5, tracking: 1, color: isOn ? .stashOnInk : .stashInk.opacity(0.65))
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .background { if isOn { Capsule().fill(Color.stashInk) } }
+            .contentShape(Capsule())
+            .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { mode = value } }
+            .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : [.isButton])
+    }
+
+    private func chips(saves: [Video]) -> some View {
         let topics = topics(in: saves)
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 TopicChip(label: "all", isOn: focus == .all) { focus = .all }
-                // A chip that can only show an empty wall is not a filter.
-                if films.contains(where: \.isFromList) {
-                    TopicChip(label: "lists", isOn: focus == .lists) {
-                        focus = focus == .lists ? .all : .lists
-                    }
-                }
                 ForEach(rowTopics(topics)) { topic in
                     // The count is saves carrying the topic, not films — say so to VoiceOver.
                     TopicChip(label: topic.name, count: topic.count, unit: "saves", isOn: focus == .topic(topic.name)) {
@@ -268,28 +334,63 @@ struct FilmsView: View {
         }
     }
 
-    private func wall(runs: [MonthRun<FilmWall.Film>], savesByID: [String: Video]) -> some View {
+    private func listCards(_ lists: [Video], filmsByID: [String: FilmWall.Film], seen: Set<String>) -> some View {
+        LazyVStack(alignment: .leading, spacing: 10) {
+            ForEach(lists) { video in
+                listCard(video, filmsByID: filmsByID, seen: seen)
+            }
+        }
+        .animation(.easeOut(duration: 0.35), value: focus)
+    }
+
+    /// One list save as a card; tapping opens the save's own page, not a film's.
+    private func listCard(_ video: Video, filmsByID: [String: FilmWall.Film], seen: Set<String>,
+                          label: String? = nil) -> some View {
+        NavigationLink {
+            VideoDetailView(video: video)
+        } label: {
+            ListCard(video: video,
+                     films: video.films.compactMap { filmsByID[FilmWall.identity($0)] },
+                     refs: refs, seen: seen, label: label, resolve: resolve)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func wall(runs: [MonthRun<FilmWall.Film>], savesByID: [String: Video], seen: Set<String>) -> some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
                 Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
                     .padding(.top, 14)
                     .padding(.bottom, 8)
                     .id(run.id)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                // Captions run one or two lines, so cells hang from the top of their row.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: 3), spacing: 10) {
                     ForEach(run.items) { film in
+                        let isSeen = seen.contains(film.id)
                         NavigationLink {
                             FilmPageView(film: film, saves: savesByID)
                         } label: {
-                            FilmTile(film: film, ref: refs[film.id])
+                            FilmTile(film: film, ref: refs[film.id], seen: isSeen)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(film.accessibilityLabel)
+                        // A long press is the seen toggle; a tap still opens the page.
+                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in toggleSeen(film) })
+                        .accessibilityLabel(film.accessibilityLabel + (isSeen ? ", seen" : ""))
+                        .accessibilityAction(named: isSeen ? "Mark unseen" : "Mark seen") { toggleSeen(film) }
                         .task(id: film.id) { await resolve(film) }
                     }
                 }
             }
         }
         .animation(.easeOut(duration: 0.35), value: focus)
+        .animation(.easeOut(duration: 0.35), value: seenJSON)
+    }
+
+    /// One flag per film; nothing else in the store moves.
+    private func toggleSeen(_ film: FilmWall.Film) {
+        var keys = FilmWall.seenKeys(seenJSON)
+        if !keys.insert(film.id).inserted { keys.remove(film.id) }
+        seenJSON = FilmWall.seenData(keys)
     }
 
     /// One lookup per film, once. `FilmResolver` caches too, so a cell that reappears never
@@ -327,24 +428,39 @@ private struct FilmTile: View {
     /// The lookup in one value: `nil` while it is in flight, `.some(nil)` once it came back
     /// without an unambiguous match, `.some(ref)` when it found one.
     var ref: FilmRef??
-    /// Off on the film page, where the title block carries the year.
+    /// A tick on the poster, and the caption dims and says so.
+    var seen = false
+    /// Off on the film page and in list cards, where something else carries the title.
     var caption = true
+    /// List cards draw the poster at thumb size: tighter corners, no deck edge, no sleeve text.
+    var compact = false
 
-    private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: compact ? 6 : 12, style: .continuous)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             ZStack {
-                if film.isFromList {
+                if film.isFromList, !compact {
                     shape.fill(Color.categoryFilm.opacity(0.14)).offset(x: 6, y: -6)
                     shape.fill(Color.categoryFilm.opacity(0.28)).offset(x: 3, y: -3)
                 }
                 poster
             }
             .aspectRatio(2.0 / 3.0, contentMode: .fit)
-            if caption, !film.microLine.isEmpty {
-                Micro(text: film.microLine, size: 10, tracking: 1.2, color: .stashInk.opacity(0.62))
-                    .lineLimit(1)
+            if caption {
+                Text(film.title)
+                    .font(.archivo(12, .bold))
+                    .foregroundStyle(Color.stashInk.opacity(seen ? 0.62 : 1))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                let yearLine = [film.year.map(String.init), seen ? "seen" : nil].compactMap { $0 }
+                if !yearLine.isEmpty {
+                    Micro(text: yearLine.joined(separator: " · "), size: 9.5, tracking: 1.2, color: .stashInk.opacity(0.62))
+                        .lineLimit(1)
+                }
             }
         }
     }
@@ -374,15 +490,82 @@ private struct FilmTile: View {
             .clipped()
             .contentShape(shape)
             .clipShape(shape)
+            .overlay(alignment: .topTrailing) {
+                if seen {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: compact ? 7 : 10, weight: .black))
+                        .foregroundStyle(Color.stashOnAccent)
+                        .frame(width: compact ? 14 : 22, height: compact ? 14 : 22)
+                        .background(Color.categoryCoding, in: Circle())
+                        .padding(compact ? 3 : 6)
+                }
+            }
     }
 
     private var sleeve: some View {
         Color.categoryFilm
             .overlay(alignment: .bottomLeading) {
-                Micro(text: film.title, size: 12, tracking: 0.4, color: .stashOnAccent)
-                    .lineLimit(3)
-                    .padding(10)
+                if !compact {
+                    Micro(text: film.title, size: 12, tracking: 0.4, color: .stashOnAccent)
+                        .lineLimit(3)
+                        .padding(10)
+                }
             }
+    }
+}
+
+// MARK: - List card
+
+/// One list save: the clip's title and author, a fan of its posters, and how many of them
+/// you have seen. The same card is the "Newest list" above the wall and every row of Lists.
+private struct ListCard: View {
+    let video: Video
+    /// The save's films in the order it named them, as the wall knows them (merged identity).
+    let films: [FilmWall.Film]
+    let refs: [String: FilmRef?]
+    let seen: Set<String>
+    /// Over the title; defaults to when the clip was saved.
+    var label: String? = nil
+    let resolve: (FilmWall.Film) async -> Void
+
+    private static let fan = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Micro(text: label ?? video.bookmarkedAt.formatted(.relative(presentation: .named)),
+                  size: 9.5, tracking: 1.8, color: .categoryFilm)
+            Text(video.rowTitle)
+                .font(.archivo(15, .heavy))
+                .foregroundStyle(Color.stashInk)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Text(subline)
+                .font(.archivo(11.5))
+                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .lineLimit(1)
+            HStack(spacing: 4) {
+                ForEach(films.prefix(Self.fan)) { film in
+                    FilmTile(film: film, ref: refs[film.id], seen: seen.contains(film.id), caption: false, compact: true)
+                        .frame(width: 36)
+                        .task(id: film.id) { await resolve(film) }
+                }
+                if films.count > Self.fan {
+                    Micro(text: "+\(films.count - Self.fan)", size: 9.5, tracking: 0.4, color: .stashInk.opacity(0.62))
+                        .frame(width: 36, height: 54)
+                        .background(Color.stashInk.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+            }
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .stashOutlineCard(padding: 14)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var subline: String {
+        let seenCount = films.filter { seen.contains($0.id) }.count
+        let author = video.author.isEmpty ? nil : "@\(video.author)"
+        return [author, "\(seenCount) of \(films.count) seen"].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -394,6 +577,7 @@ private struct FilmPageView: View {
     let saves: [String: Video]
 
     @Environment(\.openURL) private var openURL
+    @AppStorage(FilmWall.seenKey) private var seenJSON: Data?
     /// Same three states as the wall's tiles: absent while resolving, `nil` for a recorded miss.
     @State private var ref: FilmRef??
 
@@ -410,7 +594,7 @@ private struct FilmPageView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
-                FilmTile(film: film, ref: ref, caption: false)
+                FilmTile(film: film, ref: ref, seen: FilmWall.seenKeys(seenJSON).contains(film.id), caption: false)
                     .containerRelativeFrame(.horizontal) { width, _ in width * 0.6 }
                     .frame(maxWidth: .infinity)
                     .padding(.top, 18)
@@ -456,23 +640,48 @@ private struct FilmPageView: View {
             }
             // Only a resolved title is a link; a guess would be a link to the wrong movie.
             if let match {
-                Link(destination: match.detailURL) {
-                    HStack(spacing: 8) {
-                        Text("Wikipedia".uppercased())
-                            .font(.archivo(13, .heavy))
-                            .tracking(0.8)
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 13, weight: .bold))
-                    }
-                    .foregroundStyle(Color.stashInk)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open on Wikipedia")
+                linkRow("Where to watch", "JustWatch · streaming, rent, buy", whereToWatch)
+                linkRow("Read about it", "Wikipedia", match.detailURL)
             }
         }
+    }
+
+    /// JustWatch's search for the title and year, in the user's country (JustWatch spells
+    /// Britain "uk"). Its own pages need a JustWatch id the resolver does not have.
+    private var whereToWatch: URL {
+        let region = Locale.current.region?.identifier ?? "US"
+        var parts = URLComponents()
+        parts.scheme = "https"
+        parts.host = "www.justwatch.com"
+        parts.path = "/\(region == "GB" ? "uk" : region.lowercased())/search"
+        parts.queryItems = [URLQueryItem(name: "q", value: [film.title, film.year.map(String.init)].compactMap { $0 }.joined(separator: " "))]
+        return parts.url ?? URL(string: "https://www.justwatch.com")!
+    }
+
+    /// A row that leaves the app, so it wears the arrow (F5) — same frame as the "Saved in" rows.
+    private func linkRow(_ title: String, _ detail: String, _ url: URL) -> some View {
+        Link(destination: url) {
+            HStack(spacing: 11) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.archivo(13.5, .bold))
+                        .foregroundStyle(Color.stashInk)
+                    Text(detail)
+                        .font(.archivo(11.5))
+                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.categoryFilm)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.stashInk, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(detail)")
     }
 
     private var topBar: some View {
