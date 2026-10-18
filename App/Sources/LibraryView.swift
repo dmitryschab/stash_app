@@ -60,6 +60,7 @@ struct LibraryView: View {
                     if desked.isEmpty && buyPicks.isEmpty {
                         emptyState.padding(.top, 48)
                     } else {
+                        justSaved
                         desk(desked, buyPicks)
                     }
 
@@ -96,6 +97,37 @@ struct LibraryView: View {
             out[intent, default: []].append(video)
         }
         return out
+    }
+
+    /// The three newest saves across every shelf, so the tab opens on what you just added
+    /// before it opens on the desk. `videos` is already newest-first.
+    private var justSavedVideos: [Video] {
+        let scope = Set(shelves)
+        return Array(videos.lazy.filter { video in
+            guard !video.needsLook, !video.isGuessed, let category = video.category else { return false }
+            return scope.contains(category)
+        }.prefix(3))
+    }
+
+    @ViewBuilder
+    private var justSaved: some View {
+        let newest = justSavedVideos
+        if !newest.isEmpty {
+            Micro(text: "Just saved", size: 10, tracking: 2, color: .stashInk)
+                .frame(height: 44)
+                .padding(.top, 16)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(newest.enumerated()), id: \.element.videoID) { index, video in
+                    if index > 0 { Divider().overlay(Color.stashInk.opacity(0.12)) }
+                    NavigationLink { VideoDetailView(video: video) } label: {
+                        JustSavedRow(video: video, intent: SaveIntent.classify(
+                            category: video.category ?? .other, topics: video.topics,
+                            hasBuys: !video.buys.isEmpty, includeBuy: includeBuyShelf))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     /// Guessed rows per desk: a category and nothing else, which is exactly what
@@ -240,8 +272,10 @@ struct LibraryView: View {
     /// header's top gap drops from 24 to 16 and the desk's rhythm is unchanged.
     private func shelfHeader(_ title: String, count: Int, tint: Color,
                              @ViewBuilder destination: @escaping () -> some View) -> some View {
-        HStack(alignment: .center) {
-            Micro(text: "\(title) · \(count)", size: 10, tracking: 2, color: tint)
+        HStack(alignment: .center, spacing: 6) {
+            // Colour marks the shelf; it no longer fills it. The dot is the only tint left here.
+            Circle().fill(tint).frame(width: 6, height: 6)
+            Micro(text: "\(title) · \(count)", size: 10, tracking: 2, color: .stashInk)
             Spacer()
             NavigationLink { destination() } label: {
                 HStack(spacing: 4) {
@@ -431,56 +465,116 @@ extension SaveIntent {
 
 // MARK: - Shelf cells
 
-/// A watchable save as a small poster: art under a scrim, first topic up top, title on the
-/// bottom. The art takes no touches, same rule as `stashArtCard`.
+/// A shelf cell's frame, shown as it is: no wash, the category's tile when there is no
+/// thumbnail. The art takes no touches, same rule as `stashArtCard`; the cell's own
+/// `contentShape` is the target.
+private struct ShelfArt: View {
+    let video: Video
+    let width: CGFloat?
+    let height: CGFloat
+
+    var body: some View {
+        let tint = video.category?.color ?? Color.stashInk.opacity(0.35)
+        StashImage(url: video.thumbnailURL) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            ZStack {
+                tint
+                Image(systemName: video.category?.symbol ?? "photo")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.stashOnAccent)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .allowsHitTesting(false)
+    }
+}
+
+/// A watchable save as a small poster: the frame uncovered, title under it in ink, the first
+/// topic as a quiet line below. The wash went: it made To watch a row of steel-blue slabs.
 private struct PosterCard: View {
     let video: Video
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            FeaturedArt(url: video.thumbnailURL, tint: .categoryFilm)
-                .allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: 0) {
-                if let topic = video.topics.first {
-                    // One line: the card's frame is fixed, so a wrapped topic eats the title.
-                    Micro(text: topic, size: 9.5, tracking: 1.2, color: .stashOnAccent.opacity(0.85))
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                Text(video.rowTitle)
-                    .font(.archivo(10.5, .heavy))
-                    .foregroundStyle(Color.stashOnAccent)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(3)
-            }
-            .padding(9)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 5) {
+            ShelfArt(video: video, width: 104, height: 128)
+            Text(video.rowTitle)
+                .font(.archivo(12, .bold))
+                .foregroundStyle(Color.stashInk)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2, reservesSpace: true)
+            Text(video.topics.first ?? video.category?.singular ?? "")
+                .font(.archivo(10.5))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
+                .lineLimit(1)
         }
-        .frame(width: 104, height: 140)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(width: 104, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
-/// A mood save as a wall tile — bigger art, smaller words.
+/// A mood save as a wall tile — the picture uncovered, a short caption in ink under it.
 private struct MoodTile: View {
     let video: Video
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            FeaturedArt(url: video.thumbnailURL, tint: .categoryStyle)
-                .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: 5) {
+            ShelfArt(video: video, width: nil, height: 104)
             Text(video.rowTitle)
-                .font(.archivo(11, .heavy))
-                .foregroundStyle(Color.stashOnAccent)
+                .font(.archivo(12, .bold))
+                .foregroundStyle(Color.stashInk)
                 .multilineTextAlignment(.leading)
-                .lineLimit(2)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
         }
-        .frame(height: 118)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+/// One of the three newest saves: a 58×74 frame on the left, title, the one-line summary, and
+/// a category dot before "Film · to watch · today".
+private struct JustSavedRow: View {
+    let video: Video
+    let intent: SaveIntent
+
+    private var when: String {
+        Calendar.current.isDateInToday(video.bookmarkedAt)
+            ? "today" : video.bookmarkedAt.formatted(.relative(presentation: .named))
+    }
+
+    var body: some View {
+        let tint = video.category?.color ?? .stashInk
+        HStack(alignment: .top, spacing: 11) {
+            ShelfArt(video: video, width: 58, height: 74)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(video.rowTitle)
+                    .font(.archivo(14.5, .bold))
+                    .foregroundStyle(Color.stashInk)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                if !video.summary.isEmpty {
+                    Text(video.summary)
+                        .font(.archivo(12))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 5) {
+                    Circle().fill(tint).frame(width: 6, height: 6)
+                    Micro(text: [video.category?.singular, intent.deskTitle.lowercased(), when]
+                              .compactMap { $0 }.joined(separator: " · "),
+                          size: 9.5, tracking: 1.2, color: tint)
+                        .lineLimit(1)
+                }
+            }
+            .frame(minHeight: 74)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
     }
 }
 
@@ -536,8 +630,8 @@ private struct BuyShelfRow: View {
 // MARK: - Row
 
 /// A desk row: 52 pt art, two-line title (the p90 title in the real library is 46 characters
-/// and one line was clipping it), and a meta line that leads with the save's first topic in
-/// the shelf's tint — topics are the strongest signal in the data, 3.6 per save on every save.
+/// and one line was clipping it), and the save's one-line summary — or, on a save without
+/// one, a meta line that leads with its first topic in the shelf's tint.
 struct LibraryRow: View {
     let video: Video
     var tint: Color = .stashInk
@@ -553,14 +647,24 @@ struct LibraryRow: View {
                     .foregroundStyle(Color.stashInk)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
-                HStack(spacing: 4) {
-                    if let topic = video.topics.first {
-                        Micro(text: topic, size: 9.5, tracking: 1, color: tint)
-                    }
-                    Text(meta)
-                        .font(.archivo(11.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                // The one-line summary the pipeline already writes is the line you scan to
+                // find the save you mean; the topic/meta line stays for saves without one.
+                if !video.summary.isEmpty {
+                    Text(video.summary)
+                        .font(.archivo(12))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
+                        .multilineTextAlignment(.leading)
                         .lineLimit(1)
+                } else {
+                    HStack(spacing: 4) {
+                        if let topic = video.topics.first {
+                            Micro(text: topic, size: 9.5, tracking: 1, color: tint)
+                        }
+                        Text(meta)
+                            .font(.archivo(11.5))
+                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                            .lineLimit(1)
+                    }
                 }
             }
             Spacer(minLength: 0)
