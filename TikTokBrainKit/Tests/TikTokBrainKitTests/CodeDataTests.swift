@@ -34,6 +34,23 @@ final class CodeDataTests: XCTestCase {
         ])
     }
 
+    func testBeforeAfterDecodeTrimmedAndBlankIsNil() throws {
+        let code = try decode(#"{"summary":"","links":[],"techTags":[],"before":"  Stash, switch, pop. ","after":"A second folder.","kind":"howto","items":[]}"#)
+        XCTAssertEqual(code.before, "Stash, switch, pop.")
+        XCTAssertEqual(code.after, "A second folder.")
+
+        let blank = try decode(#"{"summary":"","links":[],"techTags":[],"before":"   ","after":""}"#)
+        XCTAssertNil(blank.before)
+        XCTAssertNil(blank.after)
+
+        let legacy = try decode(#"{"summary":"s","links":[],"techTags":[]}"#)
+        XCTAssertNil(legacy.before)
+        XCTAssertNil(legacy.after)
+
+        let stored = try JSONEncoder().encode(code)
+        XCTAssertEqual(try decode(String(decoding: stored, as: UTF8.self)).after, "A second folder.")
+    }
+
     func testUnknownKindDecodesAsNilAndKeepsItems() throws {
         let code = try decode(#"{"summary":"","links":[],"techTags":[],"kind":"rant","items":[{"text":"one","detail":""}]}"#)
 

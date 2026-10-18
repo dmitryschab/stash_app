@@ -482,7 +482,7 @@ struct RootView: View {
             Group {
                 switch tab {
                 case .today: LatelyView()
-                case .code: CodeView()
+                case .code: CodeView().id(center.codeFocusCount)
                 case .cook: CookView()
                 case .music: MusicView()
                 case .films: FilmsView()
@@ -530,6 +530,11 @@ struct RootView: View {
         // shell rendering a tab no slot points at, with no way back but a relaunch.
         .onChange(of: slotsRaw) { _, _ in
             if !slots.contains(tab) { tab = slots.first ?? .library }
+        }
+        // A tag tapped on a coding save's page: land on the Code shelf, filtered to it.
+        .onChange(of: center.codeFocusCount) { _, _ in
+            searchOpen = false
+            tab = .code
         }
         // Every signal that can complete the picker's conditions: the map settling, Import or
         // Settings closing, the pill's route to Import finishing. The map usually settles while

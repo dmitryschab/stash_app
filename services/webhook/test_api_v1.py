@@ -425,6 +425,7 @@ def test_code_extraction_rules_reach_the_analyzer(analyzer_calls):
         assert f'"{kind}"' in system
     assert "never pad" in system
     assert "on-screen text" in system
+    assert '"before"' in system and '"after"' in system
 
 
 def test_every_slide_reaches_the_vision_model_in_order(monkeypatch, analyzer_calls):
