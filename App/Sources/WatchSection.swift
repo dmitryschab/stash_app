@@ -19,6 +19,10 @@ import WebKit
 struct WatchSection: View {
     let video: Video
     let tint: Color
+    /// The coding save's page: one outlined row ("Watch the clip") instead of the poster, so the
+    /// clip is the proof under the point rather than the first thing on the page. Tap plays the
+    /// same embed in its place.
+    var compact = false
 
     @State private var playing = false
     @Environment(\.openURL) private var openURL
@@ -29,8 +33,10 @@ struct WatchSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Micro(text: "Watch", size: 11, tracking: 2, color: tint)
-                .padding(.top, 20)
+            if !compact {
+                Micro(text: "Watch", size: 11, tracking: 2, color: tint)
+                    .padding(.top, 20)
+            }
 
             if playing {
                 // The seeded demo library carries invented video ids, so the embed would load
@@ -40,11 +46,61 @@ struct WatchSection: View {
                 } else {
                     embed
                 }
+            } else if compact {
+                clipRow
             } else {
                 poster
             }
         }
         .animation(.easeOut(duration: 0.25), value: playing)
+    }
+
+    // MARK: - Compact row
+
+    private var clipRow: some View {
+        Button { playing = true } label: {
+            HStack(spacing: 11) {
+                Color.clear
+                    .overlay {
+                        if let url = video.thumbnailURL {
+                            StashImage(url: url) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                tint
+                            }
+                        } else {
+                            tint
+                        }
+                    }
+                    .frame(width: 40, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Watch the clip")
+                        .font(.archivo(14, .bold))
+                        .foregroundStyle(Color.stashInk)
+                    Text((video.author.isEmpty ? platform : "@\(video.author)") + " · plays here")
+                        .font(.archivo(12))
+                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "play.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.stashOnInk)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.stashInk))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.stashInk.opacity(0.9), lineWidth: 1.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Watch the clip")
+        .accessibilityHint("Plays here")
     }
 
     // MARK: - Poster

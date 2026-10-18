@@ -15,6 +15,7 @@ struct CodeView: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
     @State private var focus: String?   // selected tech tag; nil = all
     @State private var browsingTags = false
+    private var center: PipelineCenter { PipelineCenter.shared }
 
     private var saves: [Video] {
         videos.filter { !$0.needsLook && $0.category == .coding }
@@ -86,6 +87,12 @@ struct CodeView: View {
                 }
                 .background(Color.stashBackground.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
+                // A tag tapped on a save's page (VideoDetailView) arrives as the focus here.
+                .onChange(of: center.codeFocusCount, initial: true) { _, _ in
+                    guard let tag = center.codeFocus else { return }
+                    focus = tag
+                    center.codeFocus = nil
+                }
                 .overlay(alignment: .trailing) {
                     let entries = timeRailEntries(for: runs)
                     if entries.count >= 2 {

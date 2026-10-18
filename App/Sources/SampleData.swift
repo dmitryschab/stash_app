@@ -382,6 +382,8 @@ enum SampleData {
                     "summary": "git worktree add ../hotfix main checks a branch out beside the repo and leaves the current tree untouched.",
                     "links": ["https://git-scm.com/docs/git-worktree"],
                     "techTags": ["git", "cli"],
+                    "before": "Stash, switch, fix, switch back, pop, and resolve whatever the stash picked up.",
+                    "after": "A second folder for the hotfix: fix, commit, delete the folder. Nothing was ever put down.",
                     "kind": "howto",
                     "items": [
                         ["text": "git worktree add ../hotfix main", "detail": "Checks main out into a sibling folder."],

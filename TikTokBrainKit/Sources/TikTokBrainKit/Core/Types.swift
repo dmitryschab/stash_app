@@ -56,8 +56,13 @@ public struct CodeData: Codable, Equatable, Sendable {
     public var kind: Kind?
     /// One entry per point the post makes, in source order, cleaned by `CodeItem.cleaned`.
     public var items: [CodeItem]
+    /// How it is done without this post's idea, and with it — one sentence each. The detail
+    /// screen shows them side by side; nil (a legacy save, or a post with no such contrast)
+    /// skips the pair.
+    public var before: String?
+    public var after: String?
 
-    private enum CodingKeys: String, CodingKey { case summary, links, techTags, kind, items }
+    private enum CodingKeys: String, CodingKey { case summary, links, techTags, kind, items, before, after }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -66,6 +71,14 @@ public struct CodeData: Codable, Equatable, Sendable {
         techTags = try values.decodeIfPresent([String].self, forKey: .techTags) ?? []
         kind = (try? values.decode(String.self, forKey: .kind)).flatMap(Kind.init(rawValue:))
         items = CodeItem.cleaned((try? values.decode([CodeItem].self, forKey: .items)) ?? [])
+        before = Self.sentence(try? values.decode(String.self, forKey: .before))
+        after = Self.sentence(try? values.decode(String.self, forKey: .after))
+    }
+
+    /// Trimmed, or nil when blank — "" from the model means "no contrast to draw".
+    private static func sentence(_ raw: String?) -> String? {
+        let text = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
     }
 }
 

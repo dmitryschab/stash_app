@@ -76,6 +76,11 @@ final class PipelineCenter {
     /// Set when the shell's status pill is tapped; the Library reads it, pushes Import and clears
     /// it again. The pill and the Import screen have no other owner in common.
     var importRouteRequested = false
+    /// A tech tag tapped on a save's page: the shell switches to Code, which opens on that tag
+    /// and clears it. `codeFocusCount` is the signal (the same tag twice is still a request);
+    /// RootView keys the Code tab on it so the tab's stack pops back to the shelf.
+    var codeFocus: String?
+    var codeFocusCount = 0
     /// The finished import the user has already waved away, so "N videos sorted" does not come
     /// back on the next launch. Loaded in `configure`, like the rest of the persisted state.
     private var dismissedImportID: String?

@@ -10,6 +10,12 @@
 // Film is the one category that skips the embedded player: `FilmSection`'s poster strip stands
 // in for `WatchSection`, and the action pill below reads "WATCH ON TIKTOK" instead of "OPEN IN
 // TIKTOK" — nothing on this screen plays the clip itself, so "open" undersold what the button does.
+//
+// A coding save is laid out as a result, not a clip: the point (the code note's summary) in a
+// forest card under the byline, a before/after pair when the analysis wrote one, the items as
+// tappable takeaways, the clip as a compact row, link rows, tag chips that filter the Code tab,
+// and "more like this". Its TikTok action is a circled arrow in the top bar, so the foot holds
+// nothing for the floating tab bar to cover.
 
 import SwiftUI
 import SwiftData
@@ -26,6 +32,11 @@ struct VideoDetailView: View {
     private var video: Video { live.first ?? given }
 
     @State private var isRerunning = false
+    /// Takeaway rows whose detail is open, by index into `CodeData.items`.
+    @State private var expanded: Set<Int> = []
+    /// Every coding save, for "More like this"; newest first, so the two shown are the freshest.
+    @Query(filter: #Predicate<Video> { $0.categoryRaw == "coding" },
+           sort: \Video.bookmarkedAt, order: .reverse) private var codingSaves: [Video]
 
     init(video: Video) {
         given = video
@@ -38,26 +49,33 @@ struct VideoDetailView: View {
     @AppStorage("whisperModel") private var whisperModel = BoxDefaults.whisperModel
 
     private var tint: Color { video.category?.color ?? .categoryOther }
+    private var isCoding: Bool { video.category == .coding }
+    /// The analysed code note of a coding save; nil sends the save down the generic layout.
+    private var codingPage: CodeData? { isCoding ? video.codeNote : nil }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
                 header
-                if video.category == .film {
-                    FilmSection(video: video, tint: tint)
+                if let code = codingPage {
+                    codingBody(code)
                 } else {
-                    WatchSection(video: video, tint: tint)
+                    if video.category == .film {
+                        FilmSection(video: video, tint: tint)
+                    } else {
+                        WatchSection(video: video, tint: tint)
+                    }
+                    if let recipe = video.recipe { recipeSection(recipe) }
+                    if !video.music.isEmpty { musicSection(video.music) }
+                    if !video.buys.isEmpty { buysSection(video.buys) }
+                    textSection
+                    if !isCoding { actions }
                 }
-                if let recipe = video.recipe { recipeSection(recipe) }
-                if !video.music.isEmpty { musicSection(video.music) }
-                if let code = video.codeNote { codeSection(code) }
-                if !video.buys.isEmpty { buysSection(video.buys) }
-                textSection
-                actions
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 24)
+            // The coding page has no pill at the foot, so its last row must clear the tab bar.
+            .padding(.bottom, isCoding ? stashTabBarClearance : 24)
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -77,9 +95,24 @@ struct VideoDetailView: View {
                     .padding(.vertical, 7)
                     .background(Capsule().strokeBorder(Color.categoryOther, lineWidth: 1.5))
             }
+            if isCoding { openInTikTok }
             moreMenu
         }
         .padding(.top, 8)
+    }
+
+    /// The coding page's way out to the clip: a circled outbound arrow up here, reachable from
+    /// anywhere on the page, instead of the ink pill at the foot.
+    private var openInTikTok: some View {
+        Link(destination: video.url) {
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 12, weight: .heavy))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .overlay(Circle().strokeBorder(tint, lineWidth: 1.5))
+                .minTapTarget()
+        }
+        .accessibilityLabel("Open in \(TikTokLink.isInstagram(video.url) ? "Instagram" : "TikTok")")
     }
 
     /// Re-analysing one save is a repair, not something a reader reaches for, so it sits under
@@ -123,14 +156,15 @@ struct VideoDetailView: View {
                 .font(.archivo(12.5, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.5))
                 .padding(.top, 8)
-            if !video.summary.isEmpty || !video.caption.isEmpty {
+            // The coding page says it in "The point" instead.
+            if codingPage == nil, !video.summary.isEmpty || !video.caption.isEmpty {
                 Text(video.summary.isEmpty ? video.caption : video.summary)
                     .font(.archivo(14))
                     .foregroundStyle(Color.stashInk.opacity(0.85))
                     .lineSpacing(4)
                     .padding(.top, 12)
             }
-            if !video.topics.isEmpty {
+            if codingPage == nil, !video.topics.isEmpty {
                 Text(video.topics.map { "#\($0)" }.joined(separator: " "))
                     .font(.archivo(12, .semibold))
                     .foregroundStyle(tint)
@@ -244,14 +278,15 @@ struct VideoDetailView: View {
         return pick.link == nil ? kind + who + " · no match found" : kind + who
     }
 
-    /// The shaped code note: one row per item, laid out by `CodeData.shape` — tick boxes for a
-    /// checklist, numbers for a howto, a link per tool, plain takeaways for an explainer. A save
-    /// analyzed before shapes existed has no items and keeps the plain note card.
+    // MARK: - Coding page
+
     @ViewBuilder
-    private func codeSection(_ code: CodeData) -> some View {
-        if code.items.isEmpty {
-            codeNoteCard(code)
-        } else {
+    private func codingBody(_ code: CodeData) -> some View {
+        pointCard(code)
+        if let before = code.before, let after = code.after {
+            beforeAfter(before, after)
+        }
+        if !code.items.isEmpty {
             sectionHeader(code.headline(checked: code.items.filter(video.isChecked).count))
             VStack(spacing: 0) {
                 ForEach(Array(code.items.enumerated()), id: \.offset) { index, item in
@@ -262,12 +297,67 @@ struct VideoDetailView: View {
                 }
             }
             .padding(.top, 4)
-            if !code.links.isEmpty || !code.techTags.isEmpty {
-                codeFooter(code)
+        }
+        WatchSection(video: video, tint: tint, compact: true)
+            .padding(.top, 24)
+        if !code.links.isEmpty { linkRows(code.links) }
+        if !code.techTags.isEmpty { tagChips(code.techTags) }
+        if !video.buys.isEmpty { buysSection(video.buys) }
+        if let related = related(code) { moreLikeThis(related.tag, related.saves) }
+    }
+
+    /// What you get if you take this on board: the code note's summary, promoted to the top.
+    @ViewBuilder
+    private func pointCard(_ code: CodeData) -> some View {
+        let text = code.summary.isEmpty ? video.summary : code.summary
+        if !text.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Micro(text: "The point", size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.7))
+                Text(text)
+                    .font(.archivo(15, .heavy))
+                    .foregroundStyle(Color.stashOnAccent)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .stashCard(fill: tint)
+            .padding(.top, 16)
         }
     }
 
+    /// How it is done without this, how it is done with it; the "with" column wears the tint.
+    private func beforeAfter(_ before: String, _ after: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            contrastColumn("Without it", before, highlighted: false)
+            contrastColumn("With it", after, highlighted: true)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 10)
+    }
+
+    private func contrastColumn(_ label: String, _ text: String, highlighted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Micro(text: label, size: 9.5, tracking: 1.8,
+                  color: highlighted ? tint : .stashInk.opacity(0.62))
+            Text(text)
+                .font(.archivo(12.5))
+                .foregroundStyle(Color.stashInk.opacity(highlighted ? 1 : 0.62))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(highlighted ? tint : Color.stashInk.opacity(0.28),
+                              lineWidth: highlighted ? 1.5 : 1.2)
+        )
+    }
+
+    /// One row per item, laid out by `CodeData.shape`: tick boxes for a checklist, a link per
+    /// tool, and for a howto or an explainer a takeaway row — the square marker (a number on a
+    /// howto, where the order is the content), the text, and a chevron that opens the detail
+    /// inline. No mono, no copy button: nobody runs these from a phone.
     @ViewBuilder
     private func codeItemRow(index: Int, item: CodeItem, shape: CodeData.Kind, links: [URL]) -> some View {
         switch shape {
@@ -297,16 +387,6 @@ struct VideoDetailView: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(checked ? "Checked" : "Not checked")
-        case .howto:
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("\(index + 1)")
-                    .font(.archivo(19, .heavy))
-                    .foregroundStyle(tint)
-                    .frame(width: 22, alignment: .leading)
-                codeItemText(item, dimmed: false)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 9)
         case .tools:
             Link(destination: toolURL(for: item, in: links)) {
                 HStack(alignment: .top, spacing: 12) {
@@ -321,15 +401,53 @@ struct VideoDetailView: View {
                 .contentShape(Rectangle())
             }
             .accessibilityLabel("Open \(item.text)")
-        case .explainer:
-            HStack(alignment: .top, spacing: 12) {
-                Rectangle().fill(tint)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 6)
-                codeItemText(item, dimmed: false)
-                Spacer(minLength: 0)
+        case .howto, .explainer:
+            let open = expanded.contains(index)
+            let hasDetail = !item.detail.isEmpty
+            // Not `.disabled` for a row with no detail: that dims the label, and a plain row
+            // is not a greyed-out one.
+            Button {
+                guard hasDetail else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    if open { expanded.remove(index) } else { expanded.insert(index) }
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    if shape == .howto {
+                        Text("\(index + 1)")
+                            .font(.archivo(19, .heavy))
+                            .foregroundStyle(tint)
+                            .frame(width: 22, alignment: .leading)
+                    } else {
+                        Rectangle().fill(tint).frame(width: 8, height: 8)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.text)
+                            .font(.archivo(14, .semibold))
+                            .foregroundStyle(Color.stashInk)
+                            .multilineTextAlignment(.leading)
+                        if open, hasDetail {
+                            Text(item.detail)
+                                .font(.archivo(12.5))
+                                .foregroundStyle(Color.stashInk.opacity(0.6))
+                                .lineSpacing(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if hasDetail {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color.stashInk.opacity(0.4))
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                    }
+                }
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 9)
+            .buttonStyle(.plain)
+            .accessibilityHint(hasDetail ? (open ? "Hides the detail" : "Shows the detail") : "")
         }
     }
 
@@ -365,58 +483,108 @@ struct VideoDetailView: View {
         return parts.url!
     }
 
-    private func codeFooter(_ code: CodeData) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(code.links, id: \.self) { link in
+    /// The links the post states, one row each: the page's name over its host.
+    private func linkRows(_ links: [URL]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(links, id: \.self) { link in
                 Link(destination: link) {
-                    HStack(spacing: 7) {
-                        Image(systemName: "link").font(.system(size: 11, weight: .bold))
-                        Text(link.host ?? link.absoluteString)
-                            .font(.archivo(13, .semibold))
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pageName(link))
+                                .font(.archivo(14, .bold))
+                                .foregroundStyle(Color.stashInk)
+                                .lineLimit(1)
+                            Text(host(link))
+                                .font(.archivo(12))
+                                .foregroundStyle(Color.stashInk.opacity(0.55))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(tint)
                     }
-                    .foregroundStyle(Color.categoryCoding)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
                 }
+                .accessibilityLabel("Open \(pageName(link)) on \(host(link))")
+                Divider().overlay(Color.stashInk.opacity(0.12))
             }
-            if !code.techTags.isEmpty {
-                Text(code.techTags.map { "#\($0)" }.joined(separator: " "))
-                    .font(.archivo(12, .semibold))
-                    .foregroundStyle(Color.categoryCoding)
+        }
+        .padding(.top, 10)
+    }
+
+    // ponytail: the last path component is the page name; fetching <title> is a request per link for a label.
+    private func pageName(_ url: URL) -> String {
+        let name = url.deletingPathExtension().lastPathComponent
+        return name.isEmpty || name == "/" ? host(url) : name.removingPercentEncoding ?? name
+    }
+
+    private func host(_ url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    /// The tech tags as chips; a tap lands on the Code tab filtered to that tag.
+    private func tagChips(_ tags: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(tags, id: \.self) { tag in
+                    TopicChip(label: tag, isOn: false) {
+                        PipelineCenter.shared.codeFocus = tag
+                        PipelineCenter.shared.codeFocusCount += 1
+                    }
+                    .accessibilityHint("Shows every coding save tagged \(tag)")
+                }
             }
         }
         .padding(.top, 12)
     }
 
-    /// The pre-shape note: summary, links and tags in one card.
-    private func codeNoteCard(_ code: CodeData) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("Code note")
-            VStack(alignment: .leading, spacing: 10) {
-                if !code.summary.isEmpty {
-                    Text(code.summary)
-                        .font(.archivo(14))
-                        .foregroundStyle(Color.stashInk)
-                        .lineSpacing(3)
-                }
-                ForEach(code.links, id: \.self) { link in
-                    Link(destination: link) {
-                        HStack(spacing: 7) {
-                            Image(systemName: "link").font(.system(size: 11, weight: .bold))
-                            Text(link.host ?? link.absoluteString)
-                                .font(.archivo(13, .semibold))
-                        }
-                        .foregroundStyle(Color.categoryCoding)
-                    }
-                }
-                if !code.techTags.isEmpty {
-                    Text(code.techTags.map { "#\($0)" }.joined(separator: " "))
-                        .font(.archivo(12, .semibold))
-                        .foregroundStyle(Color.categoryCoding)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .stashOutlineCard()
-            .padding(.top, 8)
+    /// Up to two other coding saves sharing a tag — the first of this save's tags that any
+    /// other save carries, so the section says which tag it is about.
+    private func related(_ code: CodeData) -> (tag: String, saves: [Video])? {
+        let others = codingSaves.filter { $0.videoID != video.videoID && !$0.unavailable }
+        guard !others.isEmpty else { return nil }
+        let tagged = others.map { ($0, $0.codeNote?.techTags ?? []) }
+        for tag in code.techTags {
+            let hits = tagged.filter { $0.1.contains(tag) }.prefix(2).map(\.0)
+            if !hits.isEmpty { return (tag, Array(hits)) }
         }
+        return nil
+    }
+
+    @ViewBuilder
+    private func moreLikeThis(_ tag: String, _ saves: [Video]) -> some View {
+        sectionHeader("More like this · \(tag)")
+        VStack(spacing: 0) {
+            ForEach(saves, id: \.videoID) { other in
+                NavigationLink { VideoDetailView(video: other) } label: {
+                    HStack(spacing: 10) {
+                        Thumbnail(url: other.thumbnailURL, category: .coding, size: 30)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(other.rowTitle)
+                                .font(.archivo(14, .bold))
+                                .foregroundStyle(Color.stashInk)
+                                .lineLimit(1)
+                            Text([tag, other.codeNote?.shelfLabel].compactMap { $0 }.joined(separator: " · "))
+                                .font(.archivo(12))
+                                .foregroundStyle(Color.stashInk.opacity(0.55))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color.stashInk.opacity(0.4))
+                    }
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider().overlay(Color.stashInk.opacity(0.12))
+            }
+        }
+        .padding(.top, 4)
     }
 
     /// What this save is selling. Shown on every category, because that is what `BuyPick` is —

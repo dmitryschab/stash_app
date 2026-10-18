@@ -369,7 +369,8 @@ object, no prose and no Markdown code fences. Use this exact shape:
   "films": [ { "title": string, "year": integer | null } ],
   "code": { "summary": string, "links": [string], "techTags": [string],
             "kind": "checklist" | "tools" | "howto" | "explainer",
-            "items": [ { "text": string, "detail": string } ] } | null,
+            "items": [ { "text": string, "detail": string } ],
+            "before": string, "after": string } | null,
   "buys": [ { "name": string, "kind": string, "price": string } ]
 }
 recipe, music, films and code belong to a category: fill the one matching the category you chose
@@ -429,6 +430,9 @@ Four categories carry extra structure, and the Cook, Music, film and Code screen
   list appears — and never pad to an advertised count: a "20 things" post whose text shows 17
   has 17 items. Set "detail" to "" when the post says nothing more about that item. Keep
   "summary", "techTags" and "links" as before, and put in "links" only URLs the post states.
+  Then write "before" and "after": one sentence each on how the thing is done without what
+  this post shows, and how it is done with it — plain words, no commands. Use "" for both when
+  the post draws no such contrast (a news item, a tools roundup).
 
 "buys" — things the user might want to own, collected from every category into one shelf.
 Ask one question: is a specific, purchasable product a FOCAL POINT of this post? If the video
