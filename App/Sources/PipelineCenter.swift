@@ -13,6 +13,7 @@
 
 import BackgroundTasks
 import Network
+import os
 import SwiftData
 import SwiftUI
 import TikTokBrainKit
@@ -445,6 +446,10 @@ final class PipelineCenter {
     /// A pass asked for while one was already running; the in-flight run fetched its work list
     /// before those saves landed, so it would miss them. Same problem as `thumbnailsPending`.
     private var embeddingsPending = false
+    /// Saves the box would not write an about-text for even on their own request, left alone until
+    /// the app relaunches: a save that makes the model fail would otherwise be re-sent, and
+    /// charged for, on every drain. Shared across runs, hence the lock — the runs are an actor's.
+    private let aboutSkipped = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// Writes the about-text for saves that are owed one, then fills in the search vectors for
     /// saves that have none, then leaves them alone.
@@ -467,8 +472,11 @@ final class PipelineCenter {
         let config = Self.currentConfig()
         let embedder = BoxEmbeddingClient(config: config)
         let writer = BoxAboutClient(config: config)
+        let skipped = aboutSkipped
         embeddingTask = Task { [weak self] in
-            await EmbeddingBackfill(container: container, embedder: embedder, writer: writer).run()
+            await EmbeddingBackfill(
+                container: container, embedder: embedder, writer: writer, skipped: skipped
+            ).run()
             guard let self else { return }
             embeddingTask = nil
             if embeddingsPending {
@@ -1827,10 +1835,11 @@ final class PipelineCenter {
 /// resets `embeddingRevision`, and the same run then embeds it.
 ///
 /// In each phase the first failed batch ends that phase rather than counting failures like the
-/// transcript drain: the only ways these calls fail are "offline", "box down", "signed out" and
+/// transcript drain: the usual ways these calls fail are "offline", "box down", "signed out" and
 /// a daily limit, and none of them gets better on the next batch. Everything already written is
 /// saved, and the next foreground resumes from there. A failed about phase does not stop the
-/// embed phase, which still runs for the saves that already have a text.
+/// embed phase, which still runs for the saves that already have a text. The one exception is an
+/// about batch the box refuses over what it holds, which is retried one save at a time (below).
 actor EmbeddingBackfill {
     /// The server rejects a decoded image over this; a cover past it goes text-only instead.
     private static let maxCoverBytes = 400_000
@@ -1838,11 +1847,15 @@ actor EmbeddingBackfill {
     private let container: ModelContainer
     private let embedder: BoxEmbeddingClient
     private let writer: BoxAboutClient
+    /// Video IDs the about phase has given up on until relaunch; see `writeAbouts`.
+    private let skipped: OSAllocatedUnfairLock<Set<String>>
 
-    init(container: ModelContainer, embedder: BoxEmbeddingClient, writer: BoxAboutClient) {
+    init(container: ModelContainer, embedder: BoxEmbeddingClient, writer: BoxAboutClient,
+         skipped: OSAllocatedUnfairLock<Set<String>>) {
         self.container = container
         self.embedder = embedder
         self.writer = writer
+        self.skipped = skipped
     }
 
     func run() async {
@@ -1873,26 +1886,87 @@ actor EmbeddingBackfill {
     }
 
     /// The about phase: one box call per batch, saved per batch. Returns on the first failure
-    /// or when cancelled; either way the caller carries on to the embed phase, which stops
-    /// itself if the task was cancelled.
+    /// that is not about a particular save, or when cancelled; either way the caller carries on to
+    /// the embed phase, which stops itself if the task was cancelled.
+    ///
+    /// Why a failed batch is retried one save at a time: the box charges every item of a request
+    /// a daily unit up front and answers 502 for the whole request when the model fails on any
+    /// one of them. Newest-first order keeps that save in the first batch, so without this it
+    /// would be re-sent, 8 units a time, on every drain until the daily cap, and every save
+    /// behind it would starve. Sent alone, the bad save is found, skipped until relaunch, and the
+    /// rest are written.
     private func writeAbouts(in all: [Video], context: ModelContext) async {
-        let pending = AboutBackfill.pending(in: all)
+        let skip = skipped.withLock { $0 }
+        let pending = AboutBackfill.pending(in: all).filter { !skip.contains($0.videoID) }
         let batchSize = BoxAboutClient.maxItemsPerRequest
         for start in stride(from: 0, to: pending.count, by: batchSize) {
             if Task.isCancelled { return }
             let batch = Array(pending[start..<min(start + batchSize, pending.count)])
-            // A save with no cover on disk is written text-only and counts as done, so it is
-            // not retried; the same goes for a cover the server would refuse for its size.
-            let items = batch.map { AboutItem(video: $0, cover: Self.cover(of: $0)) }
-            guard let abouts = try? await writer.write(items) else { return }
-            for (video, about) in zip(batch, abouts) {
-                video.about = about
-                video.aboutRevision = BoxAboutClient.revision
-                // The text the vector was built from is gone; embed the new one this run.
-                video.embeddingRevision = 0
-            }
+            let goOn = await write(batch)
             try? context.save()
+            if !goOn { return }
         }
+    }
+
+    /// Writes one batch, falling back to single saves when the box refuses the batch over what
+    /// it holds. Returns false when the phase should end (the box, the account or the task is
+    /// out of reach, which does not get better on the next save).
+    private func write(_ batch: [Video]) async -> Bool {
+        do {
+            apply(try await writer.write(Self.items(for: batch)), to: batch)
+            return true
+        } catch where Self.isAboutTheSave(error) {
+            guard batch.count > 1 else {
+                skip(batch[0])
+                return true
+            }
+        } catch {
+            return false
+        }
+        for video in batch {
+            if Task.isCancelled { return false }
+            do {
+                apply(try await writer.write(Self.items(for: [video])), to: [video])
+            } catch where Self.isAboutTheSave(error) {
+                skip(video)
+            } catch {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func apply(_ abouts: [String], to batch: [Video]) {
+        for (video, about) in zip(batch, abouts) {
+            video.about = about
+            video.aboutRevision = BoxAboutClient.revision
+            // The text the vector was built from is gone; embed the new one this run.
+            video.embeddingRevision = 0
+        }
+    }
+
+    private func skip(_ video: Video) {
+        let id = video.videoID
+        skipped.withLock { _ = $0.insert(id) }
+    }
+
+    /// True for a failure the box gave over what it was sent: any other status or an answer that
+    /// does not fit the request. False for everything that is the same for every save — the box
+    /// unreachable, signed out, the account's limit, the daily cap (429) — and for anything this
+    /// does not recognize, because ending the phase costs nothing and a wrong skip costs a save.
+    private static func isAboutTheSave(_ error: Error) -> Bool {
+        guard let error = error as? BoxError else { return false }
+        switch error {
+        case .badResponse(let status): return ![401, 402, 403, 429].contains(status)
+        case .malformedPayload: return true
+        case .unreachable: return false
+        }
+    }
+
+    /// A save with no cover on disk is written text-only and counts as done, so it is not
+    /// retried; the same goes for a cover the server would refuse for its size.
+    private static func items(for batch: [Video]) -> [AboutItem] {
+        batch.map { AboutItem(video: $0, cover: cover(of: $0)) }
     }
 
     private static func cover(of video: Video) -> Data? {
