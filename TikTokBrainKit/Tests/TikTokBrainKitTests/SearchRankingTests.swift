@@ -74,16 +74,23 @@ final class SearchRankingTests: XCTestCase {
         XCTAssertEqual(ids(SearchIndex.rank([recipes], query: "recipes", embedding: nil)), ["recipes"])
     }
 
-    func testStemRules() {
-        let cases: [(String, String)] = [
-            ("dishes", "dish"), ("boxes", "box"), ("glasses", "glass"), ("churches", "church"),
-            ("buses", "bus"),
-            ("cakes", "cake"), ("recipes", "recipe"), ("pastas", "pasta"),
-            ("glass", "glass"), ("class", "class"),
-            ("bus", "bus"), ("gas", "gas"), ("pasta", "pasta"),
+    func testSingularsAndPluralsStemAlike() {
+        // Each pair has to meet: whatever the stem is, both forms must land on it.
+        let pairs: [(singular: String, plural: String, stem: String)] = [
+            ("house", "houses", "hous"), ("cake", "cakes", "cak"),
+            ("recipe", "recipes", "recip"), ("tomato", "tomatoes", "tomato"),
+            ("dish", "dishes", "dish"), ("box", "boxes", "box"), ("bus", "buses", "bus"),
+            ("glass", "glasses", "glass"), ("ice", "ices", "ice"), ("pasta", "pastas", "pasta"),
         ]
-        for (word, stem) in cases {
-            XCTAssertEqual(SearchIndex.stem(word), stem, word)
+        for pair in pairs {
+            XCTAssertEqual(SearchIndex.stem(pair.singular), pair.stem, pair.singular)
+            XCTAssertEqual(SearchIndex.stem(pair.plural), pair.stem, pair.plural)
+        }
+    }
+
+    func testShortWordsAndDoubleSAreLeftAlone() {
+        for word in ["bus", "gas", "ice", "its", "glass", "class", "grass"] {
+            XCTAssertEqual(SearchIndex.stem(word), word)
         }
     }
 

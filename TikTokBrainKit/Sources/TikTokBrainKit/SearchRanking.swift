@@ -86,17 +86,17 @@ public enum SearchIndex {
         return result
     }
 
-    /// Takes a plural down to its singular so "cakes" meets "cake" and "dishes" meets "dish".
-    /// "es" comes off only after a sound that needs it (-ses, -xes, -zes, -ches, -shes); any other
-    /// word loses just its "s", unless it ends in "ss" ("glass" is not "glas"). Words of three
-    /// characters or fewer are left alone ("bus").
+    /// Takes a word to a stem that a singular and its plural share, so "house" meets "houses" and
+    /// "tomato" meets "tomatoes". One trailing "s" comes off, then a trailing "e" if the word is
+    /// still longer than three characters. The stem is a key, not a word: "cake" and "cakes" both
+    /// become "cak". Words of three characters or fewer and words ending in "ss" are left alone
+    /// ("bus", "glass").
     public static func stem(_ word: String) -> String {
-        guard word.count > 3 else { return word }
-        for ending in ["ses", "xes", "zes", "ches", "shes"] where word.hasSuffix(ending) {
-            return String(word.dropLast(2))
-        }
-        if word.hasSuffix("s"), !word.hasSuffix("ss") { return String(word.dropLast()) }
-        return word
+        guard word.count > 3, !word.hasSuffix("ss") else { return word }
+        var stem = word
+        if stem.hasSuffix("s") { stem.removeLast() }
+        if stem.hasSuffix("e"), stem.count > 3 { stem.removeLast() }
+        return stem
     }
 
     // MARK: Build
