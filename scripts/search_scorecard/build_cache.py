@@ -14,7 +14,7 @@ Run from services/webhook so its modules import:
 
   uv run --with-requirements requirements.txt python ../../scripts/search_scorecard/build_cache.py \
       --seed SEED --thumbs THUMBS --queries QUERIES --out CACHE \
-      [--vision gemma|gemini] [--only-silent] [--limit N] [--queries-only]
+      [--vision gemma|gemini] [--only-silent] [--limit N] [--queries-only] [--ids ID,ID]
 
 Each save is told to the box's own `about_api.write_about` exactly as the app's `AboutItem` tells
 it (music never sends its transcript; the cover goes only with a save that has no transcript and
@@ -27,6 +27,8 @@ is stamped with a hash of about_api.py's source and the vision model, so changin
 rebuilds every about-text and its vector on the next run, and nothing else: the legacy text and
 vector never change and are kept. The query vectors are rebuilt on every run given --queries,
 and `--queries-only` rebuilds nothing else, so editing the queries costs twenty embeddings.
+`--ids` rebuilds just the named saves' about-texts, whatever their stamp, for a fix that only
+changes a few of them.
 
 Credentials: Bedrock (Gemma, Titan) through the default AWS credentials; the vision model on
 OpenRouter through `clef.openrouter_key()`, i.e. OPENROUTER_API_KEY in the environment.
@@ -254,6 +256,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, help="at most this many saves")
     parser.add_argument("--queries-only", action="store_true",
                         help="rebuild only the query vectors, keep every save as it is")
+    parser.add_argument("--ids", help="comma-separated videoIDs: rebuild only these about-texts")
     args = parser.parse_args()
 
     if args.vision:
@@ -267,8 +270,12 @@ def main() -> int:
         todo = [save for save in seed if not args.only_silent or is_silent(save)]
         if args.limit:
             todo = todo[:args.limit]
-        todo = [save for save in todo
-                if cached.get(save["videoID"], {}).get("aboutVersion") != version]
+        if args.ids:
+            wanted = set(args.ids.split(","))
+            todo = [save for save in todo if save["videoID"] in wanted]
+        else:
+            todo = [save for save in todo
+                    if cached.get(save["videoID"], {}).get("aboutVersion") != version]
         stale = sum(1 for save in todo if save["videoID"] in cached)
         print(f"vision model {about_api.ABOUT_VISION_MODEL}, about version {version}; "
               f"{len(cached)} saves cached, {len(todo)} to build ({stale} about-texts stale)",

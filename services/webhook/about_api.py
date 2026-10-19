@@ -32,7 +32,8 @@ the whole request before any model is called, so a capped request costs nothing 
 Text goes to Gemma on Bedrock; an item that carries a picture goes to the vision model.
 
 A model with too little to go on sometimes answers by asking for more. That answer is not stored:
-the save gets its stripped caption instead, else its earlier summary, else the request fails.
+the save gets its stripped caption instead, else its earlier summary, else the request fails. A
+music post gets "A music post." instead, so a refusal cannot bring its lyrics back in.
 """
 import base64
 import logging
@@ -88,6 +89,9 @@ SPEECH_INSTRUCTION = (
 SILENT_INSTRUCTION = (
     "Describe what the post is about, from the material below. The caption and the earlier "
     "summary may state its topic; the picture and the on-screen text add what is shown.")
+
+# What a music post is about when the model refused it: nothing the prompt kept out gets back in.
+MUSIC_FALLBACK = "A music post."
 
 # How a model answers when it will not: asking for material, apologizing, saying it cannot. The
 # first-person phrases mark a refusal wherever they sit, since an about-text never speaks as "I";
@@ -188,7 +192,10 @@ def write_about(item: AboutItem) -> str:
     if is_refusal(answer):
         # Stored, a refusal would be the save's about-text for good, and it matches every query
         # about nothing. The creator's own words are a worse about-text than a written one but a
-        # better one than that.
+        # better one than that — except on a music post, whose summary can retell the lyrics and
+        # whose caption can name the song: the music prompt keeps both out, so the fallback does.
+        if item.category == "music":
+            return MUSIC_FALLBACK
         fallback = strip_hashtags(item.caption) or item.summary.strip()
         if not fallback:
             raise ValueError("refused about")

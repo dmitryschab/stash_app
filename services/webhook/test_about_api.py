@@ -269,6 +269,19 @@ def test_a_refusal_with_no_caption_falls_back_to_the_summary(monkeypatch):
         assert about_api.write_about(item) == "A plate of pasta."
 
 
+def test_a_refused_music_post_is_never_described_by_its_caption_or_summary(monkeypatch):
+    """A music post's summary can retell the lyrics and its caption can name the song, which is
+    why the music prompt is never given the one and strips the other. A refusal must not bring
+    them back in by the fallback."""
+    monkeypatch.setattr(about_api, "_chat", lambda *args: REFUSALS[0])
+    item = AboutItem(videoID="a", category="music", caption="Lovesong by The Cure #vibes",
+                     summary="A song with lyrics about Chicago and identity.",
+                     music=["Lovesong by The Cure"])
+    assert about_api.write_about(item) == "A music post."
+    bare = AboutItem(videoID="b", category="music")
+    assert about_api.write_about(bare) == "A music post."
+
+
 def test_a_refusal_with_nothing_to_fall_back_on_is_a_502(store, monkeypatch):
     monkeypatch.setattr(about_api, "_chat", lambda *args: REFUSALS[0])
     with pytest.raises(ValueError):
