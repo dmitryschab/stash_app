@@ -50,16 +50,22 @@ public struct SearchMatch: Sendable, Equatable {
 
 public enum SearchIndex {
     /// How close a save has to be in meaning before it shows up having matched no word at all.
-    /// Starts at the value measured on the old embedding text, where unrelated pairs sat near
-    /// 0.2 and real paraphrases cleared 0.5; all three constants are meant to be tuned against
-    /// real about-text vectors.
-    public static let meaningFloor = 0.35
+    ///
+    /// All three constants were tuned against the owner's library (855 saves, about-texts written
+    /// by Gemma, Titan vectors, 20 hand-checked queries): see SearchScorecardTests. About-texts
+    /// are short, so real matches sit lower than they did against the old title-and-transcript
+    /// text — several landed at 0.32–0.34. At 0.30 a query brings back about 33 saves on
+    /// average; at 0.28 it is over 40, and at 0.26 about 55.
+    public static let meaningFloor = 0.30
 
-    /// What saying one of the query's words adds to a save's meaning score.
-    public static let wordBoost = 0.15
+    /// What saying one of the query's words adds to a save's meaning score. Only the order
+    /// depends on it; 0.05, 0.10 and 0.25 scored the same, 0.15 put one query's answer
+    /// fourth.
+    public static let wordBoost = 0.10
 
-    /// Scores closer than this are a tie, and a tie goes to the newer save.
-    public static let tieBand = 0.02
+    /// Scores closer than this are a tie, and a tie goes to the newer save. 0.04 rather than
+    /// 0.02 or 0.01 because it got one more query's answer into the first three.
+    public static let tieBand = 0.04
 
     // MARK: Words
 
