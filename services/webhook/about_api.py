@@ -151,7 +151,12 @@ def write_about(item: AboutItem) -> str:
     else:
         model, content = api_v1.BEDROCK_MODEL, prompt
     url, token = _endpoint(model)
-    return _chat(url, model, token, ABOUT_SYSTEM_PROMPT, content, ABOUT_MAX_TOKENS).strip()
+    answer = _chat(url, model, token, ABOUT_SYSTEM_PROMPT, content, ABOUT_MAX_TOKENS).strip()
+    if not answer:
+        # A model that spends its whole token budget thinking answers with nothing. Stored as
+        # the save's about text that would be final, so it fails the request instead.
+        raise ValueError("empty about")
+    return answer
 
 
 class AboutRequest(BaseModel):

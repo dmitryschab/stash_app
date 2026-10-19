@@ -171,6 +171,18 @@ def test_model_failure_is_a_502(store, monkeypatch):
     assert r.status_code == 502
 
 
+def test_an_empty_answer_is_a_502_not_an_empty_about(store, monkeypatch):
+    """The app stores whatever comes back as the save's about text and marks it written, so a
+    blank one would leave the save unfindable by meaning for good; a 502 lets it retry. A vision
+    model that spends its whole token budget thinking answers exactly this way."""
+    for blank in ("", "  \n"):
+        monkeypatch.setattr(about_api, "_chat", lambda *args, blank=blank: blank)
+        with TestClient(app) as client:
+            r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"},
+                                                          {"videoID": "b", "caption": "y"}]})
+        assert r.status_code == 502 and r.json()["detail"] == "about unavailable"
+
+
 def test_charges_no_quota(store, chat):
     with TestClient(app) as client:
         r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"}] * 3})
