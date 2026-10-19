@@ -190,11 +190,7 @@ struct LibraryView: View {
     /// whoever already knew the glyph. A capsule that says its own name costs one row.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
-                Spacer()
-                Micro(text: "\(videos.count) saves", size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
-            }
+            StashWordmarkRow(trailing: "\(videos.count) saves")
             Text("Library")
                 .font(.archivo(40, .heavy))
                 .foregroundStyle(Color.stashInk)

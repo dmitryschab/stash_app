@@ -79,11 +79,7 @@ struct LatelyView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
-                Spacer()
-                Micro(text: period, size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
-            }
+            StashWordmarkRow(trailing: period)
             Text("Lately.")
                 .font(.archivo(33, .heavy))
                 .foregroundStyle(Color.stashInk)
