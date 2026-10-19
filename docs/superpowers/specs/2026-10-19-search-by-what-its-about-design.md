@@ -97,9 +97,9 @@ already returns null for speech under 5 words (`api_v1.py:183,256`).
     only name things that are visibly there;
   - else → the caption with hashtags stripped, lightly cleaned.
   Never mention hashtags, the creator's handle, or "this video".
-- **Music saves** (analysis `category == "music"`): the transcript is not sent. The genre comes
-  from Shazam's genres when the deep pass stored them, else the model infers it from the
-  identified track/artist or the caption; the names themselves are not written into the
+- **Music saves** (analysis `category == "music"`): the transcript is not sent. Shazam genres are
+  never stored, so the model infers the genre from the identified tracks (`musicJSON`) and the
+  caption; the names themselves are not written into the
   about-text. A music save with no transcript gets the cover call like any silent save.
 - **When it is written (Claude's call):** a first about-text is written as soon as a save is
   analyzed, **text-only** (Gemma) from whatever exists then. The cover-image call happens only
@@ -107,9 +107,10 @@ already returns null for speech under 5 words (`api_v1.py:183,256`).
   text-only when its transcript lands. So the vision model is paid at most once per save, and a
   just-imported save is searchable by meaning straight away. The builder finds or adds the
   "transcript was attempted" signal.
-- **Photo posts (Claude's call):** no cover call. Their existing `summary` was written by the
-  vision model from every slide (`api_v1.py:506-514`), so it is the "what is shown" input,
-  text-only, together with the hashtag-stripped caption.
+- **Photo posts (Claude's call, revised in the plan):** the app has no photo-post flag, so they
+  are not special-cased. Every save with no speech sends its cover **and** its existing
+  `summary`; for a photo post that summary was written by the vision model from every slide
+  (`api_v1.py:506-514`), so the slides still reach the about-text.
 - **Model:** Gemma on Bedrock for text-only saves. For the cover image, Gemma if it describes a
   scene acceptably on ~10 silent saves from the test library (it is documented as unable to
   name album art, `api_v1.py:115`), else `google/gemini-3.7-flash` via OpenRouter, the
