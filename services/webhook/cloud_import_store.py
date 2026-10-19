@@ -850,7 +850,10 @@ class DynamoImportStore:
         for _ in range(QUOTA_CAS_ATTEMPTS):
             item = self._get(key)
             used = int(item.get("usedToday", 0)) if item and item.get("utcDay") == today else 0
-            if used >= cap:
+            # A `cap` on the row itself lifts one account past the box-wide figure, set by hand
+            # (update-item) like initialLimit on QUOTA. The writes below SET only the counter,
+            # so it survives the daily roll.
+            if used >= int((item or {}).get("cap", cap)):
                 return False
             try:
                 if item is None:

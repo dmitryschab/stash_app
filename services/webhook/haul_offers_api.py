@@ -508,7 +508,7 @@ def _charge(store: DynamoImportStore) -> None:
     for _ in range(QUOTA_CAS_ATTEMPTS):
         item = store.table.get_item(Key=key).get("Item")
         used = int(item.get("usedToday", 0)) if item and item.get("utcDay") == today else 0
-        if used >= cap:
+        if used >= int((item or {}).get("cap", cap)):  # per-account override, as on DEEPPASS
             now = datetime.now(timezone.utc)
             midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             raise HTTPException(

@@ -178,6 +178,17 @@ def test_the_deep_pass_cap_counts_up_and_then_refuses():
     assert subject.get_quota().initial_remaining == INITIAL_LIMIT  # a separate counter entirely
 
 
+def test_a_cap_on_the_row_lifts_one_account_past_the_box_wide_cap():
+    subject = store()
+    assert subject.charge_deep_pass(1) is True
+    assert subject.charge_deep_pass(1) is False
+    subject.table.items[DEEP_PASS_KEY]["cap"] = 3
+    assert subject.charge_deep_pass(1) is True
+    assert subject.charge_deep_pass(1) is True
+    assert subject.charge_deep_pass(1) is False
+    assert subject.table.items[DEEP_PASS_KEY]["cap"] == 3  # the counter writes leave it alone
+
+
 def test_the_deep_pass_cap_rolls_over_at_the_next_utc_day():
     """No scheduled sweep: yesterday's day key is what makes today's first call start at one."""
     table = ConditionalTable()
