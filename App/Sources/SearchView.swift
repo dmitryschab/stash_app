@@ -96,8 +96,13 @@ struct SearchOverlay: View {
                     } else {
                         // Rows are only ever a final answer. While the field is ahead of it,
                         // the last answer stays put under one "Searching…" line rather than
-                        // being re-sorted or blanked; a first query has nothing to keep.
-                        if !isSettled { searchingRow.padding(.top, 14) }
+                        // being re-sorted or blanked; a first query has nothing to keep. The
+                        // line is always laid out and only fades, so the rows under it never
+                        // move down when it appears or up when it goes.
+                        searchingRow
+                            .opacity(isSettled ? 0 : 1)
+                            .accessibilityHidden(isSettled)
+                            .padding(.top, 14)
                         if isSettled, results.isEmpty {
                             Text("No saves matched.")
                                 .font(.archivo(14, .semibold))
