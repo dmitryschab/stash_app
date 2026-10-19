@@ -27,8 +27,10 @@ Which words the model reads, first match wins:
 Title, topics and hashtags are not fields of the request at all, so they cannot reach the prompt.
 
 Money: no quota moves — the save was paid for at import, and being able to find it again must
-not cost like saving it. Each item spends one daily deep-pass unit instead, charged up front for
-the whole request before any model is called, so a capped request costs nothing on the model.
+not cost like saving it. Each item spends one unit of a daily counter of its own instead (ABOUTCAP,
+beside haul_offers' OFFERCAP), charged up front for the whole request before any model is called,
+so a capped request costs nothing on the model. Not the deep-pass counter: a library's about
+backfill would starve its transcript and on-screen text backfills, and the reverse.
 Text goes to Gemma on Bedrock; an item that carries a picture goes to the vision model.
 
 A model with too little to go on sometimes answers by asking for more. That answer is not stored:
@@ -42,8 +44,10 @@ the same for every save, so the app ends its about phase and sends them again la
 """
 import base64
 import logging
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +55,7 @@ from pydantic import BaseModel
 
 import api_v1
 from clef import openrouter_key
-from cloud_import_store import DynamoImportStore
+from cloud_import_store import QUOTA_CAS_ATTEMPTS, DynamoImportStore, _is_conditional_failure
 from stash_auth import entitled_store
 
 log = logging.getLogger("stash-webhook")
@@ -80,6 +84,10 @@ ABOUT_VISION_MODEL = api_v1.BEDROCK_MODEL
 ABOUT_TIMEOUT = 25
 # How long the app is told to wait when the model's provider is throttling, down or slow.
 UPSTREAM_RETRY_AFTER = 60
+# Items per account per UTC day. A library of ~600 saves writes in one evening with room for a
+# prompt-revision rewrite of it; at Gemma's price a user who spends this to the last unit costs
+# about $0.6.
+ABOUT_DAILY_CAP = 2000
 
 ABOUT_SYSTEM_PROMPT = """You write the text a search engine matches a saved short video against. Answer with 2-4 plain
 English sentences and nothing else: no lists, no Markdown, no preamble. Use concrete nouns a
@@ -225,6 +233,56 @@ def write_about(item: AboutItem) -> str:
     return answer
 
 
+def _daily_cap() -> int:
+    """Read per call, not at import — same reason as api_v1._daily_cap."""
+    return int(os.environ.get("ABOUT_DAILY_CAP") or ABOUT_DAILY_CAP)
+
+
+def _charge(store: DynamoImportStore) -> None:
+    """Count one item against the caller's daily about allowance, or 429.
+
+    charge_deep_pass, re-played on its own counter exactly as haul_offers_api._charge is.
+    Retry-After points at the next UTC midnight, when the counter rolls.
+    """
+    cap = _daily_cap()
+    key = {"PK": store.partition, "SK": "ABOUTCAP"}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    for _ in range(QUOTA_CAS_ATTEMPTS):
+        item = store.table.get_item(Key=key).get("Item")
+        used = int(item.get("usedToday", 0)) if item and item.get("utcDay") == today else 0
+        if used >= int((item or {}).get("cap", cap)):  # per-account override, as on DEEPPASS
+            now = datetime.now(timezone.utc)
+            midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            raise HTTPException(
+                status_code=429, detail="about daily cap reached",
+                headers={"Retry-After": str(max(1, int((midnight - now).total_seconds())))})
+        try:
+            if item is None:
+                store.table.put_item(
+                    Item={**key, "utcDay": today, "usedToday": 1,
+                          "updatedAt": datetime.now(timezone.utc).isoformat()},
+                    ConditionExpression="attribute_not_exists(PK)",
+                )
+            else:
+                store.table.update_item(
+                    Key=key,
+                    UpdateExpression="SET utcDay = :today, usedToday = :used, updatedAt = :now",
+                    ConditionExpression="utcDay = :prevDay AND usedToday = :prevUsed",
+                    ExpressionAttributeValues={
+                        ":today": today, ":used": used + 1,
+                        ":now": datetime.now(timezone.utc).isoformat(),
+                        ":prevDay": item.get("utcDay"),
+                        ":prevUsed": int(item.get("usedToday", 0)),
+                    },
+                )
+        except Exception as error:
+            if _is_conditional_failure(error):
+                continue
+            raise
+        return
+    raise RuntimeError("about cap contention: compare-and-set did not settle")
+
+
 class AboutRequest(BaseModel):
     items: list[AboutItem]
 
@@ -254,13 +312,13 @@ def about(body: AboutRequest, store: DynamoImportStore = Depends(entitled_store)
 
     `entitled_store` rather than `user_store`: this reaches a model, so it is spending, and the
     subscription check is what stops a stranger signing in and spending it. Shape is checked
-    first, so a refused request costs no deep-pass unit; then every item is charged, then the
-    models are called.
+    first, so a refused request costs no unit; then every item is charged, then the models are
+    called.
     """
     items = body.items
     _refuse_bad_shape(items)
     for _ in items:
-        api_v1.charge_deep_pass(store)
+        _charge(store)
 
     try:
         with ThreadPoolExecutor(max_workers=MAX_ITEMS) as pool:

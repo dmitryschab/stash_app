@@ -4,7 +4,7 @@ What these pin is which words reach the model. Speech leads, with the caption an
 summary beside it for when the "speech" is only a song; music gets no lyrics at all; and a save
 with neither is described from its caption, earlier summary and picture. A model that refuses
 instead of answering is replaced by the caption, then the summary. The route's shape and its
-money (a daily deep-pass unit per item, no quota) are the rest.
+money (a unit of its own daily counter per item, no quota) are the rest.
 """
 
 import base64
@@ -114,7 +114,7 @@ def test_image_item_goes_to_vision_model_text_item_to_bedrock(store, chat):
 def test_refuses_zero_and_too_many_items(store, chat, monkeypatch):
     # Room for exactly one full request, so a refusal that had charged anything would show up as
     # a 429 on the request that follows.
-    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", str(about_api.MAX_ITEMS))
+    monkeypatch.setenv("ABOUT_DAILY_CAP", str(about_api.MAX_ITEMS))
     item = {"videoID": "a", "caption": "x"}
     with TestClient(app) as client:
         assert client.post("/v1/about", json={"items": []}).status_code == 422
@@ -126,7 +126,7 @@ def test_refuses_zero_and_too_many_items(store, chat, monkeypatch):
 
 
 def test_refuses_oversized_text_and_image(store, chat, monkeypatch):
-    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "2")
+    monkeypatch.setenv("ABOUT_DAILY_CAP", "2")
     half = about_api.MAX_TEXT_BYTES // 2
     # Bytes, not characters ("я" is two), and all of an item's text together, not field by field.
     at_limit = {"videoID": "a", "transcript": "я" * half}
@@ -143,14 +143,35 @@ def test_refuses_oversized_text_and_image(store, chat, monkeypatch):
 
 
 def test_each_item_charges_the_daily_cap(store, chat, monkeypatch):
-    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "1")
+    monkeypatch.setenv("ABOUT_DAILY_CAP", "1")
     with TestClient(app) as client:
         r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"},
                                                       {"videoID": "b", "caption": "y"}]})
-    assert r.status_code == 429 and r.json()["detail"] == "deep-pass daily cap reached"
+    assert r.status_code == 429 and r.json()["detail"] == "about daily cap reached"
     assert 0 < int(r.headers["retry-after"]) <= 86_400
     # Charged before any model call, so a capped request spends nothing on the model.
     assert chat == []
+
+
+def test_about_has_its_own_daily_counter(store, chat, monkeypatch):
+    """Finding a save again must not compete with reading it: sharing the deep-pass counter let
+    a library's about backfill starve the transcript and on-screen text backfills (and the
+    reverse). A spent deep-pass day leaves /v1/about working, and /v1/about leaves the deep-pass
+    count where it was."""
+    assert about_api.ABOUT_DAILY_CAP == 2000
+    monkeypatch.delenv("ABOUT_DAILY_CAP", raising=False)
+    assert about_api._daily_cap() == 2000
+    monkeypatch.setenv("DEEP_PASS_DAILY_CAP", "1")
+    api_v1.charge_deep_pass(store)
+    deep_key = {"PK": store.partition, "SK": "DEEPPASS"}
+    before = store.table.get_item(Key=deep_key)["Item"]
+
+    with TestClient(app) as client:
+        r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"}] * 3})
+    assert r.status_code == 200
+    assert store.table.get_item(Key=deep_key)["Item"] == before
+    about = store.table.get_item(Key={"PK": store.partition, "SK": "ABOUTCAP"})["Item"]
+    assert about["usedToday"] == 3
 
 
 def test_model_failure_is_a_502(store, monkeypatch):
