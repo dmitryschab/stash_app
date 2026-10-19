@@ -1823,22 +1823,25 @@ final class PipelineCenter {
 
 // MARK: - Embedding backfill
 
-/// Writes `Video.about` for saves that are owed one, in serial batches of 8 (the box's cap), then
-/// fills `Video.embedding` for saves that have none, in serial batches of 32 — the box's own cap.
+/// Writes `Video.about` for saves that are owed one, in serial batches of 8 (the box's cap), and
+/// fills `Video.embedding` for saves that have none, in serial batches of up to 32 — the box's
+/// own cap.
 ///
 /// Its own actor rather than a `PipelineRunner` stage because it shares none of that queue's
 /// problems: nothing here is downloaded, metered or ordered, and the text it writes and embeds
 /// is text the analysis already produced. Off the main actor for the same reason every other
 /// drain is — the fetch is the whole library.
 ///
-/// The about phase runs first so the embed phase has the text it embeds: a fresh about-text
-/// resets `embeddingRevision`, and the same run then embeds it.
+/// Each about batch is embedded as soon as it is written: a fresh about-text resets
+/// `embeddingRevision`, and meaning search has nothing to match a save by until it has a vector
+/// again, so after an update it comes back a batch at a time instead of only once the whole
+/// library has a text. Whatever else is owed a vector is embedded after the about phase.
 ///
-/// In each phase the first failed batch ends that phase rather than counting failures like the
-/// transcript drain: the usual ways these calls fail are "offline", "box down", "signed out" and
-/// a daily limit, and none of them gets better on the next batch. Everything already written is
-/// saved, and the next foreground resumes from there. A failed about phase does not stop the
-/// embed phase, which still runs for the saves that already have a text. The one exception is an
+/// The first failed batch ends that kind of work for the run rather than counting failures like
+/// the transcript drain: the usual ways these calls fail are "offline", "box down", "signed out"
+/// and a daily limit, and none of them gets better on the next batch. Everything already written
+/// is saved, and the next foreground resumes from there. A failed about phase does not stop
+/// embedding, which still runs for the saves that already have a text. The one exception is an
 /// about batch the box refuses over what it holds, which is retried one save at a time (below).
 actor EmbeddingBackfill {
     /// The server rejects a decoded image over this; a cover past it goes text-only instead.
@@ -1863,31 +1866,41 @@ actor EmbeddingBackfill {
         let all = (try? context.fetch(FetchDescriptor<Video>(
             sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
 
-        await writeAbouts(in: all, context: context)
+        // Writes the owed about-texts, embedding each batch as it lands; false once an embed
+        // batch has failed, and then the rest waits for the next run too.
+        guard await writeAbouts(in: all, context: context) else { return }
+        // Everything else owed a vector, newest first: saves whose about-text was written on an
+        // earlier run, or whose vector is from an older embedding revision.
+        _ = await embed(all, context: context)
+    }
 
-        // Newest first, and never a save with nothing written about it yet: a row without an
-        // about-text would cost a round trip to embed the empty string. Filtered after the about
-        // phase, which changes both fields this reads.
-        let pending = all.filter {
+    /// Embeds the saves among `videos` that are owed a vector, in the order given, in the box's
+    /// batches and saved per batch. Never a save with nothing written about it yet: a row without
+    /// an about-text would cost a round trip to embed the empty string. Returns false on the first
+    /// failed batch or when cancelled.
+    private func embed(_ videos: [Video], context: ModelContext) async -> Bool {
+        let pending = videos.filter {
             $0.embeddingRevision < BoxEmbeddingClient.revision && !$0.embeddingText.isEmpty
         }
-
         let batchSize = BoxEmbeddingClient.maxTextsPerRequest
         for start in stride(from: 0, to: pending.count, by: batchSize) {
-            if Task.isCancelled { return }
+            if Task.isCancelled { return false }
             let batch = Array(pending[start..<min(start + batchSize, pending.count)])
-            guard let vectors = try? await embedder.embed(batch.map(\.embeddingText)) else { return }
+            guard let vectors = try? await embedder.embed(batch.map(\.embeddingText)) else { return false }
             for (video, vector) in zip(batch, vectors) {
                 video.embedding = EmbeddingVector.pack(vector)
                 video.embeddingRevision = BoxEmbeddingClient.revision
             }
             try? context.save()
         }
+        return true
     }
 
-    /// The about phase: one box call per batch, saved per batch. Returns on the first failure
-    /// that is not about a particular save, or when cancelled; either way the caller carries on to
-    /// the embed phase, which stops itself if the task was cancelled.
+    /// The about phase: one box call per batch, saved per batch, and each batch embedded as soon
+    /// as it is written. Returns on the first failure that is not about a particular save, or
+    /// when cancelled; either way the caller carries on to embed the rest, which stops itself if
+    /// the task was cancelled. The result is whether embedding is still worth trying this run:
+    /// false once an embed batch has failed.
     ///
     /// Why a failed batch is retried one save at a time: the box charges every item of a request
     /// a daily unit up front and answers 502 for the whole request when the model fails on any
@@ -1898,17 +1911,21 @@ actor EmbeddingBackfill {
     /// every single fails too, or the batch was a single already, nothing tells the saves from a
     /// box that is failing for everyone (a proxy answering 502 mid-restart), so none are skipped
     /// and the phase ends.
-    private func writeAbouts(in all: [Video], context: ModelContext) async {
+    private func writeAbouts(in all: [Video], context: ModelContext) async -> Bool {
         let skip = skipped.withLock { $0 }
-        let pending = AboutBackfill.pending(in: all).filter { !skip.contains($0.videoID) }
+        let pending = AboutBackfill.pending(in: all, hasCover: { Self.cover(of: $0) != nil })
+            .filter { !skip.contains($0.videoID) }
         let batchSize = BoxAboutClient.maxItemsPerRequest
+        var embedding = true
         for start in stride(from: 0, to: pending.count, by: batchSize) {
-            if Task.isCancelled { return }
+            if Task.isCancelled { return embedding }
             let batch = Array(pending[start..<min(start + batchSize, pending.count)])
             let goOn = await write(batch)
             try? context.save()
-            if !goOn { return }
+            if embedding { embedding = await embed(batch, context: context) }
+            if !goOn { return embedding }
         }
+        return embedding
     }
 
     /// Writes one batch, falling back to single saves when the box refuses the batch over what
@@ -1955,14 +1972,16 @@ actor EmbeddingBackfill {
         skipped.withLock { _ = $0.insert(id) }
     }
 
-    /// True for a failure the box gave over what it was sent: any other status or an answer that
-    /// does not fit the request. False for everything that is the same for every save — the box
-    /// unreachable, signed out, the account's limit, the daily cap (429) — and for anything this
-    /// does not recognize, because ending the phase costs nothing and a wrong skip costs a save.
+    /// True for a failure the box gave over what it was sent: a 422 (an item it will not take),
+    /// a 502 (an answer unusable for an item) or an answer that does not fit the request. False
+    /// for everything that is the same for every save — the box unreachable, signed out, the
+    /// account's limit, the daily cap (429), the model's provider throttling or down (503) — and
+    /// for anything this does not recognize, because ending the phase costs nothing and a wrong
+    /// skip costs a save.
     private static func isAboutTheSave(_ error: Error) -> Bool {
         guard let error = error as? BoxError else { return false }
         switch error {
-        case .badResponse(let status): return ![401, 402, 403, 429].contains(status)
+        case .badResponse(let status): return [422, 502].contains(status)
         case .malformedPayload: return true
         case .unreachable: return false
         }
