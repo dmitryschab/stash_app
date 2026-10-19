@@ -5,7 +5,7 @@ library two ways — today's title-and-hashtag scorer and the about-text ranker 
 have no place inside a unit test. So this writes everything the models answer to one JSON file,
 and the test reads only that:
 
-  {"saves":   [{"videoID", "bookmarkedAt", "about", "aboutVector",
+  {"saves":   [{"videoID", "bookmarkedAt", "about", "aboutVector", "aboutVersion",
                 "legacy": {"title", "topics", "caption", "summary", "transcript"},
                 "legacyVector", "aboutMeta"}],
    "queries": [{"query", "vector", "mustAppear", "top3"}]}
@@ -22,9 +22,11 @@ only when it is at most 400 KB), then both texts are embedded by `embeddings_api
 legacy text is the old `Video.embeddingText` — title, topics, summary, caption, transcript[:1000]
 — minus the on-screen text the seed does not have.
 
-Resumable: a save already in --out is skipped, so a run that dies is rerun as is. The query
-vectors are rebuilt on every run from --queries, and `--queries-only` rebuilds nothing else, so
-editing the queries costs twenty embeddings.
+Resumable: a save already in --out is skipped, so a run that dies is rerun as is. Each about-text
+is stamped with a hash of about_api.py's source and the vision model, so changing the prompt
+rebuilds every about-text and its vector on the next run, and nothing else: the legacy text and
+vector never change and are kept. The query vectors are rebuilt on every run given --queries,
+and `--queries-only` rebuilds nothing else, so editing the queries costs twenty embeddings.
 
 Credentials: Bedrock (Gemma, Titan) through the default AWS credentials; the vision model on
 OpenRouter through `clef.openrouter_key()`, i.e. OPENROUTER_API_KEY in the environment.
@@ -33,6 +35,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import inspect
 import json
 import os
 import sys
@@ -88,6 +92,7 @@ class _RecordingRequests:
         except ValueError:
             return meta
         choice = (body.get("choices") or [{}])[0]
+        meta["answer"] = (choice.get("message") or {}).get("content")
         usage = body.get("usage") or {}
         details = usage.get("completion_tokens_details") or {}
         meta.update({
@@ -178,7 +183,13 @@ def retried(call, *args, attempts: int = 4):
             time.sleep(2 ** attempt * 2)
 
 
-def build_save(save: dict, thumbs: Path) -> dict:
+def about_version() -> str:
+    """What an about-text was written by: the prompt and the code around it, and the model."""
+    source = inspect.getsource(about_api) + about_api.ABOUT_VISION_MODEL
+    return hashlib.sha256(source.encode()).hexdigest()[:12]
+
+
+def build_save(save: dict, thumbs: Path, version: str, previous: dict | None) -> dict:
     item, cover = about_item(save, thumbs)
     meta: dict = {}
     misses: list[str] = []
@@ -197,22 +208,30 @@ def build_save(save: dict, thumbs: Path) -> dict:
             meta = RECORDER.last_meta()
 
     about = retried(write)
+    if (meta.get("answer") or "").strip() == about:
+        del meta["answer"]  # kept only when write_about replaced it (a refusal)
     meta["misses"] = misses
     meta["cover"] = cover
     meta["category"] = item.category
-    return {
-        "videoID": save["videoID"],
-        "bookmarkedAt": bookmarked_at(save),
-        "about": about,
-        "aboutVector": retried(_embed, about),
-        "legacy": {
+    if previous:
+        legacy, legacy_vector = previous["legacy"], previous["legacyVector"]
+    else:
+        legacy = {
             "title": row_title(save),
             "topics": save.get("topics") or [],
             "caption": save.get("caption") or "",
             "summary": save.get("summary") or "",
             "transcript": save.get("transcript") or "",
-        },
-        "legacyVector": retried(_embed, legacy_text(save)),
+        }
+        legacy_vector = retried(_embed, legacy_text(save))
+    return {
+        "videoID": save["videoID"],
+        "bookmarkedAt": bookmarked_at(save),
+        "about": about,
+        "aboutVector": retried(_embed, about),
+        "aboutVersion": version,
+        "legacy": legacy,
+        "legacyVector": legacy_vector,
         "aboutMeta": meta,
     }
 
@@ -243,26 +262,35 @@ def main() -> int:
 
     if not args.queries_only:
         seed = json.loads(args.seed.read_text())
-        done = {save["videoID"] for save in cache["saves"]}
+        version = about_version()
+        cached = {save["videoID"]: save for save in cache["saves"]}
         todo = [save for save in seed if not args.only_silent or is_silent(save)]
         if args.limit:
             todo = todo[:args.limit]
-        todo = [save for save in todo if save["videoID"] not in done]
-        print(f"vision model {about_api.ABOUT_VISION_MODEL}; {len(done)} saves cached, "
-              f"{len(todo)} to build", flush=True)
+        todo = [save for save in todo
+                if cached.get(save["videoID"], {}).get("aboutVersion") != version]
+        stale = sum(1 for save in todo if save["videoID"] in cached)
+        print(f"vision model {about_api.ABOUT_VISION_MODEL}, about version {version}; "
+              f"{len(cached)} saves cached, {len(todo)} to build ({stale} about-texts stale)",
+              flush=True)
 
         order = {save["videoID"]: index for index, save in enumerate(seed)}
         failed = 0
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            futures = {pool.submit(build_save, save, args.thumbs): save["videoID"] for save in todo}
+            futures = {
+                pool.submit(build_save, save, args.thumbs, version, cached.get(save["videoID"])):
+                    save["videoID"]
+                for save in todo}
             for count, future in enumerate(as_completed(futures), 1):
                 try:
-                    cache["saves"].append(future.result())
+                    built = future.result()
+                    cached[built["videoID"]] = built
                 except Exception as error:
                     failed += 1
                     print(f"FAILED {futures[future]}: {type(error).__name__}: {error}", flush=True)
                 if count % WORKERS == 0 or count == len(futures):
-                    cache["saves"].sort(key=lambda save: order.get(save["videoID"], len(order)))
+                    cache["saves"] = sorted(
+                        cached.values(), key=lambda save: order.get(save["videoID"], len(order)))
                     write_cache(args.out, cache)
                     print(f"{count}/{len(futures)} built, {failed} failed", flush=True)
 

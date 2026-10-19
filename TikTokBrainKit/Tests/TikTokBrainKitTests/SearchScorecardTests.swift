@@ -95,9 +95,13 @@ final class SearchScorecardTests: XCTestCase {
         var must = 0
         var top3Hits = 0
         var queries = 0
+        /// Results returned across every query: recall bought by returning the whole library
+        /// shows up here.
+        var returned = 0
 
         var recall: Double { must == 0 ? 0 : Double(found) / Double(must) }
         var top3Rate: Double { queries == 0 ? 0 : Double(top3Hits) / Double(queries) }
+        var averageReturned: Double { queries == 0 ? 0 : Double(returned) / Double(queries) }
     }
 
     private struct Row {
@@ -136,10 +140,12 @@ final class SearchScorecardTests: XCTestCase {
             legacy.must += query.mustAppear.count
             legacy.top3Hits += old.top3Hit ? 1 : 0
             legacy.queries += 1
+            legacy.returned += old.returned
             new.found += now.found.count
             new.must += query.mustAppear.count
             new.top3Hits += now.top3Hit ? 1 : 0
             new.queries += 1
+            new.returned += now.returned
 
             let missing = old.found.subtracting(now.found)
             if !missing.isEmpty {
@@ -150,8 +156,9 @@ final class SearchScorecardTests: XCTestCase {
         }
 
         func total(_ score: Score) -> String {
-            String(format: "recall %d/%d = %.3f, top-3 %d/%d = %.3f", score.found, score.must,
-                   score.recall, score.top3Hits, score.queries, score.top3Rate)
+            String(format: "recall %d/%d = %.3f, top-3 %d/%d = %.3f, avg returned %.1f",
+                   score.found, score.must, score.recall, score.top3Hits, score.queries,
+                   score.top3Rate, score.averageReturned)
         }
         print("legacy: \(total(legacy))")
         print("new:    \(total(new))")
