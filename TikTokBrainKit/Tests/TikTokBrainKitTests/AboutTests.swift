@@ -11,12 +11,14 @@ final class AboutTests: XCTestCase {
         _ id: String = "1",
         category: String = Category.recipe.rawValue,
         title: String = "Miso Ramen",
+        caption: String = "ramen night",
         transcript: String? = nil,
         transcribe: StageState? = nil
     ) -> Video {
         let video = Video(videoID: id, url: URL(string: "https://tiktok.com/x/\(id)")!, bookmarkedAt: .now)
         video.categoryRaw = category
         video.title = title
+        video.caption = caption
         video.transcript = transcript
         if let transcribe {
             video.stageStatesJSON = try! JSONEncoder().encode(
@@ -97,6 +99,54 @@ final class AboutTests: XCTestCase {
 
         let pending = AboutBackfill.pending(in: [second, unanalyzed, unavailable, guessed, analyzed])
         XCTAssertEqual(pending.map(\.videoID), ["e", "a"])
+    }
+
+    func testPendingSkipsASaveWithNothingToDescribe() throws {
+        // The box refuses (422) an item with no words its prompt reads and no picture: sent, it
+        // would fail its batch on every drain. Title, topics and hashtags are never sent.
+        let placeholder = "No caption or audio was available for this save."
+        let bare = makeVideo("bare", title: "Saved video", caption: "")
+        let tagsOnly = makeVideo("tags", caption: "#fyp #viral @chef.bob")
+        let placeholderOnly = makeVideo("placeholder", caption: "#fyp")
+        placeholderOnly.summary = "  " + placeholder
+        // A music post's prompt never reads its transcript or summary…
+        let lyricsOnly = makeVideo("lyrics", category: Category.music.rawValue, caption: "",
+                                   transcript: "la la love you", transcribe: .done)
+        lyricsOnly.summary = "A love song."
+        // …and no other post's reads its tracks.
+        let tracksOnly = makeVideo("tracks", caption: "")
+        tracksOnly.musicJSON = try JSONEncoder().encode([MusicPick(kind: .track, title: "Lovesong", artist: "")])
+
+        XCTAssertTrue(AboutBackfill.pending(
+            in: [bare, tagsOnly, placeholderOnly, lyricsOnly, tracksOnly]).isEmpty)
+    }
+
+    func testAnyOneKindOfMaterialMakesASavePending() throws {
+        let spoken = makeVideo("transcript", caption: "", transcript: "we make carbonara", transcribe: .done)
+        let onScreen = makeVideo("ocr", caption: "")
+        onScreen.ocrText = "[1] MENU"
+        let captioned = makeVideo("caption", caption: "ramen @chef.bob #fyp")
+        let summarized = makeVideo("summary", caption: "")
+        summarized.summary = "A bowl of ramen."
+        let tracks = makeVideo("music", category: Category.music.rawValue, caption: "")
+        tracks.musicJSON = try JSONEncoder().encode([MusicPick(kind: .track, title: "Lovesong", artist: "The Cure")])
+
+        let all = [spoken, onScreen, captioned, summarized, tracks]
+        XCTAssertEqual(AboutBackfill.pending(in: all).map(\.videoID), all.map(\.videoID))
+    }
+
+    func testAWordlessSilentSaveIsPendingOnlyWithACoverToSend() {
+        // Its picture is the only material, and only a silent save sends one.
+        let silent = makeVideo("silent", title: "Saved video", caption: "", transcribe: .done)
+        XCTAssertTrue(silent.hasNoSpeech)
+        XCTAssertTrue(AboutBackfill.pending(in: [silent]).isEmpty)
+        XCTAssertTrue(AboutBackfill.pending(in: [silent], hasCover: { _ in false }).isEmpty)
+        XCTAssertEqual(AboutBackfill.pending(in: [silent], hasCover: { _ in true }).map(\.videoID), ["silent"])
+        XCTAssertTrue(AboutItem(video: silent, cover: Data([1])).hasMaterial)
+
+        let unheard = makeVideo("unheard", title: "Saved video", caption: "", transcribe: .failed)
+        XCTAssertTrue(AboutBackfill.pending(in: [unheard], hasCover: { _ in true }).isEmpty,
+                      "a save that is not silent sends no picture, so its cover is no material")
     }
 
     func testPendingDropsAWrittenSave() {

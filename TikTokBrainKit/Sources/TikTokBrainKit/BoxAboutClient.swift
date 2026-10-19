@@ -63,6 +63,29 @@ public struct AboutItem: Encodable, Sendable {
         // An artist the video never named stays unnamed rather than reading "Title by ".
         return picks.map { $0.artist.isEmpty ? $0.title : "\($0.title) by \($0.artist)" }
     }
+
+    /// Whether the box has anything to write from, by its own rule (`has_material` in
+    /// about_api.py), which refuses the whole request (422) over an item without: a picture, or
+    /// words its prompt reads. A music post's prompt never reads its transcript or summary, and
+    /// no other post's reads its tracks; a caption counts without its hashtags and handles, and
+    /// the analyzer's "No caption or audio was available" summary never counts.
+    var hasMaterial: Bool {
+        if image != nil { return true }
+        let caption = caption.replacingOccurrences(
+            of: #"#\w+|@[\w.]+"#, with: "", options: .regularExpression)
+        let texts = category == Category.music.rawValue
+            ? music + [caption, ocrText]
+            : [transcript, ocrText, caption, Self.usable(summary)]
+        return texts.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// The summary the analyzer writes when it had nothing to go on (api_v1's prompt).
+    private static let placeholderSummary = "no caption or audio was available"
+
+    private static func usable(_ summary: String) -> String {
+        summary.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .hasPrefix(placeholderSummary) ? "" : summary
+    }
 }
 
 // MARK: - Queue
@@ -72,10 +95,16 @@ public enum AboutBackfill {
     /// Analyzed, available saves whose text is older than `BoxAboutClient.revision` (or was never
     /// written), in the order given. A save Clef has only guessed a category for has no words
     /// to write from yet, and an unavailable one never will.
-    public static func pending(in videos: [Video]) -> [Video] {
+    ///
+    /// Nor is a save with nothing to describe (`AboutItem.hasMaterial`): the box refuses it, and
+    /// it would fail its batch on every drain. `hasCover` says whether the caller has a cover it
+    /// would send for a save; it is asked only about a silent save with no words, the one kind
+    /// whose picture is its only material.
+    public static func pending(in videos: [Video], hasCover: (Video) -> Bool = { _ in false }) -> [Video] {
         videos.filter {
             $0.aboutRevision < BoxAboutClient.revision
                 && !$0.unavailable && !$0.categoryRaw.isEmpty && !$0.isGuessed
+                && (AboutItem(video: $0, cover: nil).hasMaterial || ($0.hasNoSpeech && hasCover($0)))
         }
     }
 }
@@ -85,8 +114,9 @@ public enum AboutBackfill {
 /// Asks the box to write one about-text per save. Batched because the caller writes a library,
 /// not a sentence: the server caps a request at 8 items, so a backfill sends 8 at a time.
 ///
-/// Moves no quota, but each item spends one of the day's deep-pass units, so the server can
-/// answer 429 — callers treat any failure as "no about-text yet" and leave the save pending.
+/// Moves no quota, but each item spends one unit of the box's daily about counter (its own, not
+/// the deep pass's), so the server can answer 429 — callers treat any failure as "no about-text
+/// yet" and leave the save pending.
 public struct BoxAboutClient: Sendable {
     /// The server's cap, mirrored so the caller batches to it instead of discovering it as a 422.
     public static let maxItemsPerRequest = 8
