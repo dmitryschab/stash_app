@@ -25,8 +25,9 @@ public struct BoxEmbeddingClient: Sendable {
     public static let maxTextsPerRequest = 32
 
     /// Which generation of embeddings a stored vector came from. Bumped when the model or the
-    /// text recipe changes, which is what makes the whole library re-embed.
-    public static let revision = 1
+    /// text recipe changes, which is what makes the whole library re-embed. 2: the text became
+    /// the about-text (`Video.about`) instead of title, topics, caption and transcript.
+    public static let revision = 2
 
     private let config: BoxConfig
     private let session: URLSession

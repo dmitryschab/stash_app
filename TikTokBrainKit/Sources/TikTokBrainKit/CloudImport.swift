@@ -575,6 +575,7 @@ public enum CloudImportResultUpserter {
             if result.unavailable || result.errorCode != nil, video.isGuessed { video.categoryRaw = "" }
             video.unavailable = result.unavailable
             video.cloudAnalysisRevision = result.analysisRevision
+            video.aboutRevision = 0
             video.stageStatesJSON = stageStates(for: result)
             applied += 1
         }

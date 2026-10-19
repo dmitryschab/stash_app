@@ -692,6 +692,71 @@ extension PipelineTests {
         XCTAssertEqual(updated.title, "Miso Ramen")                    // re-analyzed
     }
 
+    func testAnalysisMarksTheAboutStale() async throws {
+        // New analysis changes the words the about-text was written from, so the one stored is
+        // owed a rewrite.
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "about-analysis",
+            url: URL(string: "https://www.tiktok.com/@x/video/about-analysis")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.hashtags = ["recipe"]
+        video.categoryRaw = Category.other.rawValue
+        video.about = "a bowl of ramen"
+        video.aboutRevision = 1
+        context.insert(video)
+        try context.save()
+
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: nil),
+                analyzer: StubAnalyzer(),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        await runner.reanalyzeAll { _, _ in }
+
+        let stored = try XCTUnwrap(fetchVideo("about-analysis", in: container))
+        XCTAssertEqual(stored.aboutRevision, 0)
+    }
+
+    func testTranscriptBackfillMarksTheAboutStale() async throws {
+        // A transcript attempt that finds no speech still changes what the about-text may say
+        // (silence is what lets a save send its picture), so it too leaves the text owed.
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "about-silent",
+            url: URL(string: "https://www.tiktok.com/@x/video/about-silent")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.categoryRaw = Category.other.rawValue
+        video.about = "a bowl of ramen"
+        video.aboutRevision = 1
+        context.insert(video)
+        try context.save()
+
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: nil),
+                analyzer: StubAnalyzer(),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        let result = await runner.backfillTranscripts { _, _ in }
+
+        XCTAssertEqual(result.attempted, 1)
+        let stored = try XCTUnwrap(fetchVideo("about-silent", in: container))
+        XCTAssertEqual(stored.aboutRevision, 0)
+        XCTAssertTrue(stored.hasNoSpeech)
+    }
+
     func testFilmAnalysisPersistsAnExplicitEmptyPickList() async throws {
         let container = try makeContainer()
         let context = ModelContext(container)

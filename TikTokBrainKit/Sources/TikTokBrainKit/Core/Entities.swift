@@ -45,6 +45,13 @@ import SwiftData
     /// Which generation of embeddings `embedding` came from; 0 = none yet. See
     /// `BoxEmbeddingClient.revision`.
     public var embeddingRevision: Int = 0
+    /// What the box wrote about this save: the one text search matches against and embeds, nil
+    /// until `AboutBackfill` reaches it. Optional with a default, so this is a SwiftData
+    /// lightweight migration and an existing library opens unchanged.
+    public var about: String? = nil
+    /// Which generation of about-text `about` is; 0 = owed one. See `BoxAboutClient.revision`.
+    /// Anything that changes the words an about-text is written from sets this back to 0.
+    public var aboutRevision: Int = 0
     public init(videoID: String, url: URL, bookmarkedAt: Date) {
         self.videoID = videoID
         self.url = url
@@ -73,6 +80,8 @@ import SwiftData
         self.cloudAnalysisRevision = 0
         self.embedding = nil
         self.embeddingRevision = 0
+        self.about = nil
+        self.aboutRevision = 0
     }
 }
 
@@ -87,6 +96,13 @@ public extension Video {
     /// found nothing to do.
     var needsTranscript: Bool {
         !unavailable && transcript == nil && stage(.transcribe) != .done
+    }
+
+    /// The transcript was tried and heard nothing: the case where the picture is sent for the
+    /// about-text (`AboutItem.image`). A failed attempt is not silence — the video may well have
+    /// speech — so only a transcribe stage that finished counts.
+    var hasNoSpeech: Bool {
+        !unavailable && (transcript ?? "").isEmpty && stage(.transcribe) == .done
     }
 
     /// The on-screen text backfill's queue, shared with its Settings count the same way.
@@ -109,22 +125,10 @@ public extension Video {
         return (try? JSONDecoder().decode([FilmPick].self, from: filmsJSON)) ?? []
     }
 
-    /// What gets embedded: everything the analysis produced, then as much of the raw text as is
-    /// worth paying for.
+    /// What gets embedded: the about-text the box wrote, and nothing else.
     ///
-    /// The transcript and OCR text are truncated because they are the long ones and the front of
-    /// them is the part about the video — a five-minute transcript's tail is outro and sign-off,
-    /// and it would crowd the title and topics out of one 256-dimension vector.
-    var embeddingText: String {
-        [
-            title,
-            topics.joined(separator: " "),
-            summary,
-            caption,
-            String((transcript ?? "").prefix(1000)),
-            String((ocrText ?? "").prefix(500)),
-        ]
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n")
-    }
+    /// Title, topics and hashtags are the creator's words for reach rather than for what the
+    /// video is, so they no longer reach the vector. A save with no about-text yet is empty
+    /// here, which the embedding drain already skips.
+    var embeddingText: String { about ?? "" }
 }

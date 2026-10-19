@@ -169,25 +169,6 @@ final class EmbeddingSearchTests: XCTestCase {
 
     // MARK: Embed text
 
-    func testTheEmbedTextCarriesTheAnalysisAndTruncatesTheLongFields() {
-        let video = Video(videoID: "1", url: URL(string: "https://tiktok.com/x")!, bookmarkedAt: .now)
-        video.title = "Miso Ramen"
-        video.topics = ["ramen", "noodles"]
-        video.summary = "A quick miso ramen."
-        video.caption = "POV miso ramen"
-        // Letters that appear in none of the fields above, so the counts below are the slices.
-        video.transcript = String(repeating: "x", count: 5000)
-        video.ocrText = String(repeating: "z", count: 5000)
-
-        let text = video.embeddingText
-        XCTAssertTrue(text.contains("Miso Ramen"))
-        XCTAssertTrue(text.contains("ramen noodles"))
-        XCTAssertTrue(text.contains("A quick miso ramen."))
-        XCTAssertTrue(text.contains("POV miso ramen"))
-        XCTAssertEqual(text.filter { $0 == "x" }.count, 1000)
-        XCTAssertEqual(text.filter { $0 == "z" }.count, 500)
-    }
-
     func testAnUnanalyzedSaveHasNothingToEmbed() {
         // The backfill skips these rather than sending the box a blank string per video.
         let video = Video(videoID: "1", url: URL(string: "https://tiktok.com/x")!, bookmarkedAt: .now)

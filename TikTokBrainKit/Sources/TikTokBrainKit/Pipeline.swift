@@ -373,6 +373,9 @@ public actor PipelineRunner {
         var stages = stageStates(video)
         stages[PipelineStage.transcribe.rawValue] = .done
         store(stages, on: video)
+        // A finished attempt changes what the about-text is written from, even when it heard
+        // nothing: silence is what lets a save send its picture.
+        video.aboutRevision = 0
 
         guard let fetched, !fetched.isEmpty else {
             try? context.save()
@@ -618,6 +621,7 @@ public actor PipelineRunner {
         video.title = analysis.title
         video.summary = analysis.summary
         video.topics = analysis.topics
+        video.aboutRevision = 0
 
         let encoder = JSONEncoder()
         if analysis.category == .film, analysis.hasFilmPayload {

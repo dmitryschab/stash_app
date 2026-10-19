@@ -305,6 +305,23 @@ final class CloudImportTests: XCTestCase {
         XCTAssertEqual(video.title, "Newest")
     }
 
+    func testAppliedCloudResultMarksTheAboutStale() throws {
+        let container = try ModelContainer(for: Video.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let video = Video(videoID: "1", url: URL(string: "https://www.tiktok.com/@x/video/1")!,
+                          bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.about = "a bowl of ramen"
+        video.aboutRevision = 1
+        context.insert(video)
+        try context.save()
+
+        let applied = try CloudImportResultUpserter.apply([
+            CloudImportResult(videoID: "1", analysisRevision: 1, category: "recipe", title: "Miso Ramen")], to: context)
+
+        XCTAssertEqual(applied, 1)
+        XCTAssertEqual(video.aboutRevision, 0)
+    }
+
     /// A retried save comes back at the revision its failure was stored with — the box stamps
     /// both with the current one — so "strictly newer" alone would drop the success on the floor.
     func testResultUpsertLetsASameRevisionSuccessReplaceAFailure() throws {
