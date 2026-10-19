@@ -458,6 +458,9 @@ public actor PipelineRunner {
             // recorded as a single frame, which is what it is.
             let marked = recognized.hasPrefix(FrameReader.frameMarker) ? recognized : "[1] " + recognized
             video.ocrText = marked
+            // The about-text is written from the on-screen text too, so it is owed a rewrite
+            // even when the re-analysis below fails and leaves everything else as it was.
+            video.aboutRevision = 0
             let meta = VideoMeta(caption: video.caption, hashtags: video.hashtags,
                                  author: video.author, thumbnailURL: video.thumbnailURL)
             if let analysis = try? await deps.analyzer.analyze(
@@ -510,6 +513,9 @@ public actor PipelineRunner {
         }
         video.musicJSON = try? JSONEncoder().encode(kept)
         video.trackJSON = nil
+        // A music post's about-text is written from its tracks; one that just changed leaves it
+        // owed a rewrite, as re-analysis does.
+        video.aboutRevision = 0
     }
 
     /// Videos claimed by an in-flight worker; actor isolation makes claiming atomic.

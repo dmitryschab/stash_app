@@ -757,6 +757,87 @@ extension PipelineTests {
         XCTAssertTrue(stored.hasNoSpeech)
     }
 
+    func testOnScreenTextMarksTheAboutStaleEvenWhenTheReanalysisFails() async throws {
+        // The about-text is written from the on-screen text too, so text landing is a change to
+        // it whether or not the analyzer then gets to run.
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let video = Video(
+            videoID: "about-ocr",
+            url: URL(string: "https://www.tiktok.com/@x/video/about-ocr")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        video.categoryRaw = Category.other.rawValue
+        video.about = "a man in a lift"
+        video.aboutRevision = 1
+        context.insert(video)
+        try context.save()
+
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: nil),
+                analyzer: FailingAnalyzer(),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        let result = await runner.backfillVisualText(
+            deepPass: { _, _ in DeepPass(visualText: "PRIVATE CHEF") }, progress: { _, _ in })
+
+        XCTAssertEqual(result.filled, 1)
+        let stored = try XCTUnwrap(fetchVideo("about-ocr", in: container))
+        XCTAssertEqual(stored.ocrText, "[1] PRIVATE CHEF")
+        XCTAssertEqual(stored.title, "", "the analyzer failed, so nothing else changed")
+        XCTAssertEqual(stored.aboutRevision, 0)
+    }
+
+    func testAShazamMatchMarksTheAboutStale() async throws {
+        // A music post's about-text is written from its tracks, so a pick that gains an artist
+        // after the about was written leaves it owed a rewrite. A match that changes nothing
+        // leaves it alone.
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let filled = Video(
+            videoID: "about-shazam",
+            url: URL(string: "https://www.tiktok.com/@x/video/about-shazam")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 2))
+        let unchanged = Video(
+            videoID: "about-shazam-same",
+            url: URL(string: "https://www.tiktok.com/@x/video/about-shazam-same")!,
+            bookmarkedAt: Date(timeIntervalSince1970: 1))
+        for (video, artist) in [(filled, ""), (unchanged, "Someone Else")] {
+            video.categoryRaw = Category.music.rawValue
+            video.musicJSON = try JSONEncoder().encode(
+                [MusicPick(kind: .track, title: "Polaris", artist: artist)])
+            video.about = "Electronic music."
+            video.aboutRevision = 1
+            context.insert(video)
+        }
+        try context.save()
+
+        let runner = PipelineRunner(
+            deps: PipelineDeps(
+                enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+                media: StubMedia(bundle: MediaBundle(audioFileURL: nil, keyframes: [])),
+                transcriber: StubTranscriber(transcript: nil),
+                analyzer: FailingAnalyzer(),
+                musicResolver: StubMusicResolver(link: nil),
+                ocr: { _ in "" }),
+            container: container)
+
+        _ = await runner.backfillVisualText(deepPass: { _, _ in
+            DeepPass(audioMatch: AudioMatch(title: "Polaris", artist: "KMC"))
+        }) { _, _ in }
+
+        let stored = try XCTUnwrap(fetchVideo("about-shazam", in: container))
+        let picks = try JSONDecoder().decode([MusicPick].self, from: XCTUnwrap(stored.musicJSON))
+        XCTAssertEqual(picks.map(\.artist), ["KMC"])
+        XCTAssertEqual(stored.aboutRevision, 0)
+        let same = try XCTUnwrap(fetchVideo("about-shazam-same", in: container))
+        XCTAssertEqual(same.aboutRevision, 1)
+    }
+
     func testFilmAnalysisPersistsAnExplicitEmptyPickList() async throws {
         let container = try makeContainer()
         let context = ModelContext(container)
@@ -898,6 +979,12 @@ private final class ProgressRecorder: @unchecked Sendable {
     func record(_ done: Int, _ total: Int) {
         lock.lock(); defer { lock.unlock() }
         storage.append((done, total))
+    }
+}
+
+private struct FailingAnalyzer: Analyzing {
+    func analyze(meta: VideoMeta, transcript: String?, ocrText: String?) async throws -> Analysis {
+        throw StubError.enrichFailed
     }
 }
 
