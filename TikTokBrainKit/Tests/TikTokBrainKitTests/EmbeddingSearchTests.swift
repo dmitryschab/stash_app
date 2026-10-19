@@ -1,9 +1,9 @@
 import XCTest
 @testable import TikTokBrainKit
 
-/// The arithmetic behind "Meaning, not just keywords": what a vector survives on its way into
-/// SwiftData and back, what cosine says about two of them, and the blend that turns three
-/// unrelated numbers into one ranking.
+/// The meaning half of search: what a vector survives on its way into SwiftData and back, what
+/// cosine says about two of them, the client that fetches them from the box, and the text a
+/// save is embedded from.
 final class EmbeddingSearchTests: XCTestCase {
 
     // MARK: Pack / unpack
@@ -51,39 +51,6 @@ final class EmbeddingSearchTests: XCTestCase {
         XCTAssertEqual(EmbeddingVector.cosine([1, 0, 0], [1, 0]), 0)
         XCTAssertEqual(EmbeddingVector.cosine([], []), 0)
         XCTAssertEqual(EmbeddingVector.cosine([0, 0], [1, 1]), 0)
-    }
-
-    // MARK: Blend
-
-    func testTheBlendIsSixtyFiveThirtyFive() {
-        XCTAssertEqual(SearchBlend.semanticWeight
-                        + SearchBlend.lexicalWeight
-                        + SearchBlend.recencyWeight, 1, accuracy: 1e-9)
-        XCTAssertEqual(SearchBlend.score(cosine: 1, lexical: 1, recency: 1), 1, accuracy: 1e-9)
-        XCTAssertEqual(SearchBlend.score(cosine: 0, lexical: 0, recency: 0), 0)
-        XCTAssertEqual(SearchBlend.score(cosine: 1, lexical: 0, recency: 0), 0.65, accuracy: 1e-9)
-        XCTAssertEqual(SearchBlend.score(cosine: 0, lexical: 1, recency: 0), 0.30, accuracy: 1e-9)
-        XCTAssertEqual(SearchBlend.score(cosine: 0, lexical: 0, recency: 1), 0.05, accuracy: 1e-9)
-    }
-
-    func testMeaningBeatsAWordMatchOnSomethingOlder() {
-        // The whole promise of the feature: a save that says the same thing in other words wins
-        // over one that happens to share a token.
-        let meaning = SearchBlend.score(cosine: 0.9, lexical: 0, recency: 0)
-        let keyword = SearchBlend.score(cosine: 0, lexical: 1, recency: 1)
-        XCTAssertGreaterThan(meaning, keyword)
-    }
-
-    func testRecencyOnlyBreaksTies() {
-        // 0.05 is deliberately too small to move anything on its own: a newer save wins only
-        // against an equally good older one.
-        let newerButWeaker = SearchBlend.score(cosine: 0.5, lexical: 0.5, recency: 1)
-        let olderButStronger = SearchBlend.score(cosine: 0.6, lexical: 0.5, recency: 0)
-        XCTAssertGreaterThan(olderButStronger, newerButWeaker)
-
-        let newer = SearchBlend.score(cosine: 0.5, lexical: 0.5, recency: 1)
-        let older = SearchBlend.score(cosine: 0.5, lexical: 0.5, recency: 0)
-        XCTAssertGreaterThan(newer, older)
     }
 
     // MARK: Client

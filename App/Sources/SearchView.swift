@@ -1,15 +1,14 @@
 // SearchView.swift
 //
 // Search has no tab. Hold the pill, push right, and the pill itself becomes the field
-// (StashTabBar); what opens above it is `SearchOverlay`: one list over everything the pipeline
-// extracted — titles, captions, summaries, transcripts, OCR text, topics — with a per-result
-// match strength and the field that matched.
+// (StashTabBar); what opens above it is `SearchOverlay`: one list of the saves that match by
+// what they are about — `Video.about`, what the video says and shows — each row showing that
+// line so it is plain why the save is there.
 //
-// Meaning, not just keywords, and now literally: every keystroke runs the lexical scorer, and
-// four hundred milliseconds after the typing stops the query goes to the box for an embedding
-// and the two are blended (`SearchBlend`). The lexical half is never switched off — it is what
-// answers offline, what answers while the box is thinking, and what answers for a save the
-// embedding backfill has not reached yet.
+// The ranking is the Kit's `SearchIndex`. Four hundred milliseconds after the typing stops the
+// query goes to the box for an embedding; once that lands, fails, or runs out of time, the
+// query is ranked once and that list is final. Nothing re-sorts under the reader's thumb: while
+// the next query settles, the last final list stays where it is under one "Searching…" line.
 //
 // `SearchGrip` is the gesture arithmetic and `SearchSuggestions` is what an empty field offers
 // — this library's own most-used topics, under the queries that already went somewhere. Both
@@ -58,9 +57,10 @@ struct SearchOverlay: View {
     @Query(sort: \Video.bookmarkedAt, order: .reverse) private var videos: [Video]
 
     /// The current query's vector, or nil while it is being typed, being fetched, or unavailable.
-    /// Nil is not an error state — it is the lexical-only mode the whole screen degrades to.
+    /// Nil is not an error state — it is the word-only mode the whole screen degrades to.
     @State private var queryEmbedding: [Float]?
-    /// The query whose embedding attempt has finished — succeeded, failed or come back empty.
+    /// The query whose embedding attempt has finished — succeeded, failed, come back empty or
+    /// run out of time. Ranking waits for this stamp to match the field.
     /// A plain in-flight Bool raced: a cancelled run resumes after its replacement has already
     /// started, and clears the flag the new run just set. A query stamp cannot, because only
     /// the run that owns the query writes it.
@@ -70,13 +70,14 @@ struct SearchOverlay: View {
     /// string because `@AppStorage` has no array of strings and five queries do not want a file.
     @AppStorage("recentSearches") private var recentSearchesRaw = ""
 
-    /// The library flattened for scoring, and the last scoring over it. Both are filled off the
-    /// main thread; a render only maps ids back onto rows.
+    /// The library flattened for ranking, and the last final ranking over it. Both are filled off
+    /// the main thread; a render only maps ids back onto rows. `finalMatches` and `finalQuery`
+    /// are only ever written together, so the rows on screen are always one query's whole answer.
     @Environment(\.modelContext) private var context
     @State private var index: [SearchEntry] = []
     @State private var indexRevision = 0
-    @State private var scored: [SearchMatch] = []
-    @State private var scoredQuery = ""
+    @State private var finalMatches: [SearchMatch] = []
+    @State private var finalQuery = ""
 
     var body: some View {
         NavigationStack {
@@ -85,7 +86,7 @@ struct SearchOverlay: View {
                     StashHeader(title: "Search", trailing: "\(videos.count) saves")
                         .padding(.top, 8)
 
-                    Micro(text: "Meaning, not just keywords", size: 10, tracking: 1.8)
+                    Micro(text: "By what's said and shown", size: 10, tracking: 1.8)
                         .padding(.top, 14)
 
                     if videos.isEmpty {
@@ -93,11 +94,11 @@ struct SearchOverlay: View {
                     } else if trimmedQuery.isEmpty {
                         suggestions.padding(.top, 22)
                     } else {
-                        // The answer is only final once the scorer has caught up with the
-                        // field, the index exists, and the meaning half has landed. Until
-                        // then the rows below are a first pass, and the line above says so.
-                        if let label = settlingLabel { settlingRow(label).padding(.top, 14) }
-                        if results.isEmpty, !isSettling {
+                        // Rows are only ever a final answer. While the field is ahead of it,
+                        // the last answer stays put under one "Searching…" line rather than
+                        // being re-sorted or blanked; a first query has nothing to keep.
+                        if !isSettled { searchingRow.padding(.top, 14) }
+                        if isSettled, results.isEmpty {
                             Text("No saves matched.")
                                 .font(.archivo(14, .semibold))
                                 .foregroundStyle(Color.stashInk.opacity(0.62))
@@ -115,8 +116,9 @@ struct SearchOverlay: View {
             .toolbar(.hidden, for: .navigationBar)
             .task(id: trimmedQuery) { await embedQuery() }
             .task(id: videos.count) { await rebuildIndex() }
-            .task(id: ScoreKey(query: trimmedQuery, embedding: queryEmbedding, index: indexRevision)) {
-                await rescore()
+            .task(id: RankKey(query: trimmedQuery, settled: embeddedQuery == trimmedQuery,
+                              index: indexRevision)) {
+                await rank()
             }
         }
     }
@@ -127,8 +129,8 @@ struct SearchOverlay: View {
     /// `.task(id:)` cancels and restarts this on every change, which is the whole debounce.
     ///
     /// Every failure path ends in `queryEmbedding == nil` and nothing else: offline, box down,
-    /// session expired, budget spent. Search then answers exactly as it did before this existed.
-    /// A search field that apologises is worse than one that just answers.
+    /// session expired, budget spent. Search then answers on words alone and says nothing about
+    /// it. A search field that apologises is worse than one that just answers.
     private func embedQuery() async {
         let text = trimmedQuery
         queryEmbedding = nil
@@ -139,11 +141,10 @@ struct SearchOverlay: View {
 
         let client = BoxEmbeddingClient(config: PipelineCenter.currentConfig())
         // The Kit gives this request 30 seconds (`boxRequestTimeout`), plus a 401 refresh
-        // retry on top — far too long to sit on a verdict the lexical half already has. The
-        // deadline stamps the same query the run itself would stamp, so a late answer is
-        // still applied and still rescores; only the waiting stops.
+        // retry on top — far too long to hold a list back for. The deadline stamps the query
+        // settled with no vector, which ranks it on words alone and makes that answer final.
         // ponytail: a fixed 6 s, not a measured p95 of the box. It is the number that keeps
-        // "No saves matched." honest on a working box and unblocked on a hung one.
+        // "Searching…" short on a hung box without giving up on a slow working one.
         let deadline = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             guard !Task.isCancelled else { return }
@@ -153,8 +154,11 @@ struct SearchOverlay: View {
 
         let vectors = try? await client.embed([text])
         guard !Task.isCancelled else { return }
+        // Too late: the deadline already settled this query and its word-only list is on
+        // screen as final. Ranking it again with the vector would re-sort it under the reader.
+        guard embeddedQuery != text else { return }
         queryEmbedding = vectors?.first
-        // Settled either way: a nil vector is the lexical-only answer, not a pending one.
+        // Settled either way: a nil vector is the word-only answer, not a pending one.
         embeddedQuery = text
     }
 
@@ -164,38 +168,15 @@ struct SearchOverlay: View {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Why the rows on screen are still provisional, or nil once they are the answer. Three
-    /// waits, two of which the user has no reason to tell apart: the scorer catching up with
-    /// the field and the index being built are both just "searching", while the round trip to
-    /// the box is the one worth naming — it is the wait that can add results after a screen
-    /// has already settled into looking empty.
-    ///
-    /// All three used to read as "No saves matched." — an answer, and a wrong one, for the
-    /// second or so an index build plus a 400 ms debounce plus a round trip takes. A
-    /// meaning-only hit (no word in common) arrives on exactly that last step.
-    private var settlingLabel: String? {
-        guard !trimmedQuery.isEmpty else { return nil }
-        if scoredQuery != trimmedQuery || index.isEmpty { return "Searching…" }
-        if embeddedQuery != trimmedQuery { return "Also checking by meaning…" }
-        return nil
-    }
+    /// The rows on screen are this query's answer rather than the last one's.
+    private var isSettled: Bool { finalQuery == trimmedQuery }
 
-    private var isSettling: Bool { settlingLabel != nil }
-
-    private struct Hit: Identifiable {
-        let video: Video
-        let score: Double
-        let matchedIn: String
-        var id: String { video.videoID }
-        /// The badge. Same arithmetic the lexical-only scorer always used, so a keystroke result
-        /// still reads exactly as it did; 20 is the floor because "3%" reads as a bug.
-        var percent: Int { max(20, min(98, Int(score * 98))) }
-    }
-
-    /// What a scoring run is keyed on: the query, its vector, and which build of the index.
-    private struct ScoreKey: Equatable {
+    /// What a ranking run is keyed on: the query, whether its embedding attempt is over, and
+    /// which build of the index. The vector is not in it: it is written in the same step as the
+    /// stamp, and never after.
+    private struct RankKey: Equatable {
         let query: String
-        let embedding: [Float]?
+        let settled: Bool
         let index: Int
     }
 
@@ -204,7 +185,8 @@ struct SearchOverlay: View {
     /// decodes and an unpacked vector for every save — ~100 ms on an 855-save library, which
     /// is the lag this replaces.
     /// ponytail: rebuilt when the count moves, the one signal that is free to read per render;
-    /// a save re-analyzed while the overlay is open keeps its old text until it is reopened.
+    /// a save re-analyzed while the overlay is open keeps its old text until it is reopened, and
+    /// a list already on screen is not re-ranked for a new build — the next query sees it.
     private func rebuildIndex() async {
         let container = context.container
         let built = await Task.detached(priority: .userInitiated) {
@@ -218,29 +200,34 @@ struct SearchOverlay: View {
         indexRevision += 1
     }
 
-    /// Scores the index off the main thread. `.task(id:)` cancels the previous keystroke's
-    /// run, and a result that lands after cancellation is dropped rather than shown late.
-    private func rescore() async {
-        let entries = index, query = trimmedQuery, embedding = queryEmbedding
-        guard !query.isEmpty, !entries.isEmpty else {
-            scored = []
-            scoredQuery = query
+    /// Ranks the index off the main thread, once per query and only once the query has settled:
+    /// its embedding attempt is over and the index has been built. That one ranking is the list,
+    /// and nothing ranks the same query again while it is on screen — which is what keeps rows
+    /// from jumping. `.task(id:)` cancels a run whose query moved on, and its result is dropped
+    /// rather than shown late.
+    private func rank() async {
+        let query = trimmedQuery
+        guard !query.isEmpty else {
+            // An empty field ends the search: the next query is a first one again, shown as
+            // "Searching…" alone rather than over an older query's rows.
+            finalMatches = []
+            finalQuery = ""
             return
         }
+        guard embeddedQuery == query, indexRevision > 0, finalQuery != query else { return }
+        let entries = index, embedding = queryEmbedding
         let result = await Task.detached(priority: .userInitiated) {
-            SearchIndex.score(entries, query: query, embedding: embedding)
+            SearchIndex.rank(entries, query: query, embedding: embedding)
         }.value
         guard !Task.isCancelled else { return }
-        scored = result
-        scoredQuery = query
+        finalMatches = result
+        finalQuery = query
     }
 
-    /// The scored ids back onto the live rows. A save deleted since it was scored drops out.
-    private var results: [Hit] {
+    /// The ranked ids back onto the live rows. A save deleted since it was ranked drops out.
+    private var results: [Video] {
         let byID = Dictionary(videos.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
-        return scored.compactMap { match in
-            byID[match.videoID].map { Hit(video: $0, score: match.score, matchedIn: match.matchedIn) }
-        }
+        return finalMatches.compactMap { byID[$0.videoID] }
     }
 
     // MARK: - Pieces
@@ -251,21 +238,21 @@ struct SearchOverlay: View {
         StashEmptyState(
             symbol: "magnifyingglass",
             title: "Nothing to search yet",
-            message: "Import your favorites and Stash indexes every caption, transcript and on-screen word."
+            message: "Import your favorites and Stash reads what each video says and shows."
         )
     }
 
-    /// The one line the screen shows while it is still working. No percentage, no stage name —
-    /// the results underneath are already usable, this only says more may arrive.
-    private func settlingRow(_ label: String) -> some View {
+    /// The one line the screen shows while a query settles. No number, no stage name — any
+    /// rows under it are the last query's answer, held still until this one's is ready.
+    private var searchingRow: some View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.mini)
                 .tint(.stashInk.opacity(0.62))
-            Micro(text: label, size: 10, tracking: 1.4)
+            Micro(text: "Searching…", size: 10, tracking: 1.4)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label.replacingOccurrences(of: "…", with: ""))
+        .accessibilityLabel("Searching")
     }
 
     /// What an empty field offers: the queries that went somewhere, then the words this library
@@ -305,20 +292,20 @@ struct SearchOverlay: View {
             if recents.isEmpty, topics.isEmpty {
                 // A library with saves but no topics yet — say what the field reaches rather
                 // than leaving the screen blank under its own title.
-                Micro(text: "Search titles, captions, transcripts and on-screen words",
-                      size: 10, tracking: 1.2)
+                Micro(text: "Search what your saves say and show", size: 10, tracking: 1.2)
             }
         }
     }
 
     private var resultRows: some View {
         VStack(spacing: 0) {
-            ForEach(results) { hit in
-                NavigationLink { VideoDetailView(video: hit.video) } label: { resultRow(hit) }
+            ForEach(results, id: \.videoID) { video in
+                NavigationLink { VideoDetailView(video: video) } label: { resultRow(video) }
                     .buttonStyle(.plain)
-                    // A query is worth keeping once it led somewhere. Simultaneous rather than
-                    // `onTapGesture`, which would eat the link's own tap.
-                    .simultaneousGesture(TapGesture().onEnded { recordSearch(trimmedQuery) })
+                    // A query is worth keeping once it led somewhere — the query these rows
+                    // answer, which while "Searching…" shows is not the one in the field.
+                    // Simultaneous rather than `onTapGesture`, which would eat the link's own tap.
+                    .simultaneousGesture(TapGesture().onEnded { recordSearch(finalQuery) })
                 Divider().overlay(Color.stashInk.opacity(0.12))
             }
         }
@@ -340,160 +327,27 @@ struct SearchOverlay: View {
         recentSearchesRaw = kept.prefix(5).joined(separator: "\n")
     }
 
-    private func resultRow(_ hit: Hit) -> some View {
-        let strong = hit.percent >= 80
-        return HStack(spacing: 12) {
-            Thumbnail(url: hit.video.thumbnailURL, category: hit.video.category, size: 44)
+    private func resultRow(_ video: Video) -> some View {
+        HStack(spacing: 12) {
+            Thumbnail(url: video.thumbnailURL, category: video.category, size: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text(hit.video.rowTitle)
+                Text(video.rowTitle)
                     .font(.archivo(16, .bold))
                     .foregroundStyle(Color.stashInk)
                     .lineLimit(1)
-                Text("matched: \(hit.matchedIn)")
-                    .font(.archivo(12.5))
-                    .foregroundStyle(Color.stashInk.opacity(0.55))
-                    .lineLimit(1)
+                // What the save is about, so it is plain why it is here. A save still waiting
+                // for its about-text shows its title alone.
+                if let about = video.about, !about.isEmpty {
+                    Text(about)
+                        .font(.archivo(12.5))
+                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
-            Micro(text: "\(hit.percent)%", size: 9.5, tracking: 1.1, color: strong ? (hit.video.category?.color ?? .stashInk) : .stashInk.opacity(0.62))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule().strokeBorder(
-                        strong ? (hit.video.category?.color ?? .stashInk) : Color.stashInk.opacity(0.35),
-                        lineWidth: 1.2
-                    )
-                )
         }
         .padding(.vertical, 13)
     }
-}
-
-/// One save flattened for scoring off the main thread: every lexical field already lowercased,
-/// the vector already unpacked, the row title already decided.
-struct SearchEntry: Sendable {
-    let videoID: String
-    let bookmarkedAt: Date
-    /// (field label, lowercased text, weight) — title matches count double.
-    let fields: [(label: String, text: String, weight: Double)]
-    let embedding: [Float]?
-}
-
-struct SearchMatch: Sendable {
-    let videoID: String
-    let score: Double
-    let matchedIn: String
-}
-
-/// The scorer, as a pure function over `SearchEntry` so it can run anywhere and be checked.
-enum SearchIndex {
-    /// Caller's context: the model objects are read here and nowhere else.
-    static func build(_ videos: [Video]) -> [SearchEntry] {
-        videos.map { video in
-            SearchEntry(
-                videoID: video.videoID,
-                bookmarkedAt: video.bookmarkedAt,
-                fields: [
-                    ("title", video.rowTitle.lowercased(), 2),
-                    ("topics", video.topics.joined(separator: " ").lowercased(), 1.5),
-                    ("caption", video.caption.lowercased(), 1),
-                    ("summary", video.summary.lowercased(), 1),
-                    ("transcript", (video.transcript ?? "").lowercased(), 1),
-                    ("on-screen text", (video.ocrText ?? "").lowercased(), 1),
-                ],
-                embedding: video.embedding.map(EmbeddingVector.unpack).flatMap { $0.isEmpty ? nil : $0 })
-        }
-    }
-
-    /// Token overlap across the extracted fields, weighted by field quality, blended with cosine
-    /// distance to the query's embedding once there is one.
-    ///
-    /// The lexical half is unchanged and unconditional: it is what runs per keystroke, what runs
-    /// offline, and what runs for a save the embedding backfill has not reached — a library
-    /// mid-backfill has to stay searchable, not half-searchable. Only a save that has a vector
-    /// gets the blend, which is why one without keeps its lexical-only score rather than being
-    /// pushed down by a semantic term it cannot score. `entries` are newest first.
-    static func score(_ entries: [SearchEntry], query: String, embedding: [Float]?) -> [SearchMatch] {
-        let tokens = query.lowercased().split(separator: " ").map(String.init)
-        guard !tokens.isEmpty else { return [] }
-        let oldest = entries.last?.bookmarkedAt ?? .distantPast
-        let newest = entries.first?.bookmarkedAt ?? .distantPast
-
-        return entries.compactMap { entry in
-            var raw = 0.0
-            var matchedIn: String?
-            for field in entry.fields {
-                let hits = tokens.filter { field.text.contains($0) }
-                if !hits.isEmpty {
-                    raw += Double(hits.count) * field.weight
-                    if matchedIn == nil { matchedIn = field.label }
-                }
-            }
-            // The normalization the percent badge always applied, named because the blend
-            // needs it as a 0...1 term rather than as a badge.
-            let lexical = min(1, raw / (Double(tokens.count) * 2))
-
-            guard let embedding, let stored = entry.embedding else {
-                guard let matchedIn else { return nil }
-                return SearchMatch(videoID: entry.videoID, score: lexical, matchedIn: matchedIn)
-            }
-
-            let cosine = EmbeddingVector.cosine(embedding, stored)
-            let meaning = cosine >= SearchBlend.meaningFloor
-            // A save has to have matched a word or come close enough in meaning; otherwise the
-            // blend's recency term alone would return the entire library for every query.
-            guard matchedIn != nil || meaning else { return nil }
-            let reason: String
-            switch (matchedIn, meaning) {
-            case (let field?, true): reason = "meaning and \(field)"
-            case (let field?, false): reason = field
-            case (nil, _): reason = "meaning"
-            }
-            return SearchMatch(
-                videoID: entry.videoID,
-                score: SearchBlend.score(cosine: cosine, lexical: lexical,
-                                         recency: recency(of: entry.bookmarkedAt, oldest: oldest, newest: newest)),
-                matchedIn: reason)
-        }
-        .sorted { $0.score > $1.score }
-    }
-
-    /// Recency as 0...1 across the library's own span: the oldest save scores 0, the newest 1.
-    /// Relative rather than absolute, so a library imported last month and one imported three
-    /// years ago both get a usable tie-breaker out of the blend's smallest term.
-    private static func recency(of date: Date, oldest: Date, newest: Date) -> Double {
-        let span = newest.timeIntervalSince(oldest)
-        guard span > 0 else { return 1 }
-        return min(1, max(0, date.timeIntervalSince(oldest) / span))
-    }
-
-    #if DEBUG
-    /// The ranking is no longer something a keystroke can be watched doing, so it gets the same
-    /// launch-time check as the grip arithmetic.
-    static func selfTest() -> Bool {
-        func entry(_ id: String, title: String, caption: String = "", embedding: [Float]? = nil,
-                   at: TimeInterval) -> SearchEntry {
-            SearchEntry(videoID: id, bookmarkedAt: Date(timeIntervalSince1970: at),
-                        fields: [("title", title, 2), ("caption", caption, 1)], embedding: embedding)
-        }
-        let entries = [
-            entry("caption", title: "weekend plans", caption: "sourdough bread", at: 300),
-            entry("title", title: "sourdough bread", at: 200),
-            entry("meaning", title: "levain", embedding: [1, 0], at: 100),
-            entry("far", title: "tax return", embedding: [0, 1], at: 0),
-        ]
-        let lexical = score(entries, query: "Bread", embedding: nil)
-        let blended = score(entries, query: "bread", embedding: [1, 0])
-        let ids = blended.map(\.videoID)
-        return score(entries, query: "", embedding: nil).isEmpty
-            && score(entries, query: "zzz", embedding: nil).isEmpty
-            && lexical.map(\.videoID) == ["title", "caption"]           // a title hit outranks a caption hit
-            && lexical.first?.matchedIn == "title"
-            && ids == ["title", "meaning", "caption"]                     // close in meaning, no word in common
-            && blended[1].matchedIn == "meaning"
-            && zip(blended, blended.dropFirst()).allSatisfy { $0.score >= $1.score }
-    }
-    #endif
 }
 
 /// What an empty search field offers, taken from the library rather than from a copywriter.

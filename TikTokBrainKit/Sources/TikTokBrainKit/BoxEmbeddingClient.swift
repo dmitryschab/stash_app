@@ -1,15 +1,12 @@
 // BoxEmbeddingClient.swift
 //
-// The meaning half of search. Three pieces, all small enough to live together:
+// The meaning half of search. Two pieces, both small enough to live together:
 //
 //   BoxEmbeddingClient → POST {base}/embeddings  ({texts} → one vector per text)
 //   EmbeddingVector    → the packed Float32 blob a `Video` stores, and cosine over it
-//   SearchBlend        → 0.65 semantic + 0.30 lexical + 0.05 recency, the one ranking rule
 //
 // The client is shaped exactly like the other `BoxClients`: same JWT funnel, same timeout, same
-// "box unreachable" mapping. The arithmetic sits beside it rather than in the view because the
-// view cannot be unit-tested and this can — the blend is the whole feature, and a weight typo in
-// it is invisible until someone notices their search got worse.
+// "box unreachable" mapping. Ranking with these vectors is `SearchIndex` (SearchRanking.swift).
 
 import Foundation
 
@@ -95,9 +92,8 @@ public enum EmbeddingVector {
 
     /// Cosine similarity, clamped to 0...1.
     ///
-    /// Clamped because the blend mixes it with a lexical score and a recency score that cannot go
-    /// below zero: a negative cosine means "unrelated", not "worse than nothing", and letting it
-    /// go negative would let one unrelated video outrank another purely by being older.
+    /// Clamped because a negative cosine means "unrelated", not "worse than nothing": every
+    /// unrelated save scores the same 0 rather than being ordered by how unrelated it is.
     /// Mismatched or empty vectors score 0 rather than trapping — a stored vector from an older
     /// model is exactly that case, and it must degrade to lexical, not crash the library list.
     ///
@@ -113,26 +109,5 @@ public enum EmbeddingVector {
         }
         guard normA > 0, normB > 0 else { return 0 }
         return max(0, min(1, dot / (normA.squareRoot() * normB.squareRoot())))
-    }
-}
-
-// MARK: - Ranking
-
-/// The one search ranking rule, specced in
-/// docs/superpowers/plans/2026-07-11-preserve-and-rediscover.md and unchanged since.
-public enum SearchBlend {
-    public static let semanticWeight = 0.65
-    public static let lexicalWeight = 0.30
-    public static let recencyWeight = 0.05
-
-    /// How close a save has to be in meaning before it shows up having matched no word at all.
-    /// Measured against the model this ships with: unrelated text pairs sit around 0.2, and a
-    /// real paraphrase clears 0.5 — so this is the gap between them, not a guess. Too low and a
-    /// two-word query returns the whole library.
-    public static let meaningFloor = 0.35
-
-    /// All three inputs are 0...1; so is the answer.
-    public static func score(cosine: Double, lexical: Double, recency: Double) -> Double {
-        semanticWeight * cosine + lexicalWeight * lexical + recencyWeight * recency
     }
 }

@@ -50,8 +50,9 @@ public struct SearchMatch: Sendable, Equatable {
 
 public enum SearchIndex {
     /// How close a save has to be in meaning before it shows up having matched no word at all.
-    /// Starts at the value `SearchBlend` measured for unrelated pairs versus real paraphrases;
-    /// all three constants are meant to be tuned against real about-text vectors.
+    /// Starts at the value measured on the old embedding text, where unrelated pairs sat near
+    /// 0.2 and real paraphrases cleared 0.5; all three constants are meant to be tuned against
+    /// real about-text vectors.
     public static let meaningFloor = 0.35
 
     /// What saying one of the query's words adds to a save's meaning score.

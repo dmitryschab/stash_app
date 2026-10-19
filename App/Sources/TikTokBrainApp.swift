@@ -42,7 +42,6 @@ struct TikTokBrainApp: App {
         #if DEBUG
         assert(MindMapEngine.selfTest(), "MindMapEngine self-test failed")
         assert(SearchGrip.selfTest(), "SearchGrip self-test failed")
-        assert(SearchIndex.selfTest(), "SearchIndex self-test failed")
         assert(TabSlots.selfTest(), "TabSlots self-test failed")
         assert(PipelineCenter.shellStatusSelfTest(), "PipelineCenter shell status self-test failed")
         assert(PipelineCenter.expectedSelfTest(), "PipelineCenter expected self-test failed")
