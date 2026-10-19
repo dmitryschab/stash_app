@@ -56,6 +56,9 @@ app.include_router(cloud_import_router)
 # Search's meaning half — one route, its own module, no quota. See embeddings_api.py.
 from embeddings_api import router as embeddings_router  # noqa: E402
 app.include_router(embeddings_router)
+# What search matches a save against — one route, a daily cap instead of quota. See about_api.py.
+from about_api import router as about_router  # noqa: E402
+app.include_router(about_router)
 # Haul's price check — one route, a daily cap instead of quota. See haul_offers_api.py.
 from haul_offers_api import router as haul_offers_router  # noqa: E402
 app.include_router(haul_offers_router)
