@@ -34,8 +34,11 @@ backfill would starve its transcript and on-screen text backfills, and the rever
 Text goes to Gemma on Bedrock; an item that carries a picture goes to the vision model.
 
 A model with too little to go on sometimes answers by asking for more. That answer is not stored:
-the save gets its stripped caption instead, else its earlier summary, else the request fails. A
-music post gets "A music post." instead, so a refusal cannot bring its lyrics back in.
+the save gets its caption stripped of hashtags and handles instead, else its earlier summary,
+else the request fails. A music post gets "A music post." instead, so a refusal cannot bring its
+lyrics back in. The analyzer's "No caption or audio was available" summary is never material and
+never a fallback, and an item with nothing to describe at all is refused (422) before it is
+charged or reaches a model.
 
 Failures: a 502 is about the items sent (the provider turned the request down, the answer held
 no text, a refusal had nothing to fall back on), and the app skips such a save until relaunch.
@@ -111,6 +114,10 @@ SILENT_INSTRUCTION = (
 # What a music post is about when the model refused it: nothing the prompt kept out gets back in.
 MUSIC_FALLBACK = "A music post."
 
+# The analyzer's summary for a save it had nothing to go on for (api_v1's prompt). Not material:
+# read, the model echoes it; stored, it would be the save's about-text for good.
+PLACEHOLDER_SUMMARY = "no caption or audio was available"
+
 # How a model answers when it will not: asking for material, apologizing, saying it cannot. The
 # first-person phrases mark a refusal wherever they sit, since an about-text never speaks as "I";
 # "unfortunately" also turns up inside real summaries, so it counts only as the opening word.
@@ -134,6 +141,31 @@ def strip_hashtags(caption: str) -> str:
     return " ".join(re.sub(r"#\w+", "", caption).split())
 
 
+def strip_tags(caption: str) -> str:
+    """The caption without hashtags or @handles: what may stand in for an about-text, since a
+    handle stored there would match every search for that name."""
+    return " ".join(re.sub(r"#\w+|@[\w.]+", "", caption).split())
+
+
+def usable_summary(item: "AboutItem") -> str:
+    summary = item.summary.strip()
+    return "" if summary.lower().startswith(PLACEHOLDER_SUMMARY) else summary
+
+
+def has_material(item: "AboutItem") -> bool:
+    """Whether the prompt would carry anything to describe. A music post's prompt never reads its
+    transcript or summary, and no other post's reads its tracks. Mirrored by the app's
+    AboutItem.hasMaterial, which keeps such saves from being sent at all."""
+    if item.image:
+        return True
+    caption = strip_tags(item.caption)
+    if item.category == "music":
+        texts = [*item.music, caption, item.ocrText]
+    else:
+        texts = [item.transcript, item.ocrText, caption, usable_summary(item)]
+    return any(text.strip() for text in texts)
+
+
 def build_about_prompt(item: AboutItem) -> str:
     transcript = item.transcript.strip()
     ocr = item.ocrText.strip()[:OCR_CHARS]
@@ -149,13 +181,13 @@ def build_about_prompt(item: AboutItem) -> str:
             ("Transcript", transcript[:TRANSCRIPT_CHARS]),
             ("On-screen text", ocr),
             ("Caption", strip_hashtags(item.caption)),
-            ("Earlier summary", item.summary.strip())]
+            ("Earlier summary", usable_summary(item))]
     else:
         instruction = SILENT_INSTRUCTION
         material = [
             ("On-screen text", ocr),
             ("Caption", strip_hashtags(item.caption)),
-            ("Earlier summary", item.summary.strip())]
+            ("Earlier summary", usable_summary(item))]
     return "\n\n".join([instruction] + [f"{label}: {text}" for label, text in material if text])
 
 
@@ -226,7 +258,7 @@ def write_about(item: AboutItem) -> str:
         # whose caption can name the song: the music prompt keeps both out, so the fallback does.
         if item.category == "music":
             return MUSIC_FALLBACK
-        fallback = strip_hashtags(item.caption) or item.summary.strip()
+        fallback = strip_tags(item.caption) or usable_summary(item)
         if not fallback:
             raise ValueError("refused about")
         return fallback
@@ -291,6 +323,8 @@ def _refuse_bad_shape(items: list[AboutItem]) -> None:
     if not items or len(items) > MAX_ITEMS:
         raise HTTPException(status_code=422, detail=f"1..{MAX_ITEMS} items per request")
     for item in items:
+        if not has_material(item):
+            raise HTTPException(status_code=422, detail="each item needs something to describe")
         text = [item.category, item.transcript, item.ocrText, item.caption, item.summary,
                 *item.music]
         if sum(len(part.encode("utf-8")) for part in text) > MAX_TEXT_BYTES:

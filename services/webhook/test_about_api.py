@@ -3,8 +3,10 @@
 What these pin is which words reach the model. Speech leads, with the caption and the earlier
 summary beside it for when the "speech" is only a song; music gets no lyrics at all; and a save
 with neither is described from its caption, earlier summary and picture. A model that refuses
-instead of answering is replaced by the caption, then the summary. The route's shape and its
-money (a unit of its own daily counter per item, no quota) are the rest.
+instead of answering is replaced by the caption, then the summary, never by a handle or the
+analyzer's "no caption or audio" placeholder; an item with nothing to describe never reaches the
+model at all. The route's shape and its money (a unit of its own daily counter per item, no
+quota) are the rest.
 """
 
 import base64
@@ -140,6 +142,46 @@ def test_refuses_oversized_text_and_image(store, chat, monkeypatch):
         at_image_limit = {"videoID": "a", "image": jpeg(about_api.MAX_IMAGE_BYTES)}
         assert client.post("/v1/about", json={"items": [at_image_limit]}).status_code == 200
     assert len(chat) == 2
+
+
+PLACEHOLDER = "No caption or audio was available for this save."
+
+NOTHING_TO_DESCRIBE = [
+    {"videoID": "a"},
+    {"videoID": "a", "transcript": "  \n", "ocrText": " ", "caption": "  "},
+    {"videoID": "a", "caption": "#fyp #viral @chef.bob"},
+    {"videoID": "a", "summary": PLACEHOLDER},
+    {"videoID": "a", "caption": "#fyp", "summary": "  " + PLACEHOLDER.upper() + "  "},
+    # A music post's prompt never reads its transcript or summary, and a non-music post's
+    # prompt never reads its tracks.
+    {"videoID": "a", "category": "music", "transcript": "la la love you", "summary": "A love song."},
+    {"videoID": "a", "category": "recipe", "music": ["Lovesong by The Cure"]},
+]
+
+
+@pytest.mark.parametrize("item", NOTHING_TO_DESCRIBE)
+def test_an_item_with_nothing_to_describe_is_a_422_before_any_charge(store, chat, item):
+    """With no words and no picture the model can only make something up or refuse, and the
+    refusal has nothing to fall back on. Refused at the shape check, so it spends no unit."""
+    with TestClient(app) as client:
+        r = client.post("/v1/about", json={"items": [{"videoID": "b", "caption": "ramen"}, item]})
+    assert r.status_code == 422
+    assert chat == []
+    assert store.table.get_item(Key={"PK": store.partition, "SK": "ABOUTCAP"}).get("Item") is None
+
+
+@pytest.mark.parametrize("item", [
+    {"videoID": "a", "transcript": "we make carbonara"},
+    {"videoID": "a", "ocrText": "MENU"},
+    {"videoID": "a", "caption": "ramen night @chef.bob #fyp"},
+    {"videoID": "a", "summary": "A bowl of ramen."},
+    {"videoID": "a", "category": "music", "music": ["Lovesong by The Cure"]},
+    {"videoID": "a", "image": jpeg(64)},
+], ids=["transcript", "ocr", "caption", "summary", "music", "image"])
+def test_any_one_kind_of_material_is_enough(store, chat, item):
+    with TestClient(app) as client:
+        r = client.post("/v1/about", json={"items": [item]})
+    assert r.status_code == 200 and len(chat) == 1
 
 
 def test_each_item_charges_the_daily_cap(store, chat, monkeypatch):
@@ -314,6 +356,13 @@ def test_silent_prompt_lets_caption_and_summary_state_the_topic():
     assert "topic" in p.lower() and "Day in the life of a private chef" in p
 
 
+def test_the_placeholder_summary_never_reaches_the_prompt():
+    """The analyzer writes this sentence when it had nothing to go on; read as material, the
+    model echoes it back as the save's about-text."""
+    p = build_about_prompt(AboutItem(videoID="a", ocrText="MENU", summary=PLACEHOLDER))
+    assert "MENU" in p and "No caption or audio" not in p
+
+
 def test_system_prompt_forbids_asking_for_more():
     system = " ".join(about_api.ABOUT_SYSTEM_PROMPT.lower().split())
     assert "never ask for more material" in system and "never say you cannot" in system
@@ -346,6 +395,30 @@ def test_a_refusal_with_no_caption_falls_back_to_the_summary(monkeypatch):
     for caption in ("", "#fyp #viral"):
         item = AboutItem(videoID="a", caption=caption, summary="  A plate of pasta.  ")
         assert about_api.write_about(item) == "A plate of pasta."
+
+
+def test_a_refusal_never_falls_back_to_handles(monkeypatch):
+    """The about-text is what search matches, and a creator's handle in it would match every
+    query for that name. The prompt forbids handles; the fallback strips them."""
+    monkeypatch.setattr(about_api, "_chat", lambda *args: REFUSALS[0])
+    item = AboutItem(videoID="a", caption="Dinner with @chef.bob tonight #pasta @anna_k",
+                     summary="A plate of pasta.")
+    assert about_api.write_about(item) == "Dinner with tonight"
+    only_handles = AboutItem(videoID="b", caption="@chef.bob @anna_k #fyp",
+                             summary="A plate of pasta.")
+    assert about_api.write_about(only_handles) == "A plate of pasta."
+
+
+def test_a_refusal_never_falls_back_to_the_placeholder_summary(store, monkeypatch):
+    monkeypatch.setattr(about_api, "_chat", lambda *args: REFUSALS[0])
+    for summary in (PLACEHOLDER, "  " + PLACEHOLDER + " ", "No caption or audio was available."):
+        with pytest.raises(ValueError):
+            about_api.write_about(AboutItem(videoID="a", caption="#fyp", summary=summary))
+    # Through the route, a picture is material enough to ask, and the refusal is still a 502.
+    with TestClient(app) as client:
+        r = client.post("/v1/about", json={"items": [
+            {"videoID": "a", "caption": "#fyp", "summary": PLACEHOLDER, "image": jpeg(64)}]})
+    assert r.status_code == 502 and r.json()["detail"] == "about unavailable"
 
 
 def test_a_refused_music_post_is_never_described_by_its_caption_or_summary(monkeypatch):
