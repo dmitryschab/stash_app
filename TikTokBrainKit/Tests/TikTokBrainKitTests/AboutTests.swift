@@ -59,6 +59,32 @@ final class AboutTests: XCTestCase {
         XCTAssertEqual(AboutItem(video: video, cover: nil).music, ["Lovesong by The Cure"])
     }
 
+    func testALongCyrillicSaveStaysUnderTheServersTextCap() throws {
+        // The server refuses the whole request (a batch of 8) when one item's text passes 16 KB of
+        // UTF-8, and Cyrillic is two bytes a letter: one long save must not starve the rest.
+        let video = makeVideo(transcript: String(repeating: "д", count: 20_000), transcribe: .done)
+        video.caption = String(repeating: "б", count: 5_000)
+        video.ocrText = String(repeating: "в", count: 5_000)
+        video.summary = String(repeating: "г", count: 5_000)
+
+        let json = try JSONEncoder().encode(AboutItem(video: video, cover: nil))
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: json) as? [String: Any])
+        let text = ["category", "transcript", "ocrText", "caption", "summary"]
+            .compactMap { fields[$0] as? String }
+            + ((fields["music"] as? [String]) ?? [])
+
+        XCTAssertLessThan(text.reduce(0) { $0 + $1.utf8.count }, 16 * 1024)
+        XCTAssertEqual((fields["transcript"] as? String)?.count, 4000)
+    }
+
+    func testAMusicSaveNeverSendsItsTranscript() {
+        // Lyrics describe nothing on screen, and the server's prompt never reads them: they do
+        // not leave the device.
+        let video = makeVideo(category: Category.music.rawValue, transcript: "never gonna give you up",
+                              transcribe: .done)
+        XCTAssertEqual(AboutItem(video: video, cover: nil).transcript, "")
+    }
+
     // MARK: Who is owed one
 
     func testPendingSkipsUnanalyzedUnavailableAndGuessed() {

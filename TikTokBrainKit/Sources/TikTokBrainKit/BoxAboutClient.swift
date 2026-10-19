@@ -19,7 +19,18 @@ import Foundation
 /// Strings a save does not have go as `""`, never `null`: the server's fields are not optional.
 /// Title, topics and hashtags are deliberately absent — they are the creator's words for reach,
 /// not for what the video is.
+///
+/// The long fields are clamped here because the server refuses the whole request, all 8 saves of
+/// it, when one item's text passes 16 KB of UTF-8, and a Cyrillic letter is two bytes: one long
+/// save would otherwise fail the same batch on every drain and starve every save behind it. The
+/// transcript and on-screen text caps are what the server reads anyway; the four together stay
+/// under 16 KB even if every letter is Cyrillic.
 public struct AboutItem: Encodable, Sendable {
+    static let transcriptChars = 4000
+    static let ocrChars = 1000
+    static let captionChars = 1500
+    static let summaryChars = 1000
+
     public let videoID: String
     public let category: String
     public let transcript: String
@@ -36,10 +47,12 @@ public struct AboutItem: Encodable, Sendable {
     public init(video: Video, cover: Data?) {
         videoID = video.videoID
         category = video.categoryRaw
-        transcript = video.transcript ?? ""
-        ocrText = video.ocrText ?? ""
-        caption = video.caption
-        summary = video.summary
+        // Lyrics describe nothing on screen, so a music post never sends its transcript.
+        transcript = video.categoryRaw == Category.music.rawValue
+            ? "" : String((video.transcript ?? "").prefix(Self.transcriptChars))
+        ocrText = String((video.ocrText ?? "").prefix(Self.ocrChars))
+        caption = String(video.caption.prefix(Self.captionChars))
+        summary = String(video.summary.prefix(Self.summaryChars))
         music = Self.musicLines(of: video)
         image = video.hasNoSpeech ? cover?.base64EncodedString() : nil
     }
