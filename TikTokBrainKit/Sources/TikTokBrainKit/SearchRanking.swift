@@ -70,25 +70,32 @@ public enum SearchIndex {
         "who", "why", "with", "you", "your",
     ]
 
-    /// Lowercased, accent-folded, split on anything that is not a letter or digit, stop-words
+    /// Lowercased, accent-folded, apostrophes removed ("dog's" is "dogs", not "dog" and "s"),
+    /// split on anything that is not a letter or digit, one-character tokens and stop-words
     /// dropped, each word stemmed.
     public static func words(_ text: String) -> Set<String> {
         let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\u{2019}", with: "")
         var result = Set<String>()
         for token in folded.split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
             let word = String(token)
-            if stopWords.contains(word) { continue }
+            if word.count < 2 || stopWords.contains(word) { continue }
             result.insert(stem(word))
         }
         return result
     }
 
-    /// Words longer than three characters lose a trailing "es" or "s". Applied to both sides, so
-    /// "pastas" meets "pasta" and "dishes" meets "dish".
+    /// Takes a plural down to its singular so "cakes" meets "cake" and "dishes" meets "dish".
+    /// "es" comes off only after a sound that needs it (-ses, -xes, -zes, -ches, -shes); any other
+    /// word loses just its "s", unless it ends in "ss" ("glass" is not "glas"). Words of three
+    /// characters or fewer are left alone ("bus").
     public static func stem(_ word: String) -> String {
         guard word.count > 3 else { return word }
-        if word.hasSuffix("es") { return String(word.dropLast(2)) }
-        if word.hasSuffix("s") { return String(word.dropLast()) }
+        for ending in ["ses", "xes", "zes", "ches", "shes"] where word.hasSuffix(ending) {
+            return String(word.dropLast(2))
+        }
+        if word.hasSuffix("s"), !word.hasSuffix("ss") { return String(word.dropLast()) }
         return word
     }
 

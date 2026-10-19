@@ -61,6 +61,55 @@ final class SearchRankingTests: XCTestCase {
         XCTAssertEqual(SearchIndex.stem("dishes"), SearchIndex.stem("dish"))
     }
 
+    func testCakesAndRecipesMeetTheirSingulars() {
+        // Only "s" comes off a word that is not a sibilant plural: "cakes" -> "cake", not "cak".
+        let cakes = entry("cakes", about: "two cakes", at: epoch)
+        let recipes = entry("recipes", about: "easy recipes", at: epoch)
+        let dishes = entry("dishes", about: "quick dishes", at: epoch)
+        XCTAssertEqual(ids(SearchIndex.rank([cakes], query: "cake", embedding: nil)), ["cakes"])
+        XCTAssertEqual(ids(SearchIndex.rank([recipes], query: "recipe", embedding: nil)), ["recipes"])
+        XCTAssertEqual(ids(SearchIndex.rank([dishes], query: "dish", embedding: nil)), ["dishes"])
+        // And the other way round.
+        XCTAssertEqual(ids(SearchIndex.rank([cakes], query: "cakes", embedding: nil)), ["cakes"])
+        XCTAssertEqual(ids(SearchIndex.rank([recipes], query: "recipes", embedding: nil)), ["recipes"])
+    }
+
+    func testStemRules() {
+        let cases: [(String, String)] = [
+            ("dishes", "dish"), ("boxes", "box"), ("glasses", "glass"), ("churches", "church"),
+            ("buses", "bus"),
+            ("cakes", "cake"), ("recipes", "recipe"), ("pastas", "pasta"),
+            ("glass", "glass"), ("class", "class"),
+            ("bus", "bus"), ("gas", "gas"), ("pasta", "pasta"),
+        ]
+        for (word, stem) in cases {
+            XCTAssertEqual(SearchIndex.stem(word), stem, word)
+        }
+    }
+
+    func testAWordEndingInSSKeepsBothLetters() {
+        XCTAssertEqual(SearchIndex.words("glass"), ["glass"])
+        XCTAssertEqual(SearchIndex.words("glasses"), ["glass"])
+    }
+
+    func testApostrophesJoinInsteadOfSplitting() {
+        XCTAssertEqual(SearchIndex.words("dog's"), SearchIndex.words("dog"))
+        XCTAssertEqual(SearchIndex.words("dog\u{2019}s"), SearchIndex.words("dog"))
+        XCTAssertEqual(SearchIndex.words("don't"), ["dont"])
+    }
+
+    func testPossessivesDoNotMatchOnTheLetterS() {
+        // "dog's bed" used to share the stray token "s" with "Alice's garden".
+        let alice = entry("alice", about: "Alice's garden", at: epoch)
+        XCTAssertEqual(SearchIndex.rank([alice], query: "dog's bed", embedding: nil), [])
+        let toy = entry("toy", about: "my dog's toy", at: epoch)
+        XCTAssertEqual(ids(SearchIndex.rank([toy], query: "dog", embedding: nil)), ["toy"])
+    }
+
+    func testSingleCharacterTokensAreDropped() {
+        XCTAssertEqual(SearchIndex.words("vitamin c 5 x"), ["vitamin"])
+    }
+
     func testStopWordsAreIgnored() {
         let entries = [
             entry("bike", about: "how to fix a bike", at: epoch),
