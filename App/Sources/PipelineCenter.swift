@@ -446,25 +446,29 @@ final class PipelineCenter {
     /// before those saves landed, so it would miss them. Same problem as `thumbnailsPending`.
     private var embeddingsPending = false
 
-    /// Fills in the search vectors for saves that have none, then leaves them alone.
+    /// Writes the about-text for saves that are owed one, then fills in the search vectors for
+    /// saves that have none, then leaves them alone.
     ///
     /// Called wherever an analysis lands and on every foreground, because this is the cheapest
-    /// drain here — no video download, no quota, one box call per 32 saves — so it needs none of
-    /// the deep pass's charger-and-Wi-Fi gate. Fire and forget, like `refreshThumbnails`.
+    /// drain here — no video download, no quota, one box call per 8 about-texts or 32 vectors —
+    /// so it needs none of the deep pass's charger-and-Wi-Fi gate. Fire and forget, like
+    /// `refreshThumbnails`.
     ///
-    /// ponytail: a save re-analyzed after it was embedded keeps its old vector until
-    /// `BoxEmbeddingClient.revision` is bumped. The vector is built from the title, topics and
-    /// summary, which a re-read rarely moves far, and invalidating on every deep-pass write would
-    /// mean embedding the whole library twice over a difference nobody would see in the ranking.
+    /// ponytail: a save re-analyzed after it was written about is marked stale (its
+    /// `aboutRevision` goes back to 0), so the next run writes a new about-text and, because that
+    /// resets `embeddingRevision` too, embeds it in the same run. The old text and vector stay in
+    /// place until then, so search never goes blank on a save mid-refresh.
     func backfillEmbeddings() {
         guard StashSession.shared.isSignedIn, let container else { return }
         guard embeddingTask == nil else {
             embeddingsPending = true
             return
         }
-        let embedder = BoxEmbeddingClient(config: Self.currentConfig())
+        let config = Self.currentConfig()
+        let embedder = BoxEmbeddingClient(config: config)
+        let writer = BoxAboutClient(config: config)
         embeddingTask = Task { [weak self] in
-            await EmbeddingBackfill(container: container, embedder: embedder).run()
+            await EmbeddingBackfill(container: container, embedder: embedder, writer: writer).run()
             guard let self else { return }
             embeddingTask = nil
             if embeddingsPending {
@@ -1811,32 +1815,46 @@ final class PipelineCenter {
 
 // MARK: - Embedding backfill
 
-/// Fills `Video.embedding` for saves that have none, in serial batches of 32 — the box's own cap.
+/// Writes `Video.about` for saves that are owed one, in serial batches of 8 (the box's cap), then
+/// fills `Video.embedding` for saves that have none, in serial batches of 32 — the box's own cap.
 ///
 /// Its own actor rather than a `PipelineRunner` stage because it shares none of that queue's
-/// problems: nothing here is downloaded, metered or ordered, and the text it embeds is text the
-/// analysis already produced. Off the main actor for the same reason every other drain is — the
-/// fetch is the whole library.
+/// problems: nothing here is downloaded, metered or ordered, and the text it writes and embeds
+/// is text the analysis already produced. Off the main actor for the same reason every other
+/// drain is — the fetch is the whole library.
 ///
-/// The first failed batch ends the run rather than counting failures like the transcript drain:
-/// the only ways this call fails are "offline", "box down" and "signed out", and none of the
-/// three gets better on the next batch. Everything already written is saved, and the next
-/// foreground resumes from there.
+/// The about phase runs first so the embed phase has the text it embeds: a fresh about-text
+/// resets `embeddingRevision`, and the same run then embeds it.
+///
+/// In each phase the first failed batch ends that phase rather than counting failures like the
+/// transcript drain: the only ways these calls fail are "offline", "box down", "signed out" and
+/// a daily limit, and none of them gets better on the next batch. Everything already written is
+/// saved, and the next foreground resumes from there. A failed about phase does not stop the
+/// embed phase, which still runs for the saves that already have a text.
 actor EmbeddingBackfill {
+    /// The server rejects a decoded image over this; a cover past it goes text-only instead.
+    private static let maxCoverBytes = 400_000
+
     private let container: ModelContainer
     private let embedder: BoxEmbeddingClient
+    private let writer: BoxAboutClient
 
-    init(container: ModelContainer, embedder: BoxEmbeddingClient) {
+    init(container: ModelContainer, embedder: BoxEmbeddingClient, writer: BoxAboutClient) {
         self.container = container
         self.embedder = embedder
+        self.writer = writer
     }
 
     func run() async {
         let context = ModelContext(container)
         let all = (try? context.fetch(FetchDescriptor<Video>(
             sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]))) ?? []
-        // Newest first, and never a save with nothing written about it yet: an unanalyzed row
-        // would cost a round trip to embed the empty string.
+
+        await writeAbouts(in: all, context: context)
+
+        // Newest first, and never a save with nothing written about it yet: a row without an
+        // about-text would cost a round trip to embed the empty string. Filtered after the about
+        // phase, which changes both fields this reads.
         let pending = all.filter {
             $0.embeddingRevision < BoxEmbeddingClient.revision && !$0.embeddingText.isEmpty
         }
@@ -1852,6 +1870,36 @@ actor EmbeddingBackfill {
             }
             try? context.save()
         }
+    }
+
+    /// The about phase: one box call per batch, saved per batch. Returns on the first failure
+    /// or when cancelled; either way the caller carries on to the embed phase, which stops
+    /// itself if the task was cancelled.
+    private func writeAbouts(in all: [Video], context: ModelContext) async {
+        let pending = AboutBackfill.pending(in: all)
+        let batchSize = BoxAboutClient.maxItemsPerRequest
+        for start in stride(from: 0, to: pending.count, by: batchSize) {
+            if Task.isCancelled { return }
+            let batch = Array(pending[start..<min(start + batchSize, pending.count)])
+            // A save with no cover on disk is written text-only and counts as done, so it is
+            // not retried; the same goes for a cover the server would refuse for its size.
+            let items = batch.map { AboutItem(video: $0, cover: Self.cover(of: $0)) }
+            guard let abouts = try? await writer.write(items) else { return }
+            for (video, about) in zip(batch, abouts) {
+                video.about = about
+                video.aboutRevision = BoxAboutClient.revision
+                // The text the vector was built from is gone; embed the new one this run.
+                video.embeddingRevision = 0
+            }
+            try? context.save()
+        }
+    }
+
+    private static func cover(of video: Video) -> Data? {
+        guard let file = ThumbnailStore.cached(videoID: video.videoID),
+              let data = try? Data(contentsOf: file),
+              data.count <= maxCoverBytes else { return nil }
+        return data
     }
 }
 
