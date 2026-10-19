@@ -58,7 +58,10 @@ TRANSCRIPT_CHARS = 4000
 OCR_CHARS = 1000
 # 2-4 plain sentences.
 ABOUT_MAX_TOKENS = 220
-ABOUT_VISION_MODEL = api_v1.OPENROUTER_VISION_MODEL
+# Gemma reads the cover too, and on 9 silent covers of the owner's library it named what is
+# visibly there as well as Gemini did. Gemini spent ~200 of the 220 tokens reasoning and cut 6
+# of the 9 answers off mid-sentence ("A poster"), at ~$0.0017 a save.
+ABOUT_VISION_MODEL = api_v1.BEDROCK_MODEL
 ABOUT_TIMEOUT = 60
 
 ABOUT_SYSTEM_PROMPT = """You write the text a search engine matches a saved short video against. Answer with 2-4 plain
