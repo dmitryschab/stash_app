@@ -1894,7 +1894,10 @@ actor EmbeddingBackfill {
     /// one of them. Newest-first order keeps that save in the first batch, so without this it
     /// would be re-sent, 8 units a time, on every drain until the daily cap, and every save
     /// behind it would starve. Sent alone, the bad save is found, skipped until relaunch, and the
-    /// rest are written.
+    /// rest are written. A save is skipped only when another one in its batch went through: if
+    /// every single fails too, or the batch was a single already, nothing tells the saves from a
+    /// box that is failing for everyone (a proxy answering 502 mid-restart), so none are skipped
+    /// and the phase ends.
     private func writeAbouts(in all: [Video], context: ModelContext) async {
         let skip = skipped.withLock { $0 }
         let pending = AboutBackfill.pending(in: all).filter { !skip.contains($0.videoID) }
@@ -1909,30 +1912,32 @@ actor EmbeddingBackfill {
     }
 
     /// Writes one batch, falling back to single saves when the box refuses the batch over what
-    /// it holds. Returns false when the phase should end (the box, the account or the task is
-    /// out of reach, which does not get better on the next save).
+    /// it holds. Returns false when the phase should end: the box, the account or the task is out
+    /// of reach, or every save failed and so none can be told from an outage (nothing is skipped
+    /// then, and the next drain tries them again).
     private func write(_ batch: [Video]) async -> Bool {
         do {
             apply(try await writer.write(Self.items(for: batch)), to: batch)
             return true
         } catch where Self.isAboutTheSave(error) {
-            guard batch.count > 1 else {
-                skip(batch[0])
-                return true
-            }
+            // A lone save was just sent alone; sending it again would only spend another unit.
+            guard batch.count > 1 else { return false }
         } catch {
             return false
         }
+        var failed: [Video] = []
         for video in batch {
             if Task.isCancelled { return false }
             do {
                 apply(try await writer.write(Self.items(for: [video])), to: [video])
             } catch where Self.isAboutTheSave(error) {
-                skip(video)
+                failed.append(video)
             } catch {
                 return false
             }
         }
+        guard failed.count < batch.count else { return false }
+        for video in failed { skip(video) }
         return true
     }
 
