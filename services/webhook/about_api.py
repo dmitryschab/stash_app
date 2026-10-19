@@ -7,19 +7,22 @@ Its own module and its own router, mounted in app.py, like embeddings_api before
 Search used to rank on a save's title, topics and hashtags, and those are the creator's words
 for getting reach, not for what the video is: #fyp matched everything and "pasta" matched a
 caption that never showed a plate. Every save now gets one "about" text instead — what is said,
-else what is shown — and the app matches against that alone. Music is the exception, because a
-song's lyrics describe nothing on screen: it is described by genre only, and the transcript of a
-music post is never put in the prompt.
+else what the post is about — and the app matches against that alone. Music is the exception,
+because a song's lyrics describe nothing on screen: it is described by genre only, and the
+transcript of a music post is never put in the prompt.
 
 Which words the model reads, first match wins:
 
   music       the identified tracks (for the genre only), the hashtag-stripped caption, the text
               on screen, and the picture. Never the transcript.
-  speech      the transcript, and the text on screen. Never the caption or the earlier summary:
-              what is said already is the answer, and a caption is written for the algorithm.
+  speech      the transcript, the text on screen, the hashtag-stripped caption and the earlier
+              summary. What is said is the answer; the caption and summary are there for the
+              many posts whose "transcript" is only the song playing underneath, which the
+              model is told to ignore. Summarizing those lyrics described a bathroom renovation
+              as a love song.
   otherwise   the text on screen, the hashtag-stripped caption, the earlier summary, and the
-              picture — with the model told the caption and summary may only name things that
-              are visibly there.
+              picture. The caption and summary may state the topic: held to what was visible
+              on the cover, "a day in the life of a private chef" came back as a man in a lift.
 
 Title, topics and hashtags are not fields of the request at all, so they cannot reach the prompt.
 
@@ -27,6 +30,9 @@ Money: no quota moves — the save was paid for at import, and being able to fin
 not cost like saving it. Each item spends one daily deep-pass unit instead, charged up front for
 the whole request before any model is called, so a capped request costs nothing on the model.
 Text goes to Gemma on Bedrock; an item that carries a picture goes to the vision model.
+
+A model with too little to go on sometimes answers by asking for more. That answer is not stored:
+the save gets its stripped caption instead, else its earlier summary, else the request fails.
 """
 import base64
 import logging
@@ -67,16 +73,28 @@ ABOUT_TIMEOUT = 60
 ABOUT_SYSTEM_PROMPT = """You write the text a search engine matches a saved short video against. Answer with 2-4 plain
 English sentences and nothing else: no lists, no Markdown, no preamble. Use concrete nouns a
 person would search for: dishes, ingredients, places, products, brands, people, techniques,
-activities. Never mention hashtags, the creator's handle, or the words "this video"."""
+activities. Never mention hashtags, the creator's handle, or the words "this video". Never ask
+for more material and never say you cannot: if the material is thin, write one plain sentence
+from what there is."""
 
 MUSIC_INSTRUCTION = (
     "This is a music post. Do not use any lyrics. In one sentence say the genre of the music; "
     "then describe what is shown if the material below says. Never write a song, artist or "
     "album name.")
-SPEECH_INSTRUCTION = "Summarize what is said."
+SPEECH_INSTRUCTION = (
+    "Summarize what is said. If the transcript is only song lyrics or background music rather "
+    "than someone talking, ignore it and describe what the post is about from the caption, the "
+    "earlier summary and the on-screen text instead.")
 SILENT_INSTRUCTION = (
-    "Describe what the post shows, from the material below. The caption and the earlier "
-    "summary may only name things that are visibly there.")
+    "Describe what the post is about, from the material below. The caption and the earlier "
+    "summary may state its topic; the picture and the on-screen text add what is shown.")
+
+# How a model answers when it will not: asking for material, apologizing, saying it cannot. The
+# first-person phrases mark a refusal wherever they sit, since an about-text never speaks as "I";
+# "unfortunately" also turns up inside real summaries, so it counts only as the opening word.
+REFUSAL = re.compile(
+    r"\b(please provide|no material|i'm sorry|i am sorry|i cannot|i can't|i'm unable|"
+    r"i am unable)\b|^unfortunately\b", re.IGNORECASE)
 
 
 class AboutItem(BaseModel):
@@ -105,7 +123,11 @@ def build_about_prompt(item: AboutItem) -> str:
             ("On-screen text", ocr)]
     elif transcript:
         instruction = SPEECH_INSTRUCTION
-        material = [("Transcript", transcript[:TRANSCRIPT_CHARS]), ("On-screen text", ocr)]
+        material = [
+            ("Transcript", transcript[:TRANSCRIPT_CHARS]),
+            ("On-screen text", ocr),
+            ("Caption", strip_hashtags(item.caption)),
+            ("Earlier summary", item.summary.strip())]
     else:
         instruction = SILENT_INSTRUCTION
         material = [
@@ -144,6 +166,10 @@ def _endpoint(model: str) -> tuple[str, str]:
     return api_v1.OPENROUTER_URL, openrouter_key()
 
 
+def is_refusal(answer: str) -> bool:
+    return bool(REFUSAL.search(answer.strip().replace("\u2019", "'")))
+
+
 def write_about(item: AboutItem) -> str:
     prompt = build_about_prompt(item)
     if item.image:
@@ -159,6 +185,14 @@ def write_about(item: AboutItem) -> str:
         # A model that spends its whole token budget thinking answers with nothing. Stored as
         # the save's about text that would be final, so it fails the request instead.
         raise ValueError("empty about")
+    if is_refusal(answer):
+        # Stored, a refusal would be the save's about-text for good, and it matches every query
+        # about nothing. The creator's own words are a worse about-text than a written one but a
+        # better one than that.
+        fallback = strip_hashtags(item.caption) or item.summary.strip()
+        if not fallback:
+            raise ValueError("refused about")
+        return fallback
     return answer
 
 

@@ -1,9 +1,10 @@
 """The about route: one text per save, the thing search matches against.
 
-What these pin is which words reach the model. Speech wins over everything else; music gets no
-lyrics at all; and a save with neither is described from what it shows, with the caption and the
-earlier summary allowed to name only what is visibly there. The route's shape and its money
-(a daily deep-pass unit per item, no quota) are the rest.
+What these pin is which words reach the model. Speech leads, with the caption and the earlier
+summary beside it for when the "speech" is only a song; music gets no lyrics at all; and a save
+with neither is described from its caption, earlier summary and picture. A model that refuses
+instead of answering is replaced by the caption, then the summary. The route's shape and its
+money (a daily deep-pass unit per item, no quota) are the rest.
 """
 
 import base64
@@ -193,12 +194,16 @@ def test_charges_no_quota(store, chat):
 # ------------------------------------------------------------------ the prompt
 
 
-def test_speech_prompt_uses_transcript_not_caption():
+def test_speech_prompt_carries_caption_and_summary_beside_the_transcript():
+    """A "transcript" is often the song playing under the video, and summarizing lyrics describes
+    nothing the post is about; the caption and summary are what the model falls back to then."""
     p = build_about_prompt(AboutItem(videoID="a", transcript="we make carbonara",
                                      caption="#fyp so good", summary="A sunset.",
                                      ocrText="SUBSCRIBE"))
     assert "carbonara" in p and "SUBSCRIBE" in p
-    assert "#fyp" not in p and "so good" not in p and "A sunset." not in p
+    assert "so good" in p and "A sunset." in p and "#fyp" not in p
+    assert p.index("Transcript:") < p.index("Caption:")
+    assert "lyrics" in p.lower() and "background music" in p.lower()
 
 
 def test_long_transcript_is_truncated():
@@ -221,3 +226,59 @@ def test_silent_prompt_strips_hashtags_and_keeps_summary():
     p = build_about_prompt(AboutItem(videoID="a", caption="Dinner tonight #pasta #fyp",
                                      summary="A plate of pasta."))
     assert "Dinner tonight" in p and "#pasta" not in p and "A plate of pasta." in p
+
+
+def test_silent_prompt_lets_caption_and_summary_state_the_topic():
+    p = build_about_prompt(AboutItem(videoID="a", caption="Day in the life of a private chef",
+                                     summary="A private chef cooks for a footballer."))
+    assert "visibly there" not in p
+    assert "topic" in p.lower() and "Day in the life of a private chef" in p
+
+
+def test_system_prompt_forbids_asking_for_more():
+    system = " ".join(about_api.ABOUT_SYSTEM_PROMPT.lower().split())
+    assert "never ask for more material" in system and "never say you cannot" in system
+
+
+# ------------------------------------------------------------------ refusals
+
+
+REFUSALS = [
+    "Please provide the material or description of the video so I can write the text for you.",
+    "I'm sorry, but I cannot see the video.",
+    "I\u2019m sorry, there is nothing to describe.",
+    "I cannot describe this post.",
+    "I can't write anything from this.",
+    "I am unable to provide a description because the video content is not visible.",
+    "Unfortunately there is not enough here to go on.",
+    "There is no material to describe.",
+]
+
+
+@pytest.mark.parametrize("refusal", REFUSALS)
+def test_a_refusal_falls_back_to_the_stripped_caption(monkeypatch, refusal):
+    monkeypatch.setattr(about_api, "_chat", lambda *args: refusal)
+    item = AboutItem(videoID="a", caption="Dinner tonight #pasta #fyp", summary="A plate of pasta.")
+    assert about_api.write_about(item) == "Dinner tonight"
+
+
+def test_a_refusal_with_no_caption_falls_back_to_the_summary(monkeypatch):
+    monkeypatch.setattr(about_api, "_chat", lambda *args: REFUSALS[0])
+    for caption in ("", "#fyp #viral"):
+        item = AboutItem(videoID="a", caption=caption, summary="  A plate of pasta.  ")
+        assert about_api.write_about(item) == "A plate of pasta."
+
+
+def test_a_refusal_with_nothing_to_fall_back_on_is_a_502(store, monkeypatch):
+    monkeypatch.setattr(about_api, "_chat", lambda *args: REFUSALS[0])
+    with pytest.raises(ValueError):
+        about_api.write_about(AboutItem(videoID="a", caption="#fyp", summary=" "))
+    with TestClient(app) as client:
+        r = client.post("/v1/about", json={"items": [{"videoID": "a", "transcript": "la la"}]})
+    assert r.status_code == 502 and r.json()["detail"] == "about unavailable"
+
+
+def test_an_answer_that_merely_mentions_cannot_is_kept(monkeypatch):
+    answer = "A baker explains why you cannot skip proofing. Unfortunately for him, the dough tears."
+    monkeypatch.setattr(about_api, "_chat", lambda *args: answer)
+    assert about_api.write_about(AboutItem(videoID="a", caption="bread")) == answer
