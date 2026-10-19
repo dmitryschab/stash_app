@@ -34,6 +34,11 @@ Text goes to Gemma on Bedrock; an item that carries a picture goes to the vision
 A model with too little to go on sometimes answers by asking for more. That answer is not stored:
 the save gets its stripped caption instead, else its earlier summary, else the request fails. A
 music post gets "A music post." instead, so a refusal cannot bring its lyrics back in.
+
+Failures: a 502 is about the items sent (the provider turned the request down, the answer held
+no text, a refusal had nothing to fall back on), and the app skips such a save until relaunch.
+The provider throttling, failing, slow or out of reach is a 503 with a Retry-After instead: it is
+the same for every save, so the app ends its about phase and sends them again later.
 """
 import base64
 import logging
@@ -69,7 +74,12 @@ ABOUT_MAX_TOKENS = 220
 # visibly there as well as Gemini did. Gemini spent ~200 of the 220 tokens reasoning and cut 6
 # of the 9 answers off mid-sentence ("A poster"), at ~$0.0017 a save.
 ABOUT_VISION_MODEL = api_v1.BEDROCK_MODEL
-ABOUT_TIMEOUT = 60
+# Under the app's 30 s request timeout (boxRequestTimeout): a batch's calls run side by side, so
+# a batch takes about its slowest call, and an answer that lands after the app hung up is units
+# spent for nothing.
+ABOUT_TIMEOUT = 25
+# How long the app is told to wait when the model's provider is throttling, down or slow.
+UPSTREAM_RETRY_AFTER = 60
 
 ABOUT_SYSTEM_PROMPT = """You write the text a search engine matches a saved short video against. Answer with 2-4 plain
 English sentences and nothing else: no lists, no Markdown, no preamble. Use concrete nouns a
@@ -170,6 +180,18 @@ def _endpoint(model: str) -> tuple[str, str]:
     return api_v1.OPENROUTER_URL, openrouter_key()
 
 
+def is_upstream_trouble(error: Exception) -> bool:
+    """The provider throttling (429), failing (5xx), slow or out of reach: the same for every
+    save. Anything else — the provider turning this request down, an answer with no text in it,
+    a refusal with nothing to fall back on — is about the item, and stays a 502."""
+    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
+        return True
+    if isinstance(error, requests.HTTPError):
+        status = getattr(error.response, "status_code", None)
+        return status == 429 or (status is not None and status >= 500)
+    return False
+
+
 def is_refusal(answer: str) -> bool:
     return bool(REFUSAL.search(answer.strip().replace("\u2019", "'")))
 
@@ -246,7 +268,13 @@ def about(body: AboutRequest, store: DynamoImportStore = Depends(entitled_store)
     except Exception as error:
         # One item failing fails the request: the units are already spent either way, and a
         # partial answer would break the by-position pairing the client reads it by.
-        log.warning("about failed: %s", error)
+        if is_upstream_trouble(error):
+            # Nothing to do with the saves sent: the app ends its about phase on this and sends
+            # the same saves again later, where a 502 would have it skip them as bad.
+            log.warning("about upstream unavailable: %s", error, exc_info=True)
+            raise HTTPException(status_code=503, detail="about model unavailable",
+                                headers={"Retry-After": str(UPSTREAM_RETRY_AFTER)})
+        log.warning("about failed: %s", error, exc_info=True)
         raise HTTPException(status_code=502, detail="about unavailable")
 
     return {"abouts": abouts}

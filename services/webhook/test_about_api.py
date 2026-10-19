@@ -12,6 +12,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 
 import about_api
@@ -163,13 +164,70 @@ def test_model_failure_is_a_502(store, monkeypatch):
         r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"}]})
     assert r.status_code == 502 and r.json()["detail"] == "about unavailable"
 
-    # A provider answer that is not a 200 fails the same way, through the real _chat.
+    # A provider that turns this item down, or answers in a shape that holds no about-text,
+    # fails the same way, through the real _chat: that is about what was sent.
     monkeypatch.setattr(about_api, "_chat", real_chat)
+    for answer in (SimpleNamespace(status_code=400),
+                   SimpleNamespace(status_code=200, json=lambda: {"choices": []})):
+        monkeypatch.setattr(about_api.requests, "post", lambda *a, answer=answer, **k: answer)
+        with TestClient(app) as client:
+            r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"}]})
+        assert r.status_code == 502
+
+
+def upstream(status):
+    def fail(*args):
+        raise requests.HTTPError(f"about model {status}", response=SimpleNamespace(status_code=status))
+    return fail
+
+
+def raising(error):
+    def fail(*args):
+        raise error
+    return fail
+
+
+@pytest.mark.parametrize("fake", [
+    raising(requests.Timeout("read timed out")),
+    raising(requests.ConnectionError("connection refused")),
+    upstream(429),
+    upstream(500),
+    upstream(503),
+], ids=["timeout", "connection", "429", "500", "503"])
+def test_upstream_trouble_is_a_503_not_a_bad_save(store, monkeypatch, fake):
+    """A provider that is throttling, down or slow says nothing about the save. The app skips a
+    save the box answers 502 for until relaunch, so this must not be a 502; a 503 ends the
+    phase instead, and the next drain sends the same saves again."""
+    monkeypatch.setattr(about_api, "_chat", fake)
+    with TestClient(app) as client:
+        r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"}]})
+    assert r.status_code == 503
+    assert 0 < int(r.headers["retry-after"]) <= 120
+
+
+def test_an_upstream_429_through_the_real_chat_is_a_503(store, monkeypatch):
     monkeypatch.setattr(about_api.requests, "post",
                         lambda *a, **k: SimpleNamespace(status_code=429))
     with TestClient(app) as client:
         r = client.post("/v1/about", json={"items": [{"videoID": "a", "caption": "x"}]})
-    assert r.status_code == 502
+    assert r.status_code == 503
+
+
+def test_the_model_call_gives_up_before_the_app_does(monkeypatch):
+    """The app waits 30 s for a batch (boxRequestTimeout). The calls of a batch run side by
+    side, so a batch takes about its slowest call: past 30 s the app has hung up, and the units
+    are spent on an answer nobody reads."""
+    seen = {}
+
+    def post(*args, **kwargs):
+        seen["timeout"] = kwargs["timeout"]
+        return SimpleNamespace(status_code=200,
+                               json=lambda: {"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(about_api.requests, "post", post)
+    about_api._chat("u", "m", "t", "s", "c", 10)
+    assert seen["timeout"] == about_api.ABOUT_TIMEOUT
+    assert about_api.ABOUT_TIMEOUT <= 25
 
 
 def test_an_empty_answer_is_a_502_not_an_empty_about(store, monkeypatch):
