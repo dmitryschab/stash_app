@@ -149,6 +149,22 @@ final class AboutTests: XCTestCase {
                       "a save that is not silent sends no picture, so its cover is no material")
     }
 
+    func testOnCellularASaveThatWouldSendItsCoverWaits() {
+        // Sent text-only it would count as done and never be written from its picture.
+        let wordless = makeVideo("wordless", title: "Saved video", caption: "", transcribe: .done)
+        let captioned = makeVideo("captioned", caption: "sunset over the bay", transcribe: .done)
+        let spoken = makeVideo("spoken", caption: "", transcript: "we make carbonara", transcribe: .done)
+        let all = [wordless, captioned, spoken]
+
+        XCTAssertEqual(AboutBackfill.pending(in: all, hasCover: { _ in true }).map(\.videoID),
+                       ["wordless", "captioned", "spoken"])
+        XCTAssertEqual(AboutBackfill.pending(in: all, hasCover: { _ in true }, sendsCovers: false)
+                        .map(\.videoID), ["spoken"])
+        XCTAssertEqual(AboutBackfill.pending(in: all, hasCover: { _ in false }, sendsCovers: false)
+                        .map(\.videoID), ["captioned", "spoken"],
+                       "with no cover to send, a silent save goes text-only either way")
+    }
+
     func testPendingDropsAWrittenSave() {
         let video = makeVideo()
         video.aboutRevision = BoxAboutClient.revision

@@ -456,8 +456,9 @@ final class PipelineCenter {
     ///
     /// Called wherever an analysis lands and on every foreground, because this is the cheapest
     /// drain here — no video download, no quota, one box call per 8 about-texts or 32 vectors —
-    /// so it needs none of the deep pass's charger-and-Wi-Fi gate. Fire and forget, like
-    /// `refreshThumbnails`.
+    /// so it needs none of the deep pass's charger-and-Wi-Fi gate. The one exception is a silent
+    /// save's cover, sent only on Wi-Fi; on cellular those saves wait for a run on Wi-Fi. Fire
+    /// and forget, like `refreshThumbnails`.
     ///
     /// ponytail: a save re-analyzed after it was written about is marked stale (its
     /// `aboutRevision` goes back to 0), so the next run writes a new about-text and, because that
@@ -473,9 +474,13 @@ final class PipelineCenter {
         let embedder = BoxEmbeddingClient(config: config)
         let writer = BoxAboutClient(config: config)
         let skipped = aboutSkipped
+        // ponytail: read once per run; a run that leaves Wi-Fi midway sends the rest of its
+        // covers on cellular. Re-check per batch if that shows up.
+        let sendsCovers = Self.isOnUnmeteredPath
         embeddingTask = Task { [weak self] in
             await EmbeddingBackfill(
-                container: container, embedder: embedder, writer: writer, skipped: skipped
+                container: container, embedder: embedder, writer: writer, skipped: skipped,
+                sendsCovers: sendsCovers
             ).run()
             guard let self else { return }
             embeddingTask = nil
@@ -1852,13 +1857,17 @@ actor EmbeddingBackfill {
     private let writer: BoxAboutClient
     /// Video IDs the about phase has given up on until relaunch; see `writeAbouts`.
     private let skipped: OSAllocatedUnfairLock<Set<String>>
+    /// Whether the phone is on Wi-Fi: on cellular a save that would go with its cover is left
+    /// pending (`AboutBackfill.pending`), not written text-only.
+    private let sendsCovers: Bool
 
     init(container: ModelContainer, embedder: BoxEmbeddingClient, writer: BoxAboutClient,
-         skipped: OSAllocatedUnfairLock<Set<String>>) {
+         skipped: OSAllocatedUnfairLock<Set<String>>, sendsCovers: Bool) {
         self.container = container
         self.embedder = embedder
         self.writer = writer
         self.skipped = skipped
+        self.sendsCovers = sendsCovers
     }
 
     func run() async {
@@ -1913,7 +1922,8 @@ actor EmbeddingBackfill {
     /// and the phase ends.
     private func writeAbouts(in all: [Video], context: ModelContext) async -> Bool {
         let skip = skipped.withLock { $0 }
-        let pending = AboutBackfill.pending(in: all, hasCover: { Self.cover(of: $0) != nil })
+        let pending = AboutBackfill.pending(
+            in: all, hasCover: { Self.cover(of: $0) != nil }, sendsCovers: sendsCovers)
             .filter { !skip.contains($0.videoID) }
         let batchSize = BoxAboutClient.maxItemsPerRequest
         var embedding = true

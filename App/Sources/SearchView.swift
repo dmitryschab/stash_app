@@ -1,7 +1,8 @@
 // SearchView.swift
 //
-// Search has no tab. Hold the pill, push right, and the pill itself becomes the field
-// (StashTabBar); what opens above it is `SearchOverlay`: one list of the saves that match by
+// Search has no tab. The magnifier on every section's STASH row (StashWordmarkRow) opens it, and
+// holding the pill and pushing right is the accelerator; either way the pill itself becomes the
+// field (StashTabBar). What opens above it is `SearchOverlay`: one list of the saves that match by
 // what they are about — `Video.about`, what the video says and shows — each row showing that
 // line so it is plain why the save is there.
 //

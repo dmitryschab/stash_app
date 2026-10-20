@@ -98,13 +98,19 @@ public enum AboutBackfill {
     ///
     /// Nor is a save with nothing to describe (`AboutItem.hasMaterial`): the box refuses it, and
     /// it would fail its batch on every drain. `hasCover` says whether the caller has a cover it
-    /// would send for a save; it is asked only about a silent save with no words, the one kind
-    /// whose picture is its only material.
-    public static func pending(in videos: [Video], hasCover: (Video) -> Bool = { _ in false }) -> [Video] {
+    /// would send for a save; it is asked only about a silent save, the one kind that sends one.
+    ///
+    /// `sendsCovers` false (the phone is on cellular) holds back every save that would go with
+    /// its cover: such a save waits for Wi-Fi rather than being written text-only, which would
+    /// count as done and never be written from its picture.
+    public static func pending(in videos: [Video], hasCover: (Video) -> Bool = { _ in false },
+                               sendsCovers: Bool = true) -> [Video] {
         videos.filter {
-            $0.aboutRevision < BoxAboutClient.revision
-                && !$0.unavailable && !$0.categoryRaw.isEmpty && !$0.isGuessed
-                && (AboutItem(video: $0, cover: nil).hasMaterial || ($0.hasNoSpeech && hasCover($0)))
+            guard $0.aboutRevision < BoxAboutClient.revision
+                && !$0.unavailable && !$0.categoryRaw.isEmpty && !$0.isGuessed else { return false }
+            let hasMaterial = AboutItem(video: $0, cover: nil).hasMaterial
+            if sendsCovers { return hasMaterial || ($0.hasNoSpeech && hasCover($0)) }
+            return hasMaterial && !($0.hasNoSpeech && hasCover($0))
         }
     }
 }

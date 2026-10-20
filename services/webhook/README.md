@@ -23,11 +23,18 @@ answers 401 without one; there is no shared bearer token.
 - `POST /v1/chat/completions` — analysis proxy (quota-metered)
 - `GET  /v1/tiktok/download/{id}` — transient mp4 bytes for the visual-text backfill (deep-pass daily cap)
 - `POST /v1/embeddings` — search vectors, Titan v2 at 256 dims via `bedrock-runtime` (no quota; ≤32 texts of ≤8 KB per request)
+- `POST /v1/about` — the "about" text search matches each save against, written by Gemma on Bedrock (a silent save's cover goes with it); ≤8 items per request, no quota, about daily cap
 
 The transcript and download routes serve the app's deep pass over videos the import already
 charged a quota unit for, so they move no quota. What bounds them is `DEEP_PASS_DAILY_CAP` (default
 300) calls per account per UTC day, counted in one `DEEPPASS` item beside the user's `QUOTA`
 row; over the cap they answer 429 with `Retry-After` set to the next UTC midnight.
+
+`/v1/about` moves no quota either — the save was paid for at import — and has a counter of its
+own so a library's about backfill cannot starve the deep pass: `ABOUT_DAILY_CAP` (default 2000)
+items per account per UTC day, in an `ABOUTCAP` item, charged for the whole request before any
+model call, with the same 429 and `Retry-After`. A `cap` field on that item overrides it for one
+account, as on `DEEPPASS`.
 
 ## Invite codes
 No longer a gate — sign-up is open and the App Store price is what limits who arrives.
