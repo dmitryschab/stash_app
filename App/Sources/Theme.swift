@@ -114,6 +114,44 @@ struct Micro: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Opens the shell's search. Nil outside the tab shell — the search screen itself, previews —
+    /// and a nil hides the magnifier.
+    @Entry var openSearch: (() -> Void)? = nil
+}
+
+/// The STASH wordmark row every section opens with, and the way into search. The magnifier
+/// used to sit at the tab bar's right end, ringed and behind a divider; up here, where iOS
+/// puts search anyway, the bar is left holding only tabs.
+struct StashWordmarkRow: View {
+    var trailing: String = ""
+    @Environment(\.openSearch) private var openSearch
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
+            Spacer()
+            if !trailing.isEmpty {
+                Micro(text: trailing, size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
+            }
+            if let openSearch {
+                Button(action: openSearch) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(Color.stashInk)
+                        // 44pt to the thumb, one text line to the layout: the title below
+                        // stays where it was.
+                        .frame(width: 44, height: 44, alignment: .trailing)
+                        .contentShape(Rectangle())
+                        .padding(.vertical, -16)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search")
+            }
+        }
+    }
+}
+
 /// The standard screen header: the STASH wordmark row plus a big Archivo title.
 struct StashHeader: View {
     var title: String
@@ -121,13 +159,7 @@ struct StashHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
-                Spacer()
-                if !trailing.isEmpty {
-                    Micro(text: trailing, size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
-                }
-            }
+            StashWordmarkRow(trailing: trailing)
             Text(title)
                 .font(.archivo(40, .heavy))
                 .foregroundStyle(Color.stashInk)

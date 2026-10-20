@@ -3,11 +3,11 @@
 // App entry point: registers the bundled Archivo faces, builds the SwiftData container,
 // optionally seeds sample content (the simulator smoke run, or an App Review demo account —
 // see SampleData.swift), and hosts the Set List shell (up to seven tabs, chosen in Settings)
-// behind a custom ink pill tab bar. Five slots or fewer are all labelled; past five only the
-// open one is, which is what lets seven fit where five labelled ones used to crowd. Mind map
-// is deliberately not a tab — it opens from the Library header instead, next to Import (it is
-// a map of the library after all). Search is not a tab either: a magnifier sits at the pill's
-// right end, and holding the pill and pushing right is the accelerator (StashTabBar).
+// behind a custom ink pill tab bar. Five slots or fewer are all labelled; past five none are,
+// and a dot under the open one says where you are. Mind map is deliberately not a tab — it
+// opens from the Library header instead, next to Import (it is a map of the library after
+// all). Search is not a tab either, nor on the pill: a magnifier sits on every section's STASH
+// row (StashWordmarkRow), and holding the pill and pushing right is the accelerator.
 //
 // The shell is gated on `StashSession`: signed out, RootView renders SignInView instead. The
 // gate lives inside RootView and not around the Scene on purpose — `.modelContainer` and the
@@ -208,28 +208,11 @@ enum TabSlots {
     /// Which slot sits under `x`, on a strip `stripWidth` wide holding `count` of them. The grip
     /// gesture needs this: it is attached to the whole pill, so when a hold turns out to have
     /// been a slow tap the only record of where the finger was is the drag's start point
-    /// (`StashTabBar.gripGesture`). Nil past the strip — the pill's far end is the search
-    /// button, and that is not a slot.
-    ///
-    /// The strip is only evenly divided while every slot is labelled. Past five, the open slot
-    /// takes a fixed `openWidth` and the rest share what is left, so the arithmetic is two
-    /// segments with a wide one wedged between them — dividing by an average width instead
-    /// lands one slot off for every touch to the left of the open one.
-    ///
-    /// `openWidth` nil (or an `openIndex` that is not on the pill) means the even strip.
-    static func slotIndex(x: CGFloat, stripWidth: CGFloat, count: Int,
-                          openIndex: Int?, openWidth: CGFloat?) -> Int? {
+    /// (`StashTabBar.gripGesture`). Every slot is the same width, open or not. Nil past the
+    /// strip and before its first layout pass.
+    static func slotIndex(x: CGFloat, stripWidth: CGFloat, count: Int) -> Int? {
         guard count > 0, stripWidth > 0, x < stripWidth else { return nil }
-        let touch = max(0, x)
-        guard let openWidth, let openIndex, count > 1,
-              openIndex >= 0, openIndex < count, openWidth < stripWidth else {
-            return min(count - 1, Int(touch / (stripWidth / CGFloat(count))))
-        }
-        let narrow = (stripWidth - openWidth) / CGFloat(count - 1)
-        let openStart = narrow * CGFloat(openIndex)
-        if touch < openStart { return min(openIndex - 1, Int(touch / narrow)) }
-        if touch < openStart + openWidth { return openIndex }
-        return min(count - 1, openIndex + 1 + Int((touch - openStart - openWidth) / narrow))
+        return min(count - 1, Int(max(0, x) / (stripWidth / CGFloat(count))))
     }
 
     #if DEBUG
@@ -237,33 +220,18 @@ enum TabSlots {
     /// decides whether the user can reach Settings at all, and the slot geometry, which decides
     /// which tab a slow tap lands on. Both get checked on every debug launch.
     static func selfTest() -> Bool {
-        // Five slots or fewer: all labelled, all the same width.
-        slotIndex(x: 0, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 0
-            && slotIndex(x: 59, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 0
-            && slotIndex(x: 60, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 1
-            && slotIndex(x: 299, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 4
+        // Every slot the same width.
+        slotIndex(x: 0, stripWidth: 300, count: 5) == 0
+            && slotIndex(x: 59, stripWidth: 300, count: 5) == 0
+            && slotIndex(x: 60, stripWidth: 300, count: 5) == 1
+            && slotIndex(x: 299, stripWidth: 300, count: 5) == 4
+            && slotIndex(x: 200, stripWidth: 350, count: 7) == 4
             // touch slop off the left edge is still the first slot
-            && slotIndex(x: -3, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == 0
-            // the search button's end
-            && slotIndex(x: 310, stripWidth: 300, count: 5, openIndex: 2, openWidth: nil) == nil
+            && slotIndex(x: -3, stripWidth: 300, count: 5) == 0
+            && slotIndex(x: 310, stripWidth: 300, count: 5) == nil
             // before the first layout pass
-            && slotIndex(x: 10, stripWidth: 0, count: 5, openIndex: 2, openWidth: nil) == nil
-            && slotIndex(x: 10, stripWidth: 300, count: 0, openIndex: 0, openWidth: nil) == nil
-            // Seven slots on a 393pt phone: six 37pt slots, then Library open at 64pt.
-            && slotIndex(x: 0, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 0
-            && slotIndex(x: 200, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 5
-            && slotIndex(x: 221, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 5
-            && slotIndex(x: 230, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 6
-            && slotIndex(x: 285, stripWidth: 286, count: 7, openIndex: 6, openWidth: 64) == 6
-            // Six slots with the open one in the middle: 41.2pt either side of an 80pt wedge.
-            && slotIndex(x: 10, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 0
-            && slotIndex(x: 50, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 1
-            && slotIndex(x: 100, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 2  // inside the wedge
-            && slotIndex(x: 161, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 2
-            && slotIndex(x: 200, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 3
-            && slotIndex(x: 285, stripWidth: 286, count: 6, openIndex: 2, openWidth: 80) == 5
-            // An open tab that is no longer on the pill falls back on the even strip.
-            && slotIndex(x: 200, stripWidth: 286, count: 7, openIndex: nil, openWidth: 64) == 4
+            && slotIndex(x: 10, stripWidth: 0, count: 5) == nil
+            && slotIndex(x: 10, stripWidth: 300, count: 0) == nil
             && decode("") == fallback
             && decode("garbage") == fallback
             && decode("cook") == [.cook, .library]
@@ -305,9 +273,9 @@ struct RootView: View {
     /// Bumped when the tab already on screen is tapped again; each section watches it.
     @State private var reselect = TabReselect()
 
-    /// Search has no tab. The pill's magnifier opens it — as does hold-and-push, for the people
-    /// who learn it (StashTabBar) — and this is the open state; `-openSearch` lets a smoke run
-    /// land in it.
+    /// Search has no tab. The magnifier on each section's STASH row opens it (`openSearch`) — as
+    /// does hold-and-push on the pill, for the people who learn it (StashTabBar) — and this is
+    /// the open state; `-openSearch` lets a smoke run land in it.
     @State private var searchOpen = CommandLine.arguments.contains("-openSearch")
     @State private var query = ""
     @State private var tabBarHidden = false
@@ -495,6 +463,10 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.tabReselect, reselect)
             .environment(\.stashTabBarHidden, $tabBarHidden)
+            // On the sections only: the search screen's own header gets no magnifier.
+            .environment(\.openSearch) {
+                withAnimation(.spring(duration: 0.35, bounce: 0.15)) { searchOpen = true }
+            }
 
             // Over the tab, under the pill: the tab keeps its scroll position for when search closes.
             if searchOpen {
@@ -711,12 +683,12 @@ private struct ImportSyncPill: View {
     }
 }
 
-/// The solid ink pill: up to seven slots, cream icons, uppercase micro labels, and a magnifier
-/// at the right end — and the search field, once you hold the pill and push right. The pill
-/// *is* the field: the slots slide out the right end while the magnifier and the text field
-/// slide in from the left, 1:1 with the finger (`SearchGrip`). The gesture is the accelerator,
-/// not the entrance; the button at the end is the entrance. A tap is still a tap, and since
-/// the grip owns the touch, a hold that never moved is one too.
+/// The solid ink pill: up to seven slots, cream icons, uppercase micro labels — and the search
+/// field, once search opens. The pill *is* the field: the slots slide out the right end while
+/// the magnifier and the text field slide in from the left, 1:1 with the finger when you hold
+/// the pill and push right (`SearchGrip`). The gesture is the accelerator, not the entrance;
+/// the magnifier on the STASH row is the entrance. A tap is still a tap, and since the grip
+/// owns the touch, a hold that never moved is one too.
 struct StashTabBar: View {
     /// Which sections have a slot, left to right. Chosen in Settings (`TabSlots`).
     var slots: [StashTab] = TabSlots.fallback
@@ -735,8 +707,7 @@ struct StashTabBar: View {
     /// release and the slot's own tap gesture ask for the same selection, and whichever arrives
     /// second is dropped — it would otherwise read as "tapped the tab you are on" and bump.
     @State private var selectedAt = Date.distantPast
-    /// How wide the slots actually are, which is no longer the pill: the search button takes
-    /// the right end. Read by the grip's release (`TabSlots.slotIndex`).
+    /// How wide the slot strip is. Read by the grip's release (`TabSlots.slotIndex`).
     @State private var slotStripWidth: CGFloat = 0
     @FocusState private var fieldFocused: Bool
 
@@ -780,80 +751,48 @@ struct StashTabBar: View {
     /// (its "still pressed" tolerance is wider than a slot), so every search open also switched
     /// tabs. A tap gesture is cancelled by the drag.
     ///
-    /// Five slots or fewer are all labelled and split the strip evenly — `point.3.connected`
-    /// and a grid of squares are not words, and a bar the user has to decode is not a bar.
-    /// Past five there is no room for six or seven labels, so only the open slot keeps one and
-    /// widens to hold it; at seven that widening has to come down to 64pt or the icon-only
-    /// slots drop under a thumb.
+    /// Every slot is the same width, and the open one is marked by colour and a dot rather than
+    /// a bubble. Five slots or fewer are all labelled — `point.3.connected` and a grid of
+    /// squares are not words, and a bar the user has to decode is not a bar. Past five there is
+    /// no room for the words, so none get one: a single widened, labelled slot among six icons
+    /// was the clutter this replaced.
     private var tabs: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(slots) { tab in
-                    let open = tab == selection
-                    VStack(spacing: 3) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 17, weight: .semibold))
-                        if labelsAlwaysOn || open {
-                            Micro(text: tab.label, size: 8.5, tracking: 0.7, color: labelColor(for: tab))
-                                .lineLimit(1)
-                                .transition(.opacity)
-                        }
+            ForEach(slots) { tab in
+                let open = tab == selection
+                VStack(spacing: 3) {
+                    Image(systemName: tab.symbol)
+                        .font(.system(size: 17, weight: .semibold))
+                    if labelsAlwaysOn {
+                        Micro(text: tab.label, size: 8.5, tracking: 0.7, color: labelColor(for: tab))
+                            .lineLimit(1)
                     }
-                    .foregroundStyle(color(for: tab))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .frame(width: open ? openSlotWidth : nil)
-                    .background {
-                        if open {
-                            Capsule().fill(Color.stashOnInk.opacity(0.12)).padding(.vertical, 6)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { select(tab) }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(tab.label)
-                    .accessibilityAddTraits(open ? [.isButton, .isSelected] : [.isButton])
+                    Circle()
+                        .frame(width: 4, height: 4)
+                        .opacity(open ? 1 : 0)
                 }
+                .foregroundStyle(color(for: tab))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { select(tab) }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(tab.label)
+                .accessibilityAddTraits(open ? [.isButton, .isSelected] : [.isButton])
             }
-            .background {
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { slotStripWidth = proxy.size.width }
-                        .onChange(of: proxy.size.width) { _, width in slotStripWidth = width }
-                }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { slotStripWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, width in slotStripWidth = width }
             }
-
-            Rectangle()
-                .fill(Color.stashOnInk.opacity(0.18))
-                .frame(width: 1, height: 28)
-                .padding(.horizontal, 8)
-
-            // The entrance to search, as plain as Cook's and Haul's fields: hold-and-push is
-            // faster once you know it, and nobody knows it on the first launch.
-            Button { open() } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color.stashOnInk)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().strokeBorder(Color.stashOnInk.opacity(0.4), lineWidth: 1.5))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Search")
-            .padding(.trailing, 6)
         }
         .animation(.spring(duration: 0.3, bounce: 0.2), value: selection)
         .opacity(held ? 0.3 : 1)
     }
 
-    /// Whether every slot carries its label, or only the open one (see `tabs`).
+    /// Whether every slot carries its label, or none do (see `tabs`).
     private var labelsAlwaysOn: Bool { slots.count <= 5 }
-
-    /// How wide the open slot is when it is the only labelled one. Nil while all of them are:
-    /// then they share the strip evenly and nothing is special about the one you are on.
-    private var openSlotWidth: CGFloat? {
-        guard !labelsAlwaysOn else { return nil }
-        return slots.count == 7 ? 64 : 80
-    }
 
     private func select(_ tab: StashTab) {
         guard !held, Date().timeIntervalSince(gripEndedAt) > 0.3 else { return }
@@ -934,9 +873,7 @@ struct StashTabBar: View {
                 withAnimation(.spring(duration: 0.35, bounce: 0.3)) { grip = 0 }
                 if hypot(translation.width, translation.height) < Self.tapTravel,
                    let index = TabSlots.slotIndex(x: drag?.startLocation.x ?? 0,
-                                                  stripWidth: slotStripWidth, count: slots.count,
-                                                  openIndex: slots.firstIndex(of: selection),
-                                                  openWidth: openSlotWidth) {
+                                                  stripWidth: slotStripWidth, count: slots.count) {
                     // No swallow: this touch-up meant something, and the slot's own tap gesture
                     // reporting it too is handled by `choose`.
                     choose(slots[index])
