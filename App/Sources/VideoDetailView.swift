@@ -74,8 +74,8 @@ struct VideoDetailView: View {
                 }
             }
             .padding(.horizontal, 20)
-            // The coding page has no pill at the foot, so its last row must clear the tab bar.
-            .padding(.bottom, isCoding ? stashTabBarClearance : 24)
+            // The last thing on every page, the TikTok pill or the coding page's last row, must clear the tab bar.
+            .padding(.bottom, stashTabBarClearance)
         }
         .background(Color.stashBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
