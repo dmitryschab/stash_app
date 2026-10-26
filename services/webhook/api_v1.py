@@ -382,7 +382,8 @@ separately.
 separately, on every video, whatever you filed it under.
 
 Pick the category from the whole post, hashtags included, even when the transcript is empty
-(recipe=any food or drink you make yourself: dishes, baking, sauces, cocktails, coffee,
+(recipe=any food or drink you make yourself, even on a trip: dishes, baking, sauces,
+cocktails, coffee,
 fitness=workouts/gym/running/nutrition/health/supplements/sleep/mental health,
 style=fashion/beauty/makeup, travel=trips/destinations/hotels/flights and restaurants, cafes
 and bars to visit, home=decor/cleaning/DIY/renovation/gardening,

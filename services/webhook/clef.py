@@ -31,7 +31,7 @@ QUESTION = "Which single category best describes what this short video is about?
 # One line per category, the same wording the canonical analysis prompt gives Gemma
 # (api_v1.ANALYSIS_SYSTEM_PROMPT), so both models are asked the same taxonomy.
 CATEGORIES = {
-    "recipe": "food or drink made at home: dishes, baking, sauces, cocktails, coffee, meal prep",
+    "recipe": "food or drink you make yourself, even on a trip: dishes, baking, sauces, cocktails, coffee",
     "fitness": "workouts, gym, running, sports training, nutrition, health, sleep, mental health",
     "style": "fashion, outfits, beauty, makeup, skincare routines, hair",
     "travel": "trips, destinations, hotels, flights, city guides, restaurants, cafes and bars to visit",
