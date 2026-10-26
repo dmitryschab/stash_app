@@ -360,7 +360,7 @@ ANALYSIS_SYSTEM_PROMPT = """
 You classify a short video into a single strict JSON object. Respond with ONLY the JSON
 object, no prose and no Markdown code fences. Use this exact shape:
 {
-  "category": "recipe" | "fitness" | "style" | "travel" | "home" | "learning" | "comedy" | "music" | "coding" | "film" | "dining" | "wellness" | "other",
+  "category": "recipe" | "fitness" | "style" | "travel" | "home" | "learning" | "music" | "coding" | "film" | "other",
   "title": string,
   "summary": string,
   "topics": [string],            // short lowercase topic keywords
@@ -382,12 +382,14 @@ separately.
 separately, on every video, whatever you filed it under.
 
 Pick the category from the whole post, hashtags included, even when the transcript is empty
-(fitness=workouts/gym/running/nutrition, style=fashion/beauty/makeup,
-travel=trips/destinations/hotels/flights, home=decor/cleaning/DIY/renovation/gardening,
-learning=facts/how-to/study/science/history, comedy=skits/jokes/memes/pranks,
+(recipe=any food or drink you make yourself: dishes, baking, sauces, cocktails, coffee,
+fitness=workouts/gym/running/nutrition/health/supplements/sleep/mental health,
+style=fashion/beauty/makeup, travel=trips/destinations/hotels/flights and restaurants, cafes
+and bars to visit, home=decor/cleaning/DIY/renovation/gardening,
+learning=facts/how-to/study/science/history,
 coding=software/gadgets/AI and tags like #linux #arch #selfhosted #homelab #docker #python
-#react #vim, film=movies/TV/anime/what to watch, dining=restaurants/cafes/coffee/wine,
-wellness=health/supplements/sleep/mental health); use other only when none fit.
+#react #vim, film=movies/TV/anime/what to watch); use other only when none fit, and for
+comedy, skits, memes and pranks.
 
 Captions and transcripts may be in any language; ALWAYS answer in English. Title max 60
 characters. Use empty strings or arrays when information is missing. NEVER output placeholder
@@ -440,7 +442,7 @@ is built around some item — a shoe, a phone, a bag, a chair, a camera, a serum
 tool, a pan, a supplement, a game — then list it. A haul, an unboxing, a review, a comparison,
 a "things I use daily", a get-ready-with-me that names what it is wearing, a desk tour, a gift
 guide, a "this changed my life" pitch: all of these are buys, and they arrive filed as style,
-home, coding, fitness, wellness or anything else. That is expected. Fill "buys" anyway.
+home, coding, fitness or anything else. That is expected. Fill "buys" anyway.
 
 Include an item when the post names it, holds it up, wears it, demonstrates it, or puts it on
 screen as the thing being talked about. Exclude:

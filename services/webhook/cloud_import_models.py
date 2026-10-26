@@ -256,6 +256,10 @@ class BuyPick(ContractModel):
 # Mirrors BuyPick.maxPerVideo in the Kit.
 MAX_BUY_PICKS = 8
 
+# Taxonomy v7: the ten categories the app has a home for, and where the three it folded go.
+CATEGORIES = ("recipe", "fitness", "style", "travel", "home", "learning", "music", "coding", "film", "other")
+FOLDED = {"dining": "travel", "wellness": "fitness", "comedy": "other"}
+
 
 class VideoResult(ContractModel):
     video_id: str = Field(alias="videoID")
@@ -278,7 +282,9 @@ class VideoResult(ContractModel):
     # reads empty for the whole library until a greater revision re-runs them.
     # 8: results now carry explicit film picks. The old rows cannot populate the film shelf,
     # so their fast pass must be superseded rather than silently retained.
-    analysis_revision: int = Field(alias="analysisRevision", default=8)
+    # 9: taxonomy v7 folds dining, wellness and comedy back in (recipe/travel, fitness, other).
+    # Cooking filed under dining has no recipe object, so only a re-run puts it on Cook.
+    analysis_revision: int = Field(alias="analysisRevision", default=9)
     author: str | None = None
     caption: str | None = None
     hashtags: list[str] = Field(default_factory=list)
@@ -321,6 +327,15 @@ class VideoResult(ContractModel):
             if len(picks) == MAX_FILM_PICKS:
                 break
         return picks
+
+    @field_validator("category")
+    @classmethod
+    def category_on_the_list(cls, value: str | None) -> str | None:
+        # The model still answers off the list now and then ("gaming"); the app has no shelf
+        # for that, so it would be filed nowhere.
+        if value is None or value in CATEGORIES:
+            return value
+        return FOLDED.get(value, "other")
 
     @field_validator("buys")
     @classmethod

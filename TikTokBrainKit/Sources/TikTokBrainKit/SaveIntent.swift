@@ -27,7 +27,7 @@ public enum SaveIntent: String, CaseIterable, Codable, Sendable {
                                 hasBuys: Bool, includeBuy: Bool = true) -> SaveIntent {
         if includeBuy && hasBuys { return .buy }
         let lowered = Set(topics.map { $0.lowercased() })
-        if category == .film || category == .comedy || !lowered.isDisjoint(with: Self.watchTopics) {
+        if category == .film || !lowered.isDisjoint(with: Self.watchTopics) {
             return .watch
         }
         if category == .fitness || category == .travel || category == .recipe

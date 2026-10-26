@@ -1,7 +1,7 @@
 """Clef — Cloudflare's decision model, through OpenRouter's System One endpoint.
 
 Clef answers a bounded question with one probability per option in a single forward pass:
-no text, no parsing. Here it answers exactly one question per video — which of the thirteen
+no text, no parsing. Here it answers exactly one question per video — which of the ten
 Stash categories fits — so a fresh import gets its shape in seconds while Gemma's full
 analysis (title, summary, recipe, picks) runs behind it. Measured against Gemma's own
 labels on the owner's library: top-1 agreement 84 % on text alone, 86 % with the cover.
@@ -31,19 +31,16 @@ QUESTION = "Which single category best describes what this short video is about?
 # One line per category, the same wording the canonical analysis prompt gives Gemma
 # (api_v1.ANALYSIS_SYSTEM_PROMPT), so both models are asked the same taxonomy.
 CATEGORIES = {
-    "recipe": "cooking a dish: a recipe with ingredients or steps, baking, meal prep",
-    "fitness": "workouts, gym, running, sports training, nutrition for training",
+    "recipe": "food or drink made at home: dishes, baking, sauces, cocktails, coffee, meal prep",
+    "fitness": "workouts, gym, running, sports training, nutrition, health, sleep, mental health",
     "style": "fashion, outfits, beauty, makeup, skincare routines, hair",
-    "travel": "trips, destinations, hotels, flights, city guides",
+    "travel": "trips, destinations, hotels, flights, city guides, restaurants, cafes and bars to visit",
     "home": "decor, interior, cleaning, DIY, renovation, gardening",
     "learning": "facts, how-to, study tips, science, history, explainers",
-    "comedy": "skits, jokes, memes, pranks, funny moments",
     "music": "songs, albums, artists, music recommendations or lists, concerts",
     "coding": "software, programming, gadgets, AI tools, linux, self-hosting, dev tools",
     "film": "movies, TV series, anime, what to watch, film lists",
-    "dining": "restaurants, cafes, coffee, wine, bars, eating out",
-    "wellness": "health, supplements, sleep, mental health, therapy, habits",
-    "other": "none of the other categories fit",
+    "other": "comedy, skits, memes, or none of the other categories fit",
 }
 
 # TikTok's "original sound" label in every locale the library has met.

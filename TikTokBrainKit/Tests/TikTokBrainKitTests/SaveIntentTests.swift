@@ -25,9 +25,8 @@ struct SaveIntentTests {
         #expect(intent(.film, ["cinema"], buys: true, includeBuy: false) == .watch)
     }
 
-    @Test func filmComedyAndTheirTopicsAreToWatch() {
+    @Test func filmAndItsTopicsAreToWatch() {
         #expect(intent(.film) == .watch)
-        #expect(intent(.comedy) == .watch)
         #expect(intent(.other, ["anime"]) == .watch)
         #expect(intent(.other, ["sci-fi", "recommendations"]) == .watch)
     }

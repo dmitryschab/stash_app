@@ -88,7 +88,7 @@ enum StashTab: String, CaseIterable, Identifiable {
     // The four rich sections first, then every plain category in `librarySegments` order,
     // Library last. The order is the pill's and the Settings list's.
     case today, code, cook, music, films, haul
-    case fitness, style, travel, home, learning, comedy, dining, wellness
+    case fitness, style, travel, home, learning
     case library
 
     var id: String { rawValue }
@@ -101,14 +101,11 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: "Music"
         case .films: "Films"
         case .haul: "Haul"
-        case .fitness: "Fitness"
+        case .fitness: "Health"
         case .style: "Style"
-        case .travel: "Travel"
+        case .travel: "Places"
         case .home: "Home"
         case .learning: "Learning"
-        case .comedy: "Comedy"
-        case .dining: "Dining"
-        case .wellness: "Wellness"
         case .library: "Library"
         }
     }
@@ -122,7 +119,7 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .films: "movieclapper"
         case .haul: "bag.fill"
         case .library: "square.grid.2x2.fill"
-        case .fitness, .style, .travel, .home, .learning, .comedy, .dining, .wellness:
+        case .fitness, .style, .travel, .home, .learning:
             ownedCategory!.symbol
         }
     }
@@ -136,14 +133,11 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .music: "Records and recommendation lists."
         case .films: "Every film your saves named, as a poster wall."
         case .haul: "Everything your saves are selling."
-        case .fitness: "Workouts and training saves."
+        case .fitness: "Workouts, health, sleep and habits."
         case .style: "Outfits, beauty and hair."
-        case .travel: "Places and trips."
+        case .travel: "Trips, restaurants, cafés and bars."
         case .home: "Decor, cleaning and DIY."
         case .learning: "Facts, how-tos and explainers."
-        case .comedy: "The ones that made you laugh."
-        case .dining: "Restaurants, cafés and bars."
-        case .wellness: "Health, sleep and habits."
         case .library: "Every shelf, plus Import and Settings."
         }
     }
@@ -162,9 +156,6 @@ enum StashTab: String, CaseIterable, Identifiable {
         case .travel: .travel
         case .home: .home
         case .learning: .learning
-        case .comedy: .comedy
-        case .dining: .dining
-        case .wellness: .wellness
         case .today, .haul, .library: nil
         }
     }
@@ -244,8 +235,9 @@ enum TabSlots {
             && StashTab.tab(owning: .other) == nil
             && StashTab.tab(owning: .recipe) == .cook && StashTab.tab(owning: .home) == .home
             && decode("home,style") == [.style, .home, .library]                   // catalogue order
-            && decode("today,code,cook,music,films,haul,home,style,wellness")       // nine asked for
-                == [.music, .films, .haul, .style, .home, .wellness, .library]        // seven kept, Library pinned
+            && decode("today,code,cook,music,films,haul,home,style,fitness")        // nine asked for
+                == [.music, .films, .haul, .fitness, .style, .home, .library]         // seven kept, Library pinned
+            && decode("cook,dining,wellness") == [.cook, .library]                  // folded tabs drop out
             && decode(encode([.today, .haul, .library])) == [.today, .haul, .library]
     }
     #endif
@@ -454,7 +446,7 @@ struct RootView: View {
                 case .music: MusicView()
                 case .films: FilmsView()
                 case .haul: HaulView()
-                case .fitness, .style, .travel, .home, .learning, .comedy, .dining, .wellness:
+                case .fitness, .style, .travel, .home, .learning:
                     CategoryView(tab: tab)
                 case .library: LibraryView(shelves: libraryShelves(visible: slots),
                                            includeBuyShelf: !slots.contains(.haul))

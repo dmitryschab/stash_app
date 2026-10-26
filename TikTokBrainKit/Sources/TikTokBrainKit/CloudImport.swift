@@ -546,7 +546,7 @@ public enum CloudImportResultUpserter {
                 if let thumbnailURL = result.thumbnailURL, let url = URL(string: thumbnailURL) {
                     video.thumbnailURL = url
                 }
-                if let category = result.category {
+                if let category = result.category.map({ Category(filing: $0).rawValue }) {
                     video.categoryRaw = category
                     if category != Category.film.rawValue, previousCategory == Category.film.rawValue {
                         video.filmsJSON = nil

@@ -107,7 +107,7 @@ def test_result_revision_supersedes_broken_extractor_rows():
     client only applies a strictly greater revision — so fresh results must not be revision 1."""
     from cloud_import_models import VideoResult
 
-    assert VideoResult(videoID="1").analysis_revision == 8
+    assert VideoResult(videoID="1").analysis_revision == 9
 
 
 def test_film_picks_default_to_empty_when_analyzer_omits_them():
@@ -208,9 +208,27 @@ def test_result_without_structure_omits_both_keys():
     """A non-recipe, non-music save must not carry empty scaffolding to the client."""
     from cloud_import_models import VideoResult
 
-    result = VideoResult(videoID="4", category="comedy")
+    result = VideoResult(videoID="4", category="home")
     assert result.recipe is None
     assert result.music == []
+
+
+def test_off_list_categories_file_where_the_app_has_a_shelf():
+    """Taxonomy v7 folded dining, wellness and comedy; anything else off the list is other."""
+    from cloud_import_models import VideoResult
+
+    assert VideoResult(videoID="1", category="dining").category == "travel"
+    assert VideoResult(videoID="2", category="wellness").category == "fitness"
+    assert VideoResult(videoID="3", category="gaming").category == "other"
+    assert VideoResult(videoID="4", category="recipe").category == "recipe"
+    assert VideoResult(videoID="5").category is None
+
+
+def test_clef_asks_the_same_taxonomy():
+    import clef
+    from cloud_import_models import CATEGORIES
+
+    assert set(clef.CATEGORIES) == set(CATEGORIES)
 
 
 def test_buys_ride_along_with_any_category():

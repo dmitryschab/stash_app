@@ -1200,6 +1200,13 @@ final class PipelineCenter {
             await self?.syncTikTok()
         }
         deepPassBlocked = false   // a new foreground is exactly when retrying is worth it
+        // Taxonomy v7 re-files the folded categories once; a no-op every foreground after. The
+        // demo library is curated sample data and must not spend budget on a re-analysis.
+        if !StashSession.shared.isDemoAccount, let runner = makeRunner() {
+            Task { [weak self] in
+                if await runner.refileFolded() > 0 { self?.refreshTallies() }
+            }
+        }
         backfillEmbeddings()
         backfillOffers()
         if Self.cloudImportEnabled {

@@ -40,7 +40,7 @@ final class MusicPickDecodingTests: XCTestCase {
         {"category":"comedy","title":"A skit","summary":"...","topics":[]}
         """)
         XCTAssertEqual(decoded.music, [])
-        XCTAssertEqual(decoded.category, .comedy)
+        XCTAssertEqual(decoded.category, .other)   // comedy folded into other in taxonomy v7
     }
 
     /// A response written against the old prompt still reads — the shape change cannot break

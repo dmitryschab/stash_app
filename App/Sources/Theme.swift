@@ -45,12 +45,9 @@ extension Color {
     static let categoryTravel = Color(light: 0x1C8AA8, dark: 0x30A7C6)   // teal
     static let categoryHome = Color(light: 0x6F8A1E, dark: 0x88A63A)     // olive
     static let categoryLearning = Color(light: 0x5A3EC0, dark: 0x745AE0) // indigo
-    static let categoryComedy = Color(light: 0x9B2FC4, dark: 0xB44CDE)   // purple
     static let categoryMusic = Color(light: 0x2743C7, dark: 0x4A63E7)    // cobalt
     static let categoryCoding = Color(light: 0x1A6F52, dark: 0x2A9271)   // forest green
     static let categoryFilm = Color(light: 0x1F6BA8, dark: 0x3389C6)     // steel blue
-    static let categoryDining = Color(light: 0xB02C55, dark: 0xCE4670)   // rose
-    static let categoryWellness = Color(light: 0x3F8A3A, dark: 0x55A84F) // grass green
     static let categoryOther = Color(light: 0xC98A12, dark: 0xC98A12)    // amber
 
     /// Haul's accent. Not a category jewel — Haul is a query across all thirteen, so it takes a
@@ -264,17 +261,14 @@ extension Category {
     var displayName: String {
         switch self {
         case .recipe: "Recipes"
-        case .fitness: "Fitness"
+        case .fitness: "Health & Fitness"
         case .style: "Style"
-        case .travel: "Travel"
+        case .travel: "Places"
         case .home: "Home & DIY"
         case .learning: "Learning"
-        case .comedy: "Comedy"
         case .music: "Music"
         case .coding: "Tech"
         case .film: "Film & TV"
-        case .dining: "Dining"
-        case .wellness: "Wellness"
         case .other: "Other"
         }
     }
@@ -283,17 +277,14 @@ extension Category {
     var singular: String {
         switch self {
         case .recipe: "Recipe"
-        case .fitness: "Fitness"
+        case .fitness: "Health"
         case .style: "Style"
-        case .travel: "Travel"
+        case .travel: "Place"
         case .home: "Home"
         case .learning: "Learning"
-        case .comedy: "Comedy"
         case .music: "Music"
         case .coding: "Tech"
         case .film: "Film"
-        case .dining: "Dining"
-        case .wellness: "Wellness"
         case .other: "Other"
         }
     }
@@ -306,12 +297,9 @@ extension Category {
         case .travel: .categoryTravel
         case .home: .categoryHome
         case .learning: .categoryLearning
-        case .comedy: .categoryComedy
         case .music: .categoryMusic
         case .coding: .categoryCoding
         case .film: .categoryFilm
-        case .dining: .categoryDining
-        case .wellness: .categoryWellness
         case .other: .categoryOther
         }
     }
@@ -321,15 +309,12 @@ extension Category {
         case .recipe: "fork.knife"
         case .fitness: "dumbbell.fill"
         case .style: "bag.fill"
-        case .travel: "airplane"
+        case .travel: "mappin.and.ellipse"
         case .home: "house.fill"
         case .learning: "graduationcap.fill"
-        case .comedy: "theatermasks.fill"
         case .music: "music.note"
         case .coding: "chevron.left.forwardslash.chevron.right"
         case .film: "film"
-        case .dining: "cup.and.saucer.fill"
-        case .wellness: "leaf.fill"
         case .other: "sparkles"
         }
     }
@@ -337,8 +322,7 @@ extension Category {
 
 /// The library segments, in tab order.
 let librarySegments: [Category] = [
-    .recipe, .fitness, .style, .travel, .home, .learning, .comedy, .music, .coding,
-    .film, .dining, .wellness, .other,
+    .recipe, .fitness, .style, .travel, .home, .learning, .music, .coding, .film, .other,
 ]
 
 /// The Library tab's shelves: every segment whose own tab is not currently on the pill.

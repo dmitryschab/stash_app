@@ -191,9 +191,11 @@ public actor PipelineRunner {
     /// its stored caption/transcript/OCR — no re-enrich, no re-transcribe, so nothing that was
     /// fetched is lost. Used to re-bucket the library after the category set changes. I/O-bound
     /// analyzer calls overlap on the actor (like `processAll`); reports (done, total).
-    public func reanalyzeAll(concurrency: Int = 4, progress: @escaping @Sendable (Int, Int) -> Void) async {
+    public func reanalyzeAll(only: Set<String>? = nil, concurrency: Int = 4,
+                             progress: @escaping @Sendable (Int, Int) -> Void) async {
         let videos = (try? ModelContext(container).fetch(FetchDescriptor<Video>())) ?? []
-        let ids = videos.filter { !$0.unavailable && !$0.categoryRaw.isEmpty }.map(\.videoID)
+        let ids = videos.filter { !$0.unavailable && !$0.categoryRaw.isEmpty && only?.contains($0.videoID) != false }
+            .map(\.videoID)
         let total = ids.count
         var done = 0
         progress(done, total)
@@ -210,6 +212,25 @@ public actor PipelineRunner {
                 }
             }
         }
+    }
+
+    /// Moves saves still filed under a name taxonomy v7 folded away (`Category.folded`), or
+    /// under any other off-list name, to where it files now — then re-analyzes the former
+    /// dining ones, because dining split two ways: a recipe filed there lands in travel with
+    /// no recipe card until the analyzer reads it again. Returns how many were re-filed; after
+    /// the first run there are none, so this is safe to call on every foreground.
+    @discardableResult
+    public func refileFolded() async -> Int {
+        let context = ModelContext(container)
+        let current = Category.allCases.map(\.rawValue)
+        let stale = (try? context.fetch(FetchDescriptor<Video>(
+            predicate: #Predicate { $0.categoryRaw != "" && !current.contains($0.categoryRaw) }))) ?? []
+        guard !stale.isEmpty else { return 0 }
+        let dining = Set(stale.filter { $0.categoryRaw == "dining" && !$0.unavailable }.map(\.videoID))
+        for video in stale { video.categoryRaw = Category(filing: video.categoryRaw).rawValue }
+        try? context.save()
+        await reanalyzeAll(only: dining) { _, _ in }
+        return stale.count
     }
 
     private func reanalyzeOne(videoID: String) async {

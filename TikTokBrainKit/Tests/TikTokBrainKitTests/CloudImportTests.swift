@@ -393,7 +393,7 @@ final class CloudImportTests: XCTestCase {
                 films: [FilmPick(title: "Wrong category", year: 2020)])
         ], to: context)
 
-        XCTAssertEqual(video.categoryRaw, Category.comedy.rawValue)
+        XCTAssertEqual(video.categoryRaw, Category.other.rawValue)   // a folded name files where it lives now
         XCTAssertNil(video.filmsJSON)
     }
 

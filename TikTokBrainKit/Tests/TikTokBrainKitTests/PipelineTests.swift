@@ -692,6 +692,43 @@ extension PipelineTests {
         XCTAssertEqual(updated.title, "Miso Ramen")                    // re-analyzed
     }
 
+    /// Taxonomy v7: saves under a folded name move to where it files now, and only the former
+    /// dining ones are re-analyzed, because only dining split two ways.
+    func testRefileFoldedMovesOldNamesAndReanalyzesOnlyDining() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        for (id, raw) in [("dining", "dining"), ("wellness", "wellness"), ("comedy", "comedy"),
+                          ("gaming", "gaming"), ("recipe", "recipe")] {
+            let video = Video(videoID: id, url: URL(string: "https://example.com/\(id)")!, bookmarkedAt: .now)
+            video.hashtags = ["recipe"]           // StubAnalyzer files anything it reads as a recipe
+            video.categoryRaw = raw
+            context.insert(video)
+        }
+        try context.save()
+        let deps = PipelineDeps(
+            enricher: StubEnricher(metasByURL: [:], failingURLs: []),
+            media: StubMedia(bundle: MediaBundle(
+                audioFileURL: URL(fileURLWithPath: "/dev/null"), keyframes: [])),
+            transcriber: StubTranscriber(transcript: "unused"),
+            analyzer: StubAnalyzer(),
+            musicResolver: StubMusicResolver(link: nil),
+            ocr: { _ in "" })
+        let runner = PipelineRunner(deps: deps, container: container)
+
+        let refiled = await runner.refileFolded()
+
+        XCTAssertEqual(refiled, 4)
+        let dining = try XCTUnwrap(fetchVideo("dining", in: container))
+        XCTAssertEqual(dining.categoryRaw, Category.recipe.rawValue)
+        XCTAssertNotNil(dining.recipeJSON, "re-analyzed, so it reaches Cook")
+        XCTAssertEqual(try fetchVideo("wellness", in: container)?.categoryRaw, Category.fitness.rawValue)
+        XCTAssertEqual(try fetchVideo("comedy", in: container)?.categoryRaw, Category.other.rawValue)
+        XCTAssertEqual(try fetchVideo("gaming", in: container)?.categoryRaw, Category.other.rawValue)
+        XCTAssertNil(try fetchVideo("recipe", in: container)?.recipeJSON, "a current name is left alone")
+        let again = await runner.refileFolded()
+        XCTAssertEqual(again, 0)
+    }
+
     func testAnalysisMarksTheAboutStale() async throws {
         // New analysis changes the words the about-text was written from, so the one stored is
         // owed a rewrite.

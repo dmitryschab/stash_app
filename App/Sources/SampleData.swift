@@ -534,7 +534,7 @@ enum SampleData {
                 author: "deskjob",
                 caption: "every standup, every morning #comedy #wfh",
                 hashtags: ["comedy", "work"],
-                category: .comedy,
+                category: .other,
                 title: "Every standup meeting ever",
                 summary: "The nine-minute status round that could have been one line in a channel.",
                 topics: ["work", "meetings"],

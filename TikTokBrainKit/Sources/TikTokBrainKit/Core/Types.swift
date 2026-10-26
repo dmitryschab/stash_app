@@ -28,15 +28,23 @@ public struct VideoMeta: Equatable, Sendable {
     }
 }
 
-public enum Category: String, Codable, Sendable {
-    case recipe, fitness, style, travel, home, learning, comedy, music, coding, film, dining,
-         wellness, other
+public enum Category: String, Codable, Sendable, CaseIterable {
+    case recipe, fitness, style, travel, home, learning, music, coding, film, other
+
+    /// Taxonomy v7 folded three categories back into their neighbours. Saves filed before then
+    /// still carry the old names, on the phone and in the box's stored results.
+    public static let folded: [String: Category] = ["dining": .travel, "wellness": .fitness, "comedy": .other]
+
+    /// Where a stored or model-sent name files now: a folded name reads as its new home, and
+    /// anything else off the list (the model has answered "gaming") as `.other`.
+    public init(filing raw: String) {
+        self = Category(rawValue: raw) ?? Self.folded[raw] ?? .other
+    }
 
     /// Tolerate an unknown or near-miss category from the model instead of throwing and
-    /// failing the whole analysis decode — anything off-list falls back to `.other`.
+    /// failing the whole analysis decode.
     public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = Category(rawValue: raw) ?? .other
+        self = Category(filing: try decoder.singleValueContainer().decode(String.self))
     }
 }
 
