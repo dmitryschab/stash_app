@@ -2,6 +2,7 @@
 # Archive + export + upload the current build to TestFlight, headless, using the
 # App Store Connect API key (no Xcode GUI, no password). Signing is cloud-managed
 # via -allowProvisioningUpdates, so no local Distribution cert is needed.
+# Then submits it to App Store review, released on approval (submit-appstore.py).
 #
 # Usage:  ISSUER_ID=<your-asc-issuer-id> scripts/release-testflight.sh
 # Find the issuer id: App Store Connect -> Users and Access -> Integrations -> App Store Connect API.
@@ -30,3 +31,5 @@ xcrun altool --upload-app -f build/export/*.ipa -t ios \
   --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID"
 
 echo ">>> Uploaded to TestFlight. Processing takes a few minutes; then update Stash on your phone."
+
+ISSUER_ID="$ISSUER_ID" KEY_ID="$KEY_ID" KEY_PATH="$KEY_PATH" uv run ../scripts/submit-appstore.py
