@@ -311,7 +311,13 @@ struct SearchOverlay: View {
                     // A query is worth keeping once it led somewhere — the query these rows
                     // answer, which while "Searching…" shows is not the one in the field.
                     // Simultaneous rather than `onTapGesture`, which would eat the link's own tap.
-                    .simultaneousGesture(TapGesture().onEnded { recordSearch(finalQuery) })
+                    // The field is in the pill, outside this stack, so the push alone would
+                    // leave the keyboard up over the save's page.
+                    .simultaneousGesture(TapGesture().onEnded {
+                        recordSearch(finalQuery)
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                        to: nil, from: nil, for: nil)
+                    })
                 Divider().overlay(Color.stashInk.opacity(0.12))
             }
         }
