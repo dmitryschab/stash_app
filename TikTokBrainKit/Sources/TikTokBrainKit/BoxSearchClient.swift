@@ -1,8 +1,9 @@
 // BoxSearchClient.swift
 //
 // The reading half of search: POST {base}/search ({query, candidates} → the ids that answer it,
-// best first). The box hands the candidates to Claude Haiku, which reads each save's about-text
-// against the request — what cosine cannot do for "something quick and vegetarian for tonight".
+// best first). The box hands the candidates to a model (Gemma on Bedrock), which reads each save's
+// about-text against the request — what cosine cannot do for "something quick and vegetarian for
+// tonight".
 //
 // The candidates are `SearchIndex.rank`'s own top, so the phone still finds the pool and the box
 // only judges it. Shaped exactly like the other `BoxClients`: same JWT funnel, same timeout, same

@@ -192,7 +192,7 @@ def build_about_prompt(item: AboutItem) -> str:
 
 
 def _chat(url: str, model: str, token: str, system: str, content: str | list,
-          max_tokens: int) -> str:
+          max_tokens: int, timeout: float = ABOUT_TIMEOUT) -> str:
     """The one network call. Raises on anything but a 200 with an answer in it."""
     response = requests.post(
         url,
@@ -206,7 +206,7 @@ def _chat(url: str, model: str, token: str, system: str, content: str | list,
                 {"role": "user", "content": content},
             ],
         },
-        timeout=ABOUT_TIMEOUT,
+        timeout=timeout,
     )
     if response.status_code != 200:
         raise requests.HTTPError(f"about model {response.status_code}", response=response)

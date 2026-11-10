@@ -8,10 +8,10 @@
 //
 // The ranking is the Kit's `SearchIndex`. Four hundred milliseconds after the typing stops the
 // query goes to the box for an embedding; once that lands, fails, or runs out of time, the
-// query is ranked once. Online, the top of that ranking then goes to the box's /search, where
-// Claude Haiku reads each save's about-text against the request and picks the ones that answer
-// it, best first (BoxSearchClient); its picks are the list. Offline, failed or slow, the ranking
-// itself is the list. Either way that list is final. Nothing re-sorts under the reader's thumb: while
+// query is ranked once. Online, the top of that ranking then goes to the box's /search, where a
+// model reads each save's about-text against the request and picks the ones that answer it, best
+// first (BoxSearchClient); its picks lead the list and the ranking follows them. Offline, failed
+// or slow, the ranking alone is the list. Either way that list is final. Nothing re-sorts under the reader's thumb: while
 // the next query settles, the last final list stays where it is under one "Searching…" line.
 //
 // `SearchGrip` is the gesture arithmetic and `SearchSuggestions` is what an empty field offers
@@ -233,18 +233,21 @@ struct SearchOverlay: View {
                 .prefix(BoxSearchClient.maxCandidates).map(\.videoID))
         }.value
         guard !Task.isCancelled else { return }
-        let picked = await haikuPicks(query: query, pool: pool)
+        let picks = await modelPicks(query: query, pool: pool) ?? []
         guard !Task.isCancelled else { return }
-        // Haiku picking nothing reads as "No saves matched" for a request the ranking could still
-        // answer in part: show the ranking's list instead. Search never apologises.
-        finalIDs = picked.flatMap { $0.isEmpty ? nil : $0 } ?? ranked
+        // The picks lead and the ranking's own list follows, so nothing it found is lost. On the
+        // owner's 20 scorecard searches: right save in the first three 20/20 (ranking alone 18/20),
+        // saves that must appear 62/72 (61/72); the picks alone were 20/20 but 56/72.
+        let picked = Set(picks)
+        finalIDs = picks + ranked.filter { !picked.contains($0) }
         finalQuery = query
     }
 
-    /// The pool's ids Haiku says answer the query, best first; nil when it could not say — box
-    /// down, cap spent, model refused, or slower than the deadline.
-    /// ponytail: a fixed 10 s, the box's 8 s model timeout plus the round trip; not measured.
-    private func haikuPicks(query: String, pool: [String]) async -> [String]? {
+    /// The pool's ids the box's model says answer the query, best first; nil when it could not
+    /// say — box down, cap spent, or slower than the deadline.
+    /// ponytail: a fixed 10 s, the box's 8 s model timeout plus the round trip; the model itself
+    /// answered the scorecard in 0.4 s median, 0.8 s at worst.
+    private func modelPicks(query: String, pool: [String]) async -> [String]? {
         let byID = Dictionary(videos.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
         let candidates = pool.compactMap { id -> BoxSearchClient.Candidate? in
             guard let video = byID[id] else { return nil }
