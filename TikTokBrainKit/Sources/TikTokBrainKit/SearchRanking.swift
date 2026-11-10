@@ -145,8 +145,12 @@ public enum SearchIndex {
     ///
     /// Group 1 is everything else, found by word only: more query words hit first, a save with an
     /// about-text before one without, then newest first. It always sits below group 0.
+    ///
+    /// `floor` is `meaningFloor` for the list a person reads. The pool `BoxSearchClient` hands to
+    /// Haiku asks for 0: every save judged on meaning, in this order, to take the top of.
     public static func rank(
-        _ entries: [SearchEntry], query: String, embedding: [Float]?
+        _ entries: [SearchEntry], query: String, embedding: [Float]?,
+        floor: Double = meaningFloor
     ) -> [SearchMatch] {
         let queryWords = words(query)
 
@@ -161,7 +165,7 @@ public enum SearchIndex {
             let hits = queryWords.intersection(entry.words).count
             if let embedding, entry.hasAbout, let stored = entry.embedding {
                 let cosine = EmbeddingVector.cosine(embedding, stored)
-                guard hits > 0 || cosine >= meaningFloor else { continue }
+                guard hits > 0 || cosine >= floor else { continue }
                 let score = cosine + (hits > 0 ? wordBoost : 0)
                 scored.append(Scored(entry: entry, group: 0, key: Int((score / tieBand).rounded(.down))))
             } else {

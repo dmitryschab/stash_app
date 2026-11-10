@@ -44,6 +44,22 @@ final class SearchRankingTests: XCTestCase {
         Video(videoID: id, url: URL(string: "https://tiktok.com/x/\(id)")!, bookmarkedAt: epoch)
     }
 
+    // MARK: Haiku's pool
+
+    func testThePoolForHaikuTakesEverySaveJudgedOnMeaningInTheSameOrder() {
+        // Below the floor a save is out of the list a person reads, but it is still a candidate
+        // Haiku may decide answers the request.
+        let near = entry("near", about: "a quick tofu stir fry", at: day(0),
+                         cosine: SearchIndex.meaningFloor + 0.1)
+        let far = entry("far", about: "a mushroom risotto", at: day(0),
+                        cosine: SearchIndex.meaningFloor - 0.2)
+        let none = entry("none", about: "leg day at the gym", at: day(0), cosine: 0)
+        let entries = [far, none, near]
+        XCTAssertEqual(ids(SearchIndex.rank(entries, query: "dinner", embedding: query)), ["near"])
+        XCTAssertEqual(ids(SearchIndex.rank(entries, query: "dinner", embedding: query, floor: 0)),
+                       ["near", "far", "none"])
+    }
+
     // MARK: Words
 
     func testWholeWordsOnly() {

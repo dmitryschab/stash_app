@@ -271,13 +271,18 @@ def _daily_cap() -> int:
 
 
 def _charge(store: DynamoImportStore) -> None:
-    """Count one item against the caller's daily about allowance, or 429.
+    """Count one item against the caller's daily about allowance, or 429."""
+    charge_daily(store, "ABOUTCAP", _daily_cap(), "about")
+
+
+def charge_daily(store: DynamoImportStore, counter: str, cap: int, what: str) -> None:
+    """Count one unit against one of the caller's daily counters, or 429. search_api's
+    SEARCHCAP shares it.
 
     charge_deep_pass, re-played on its own counter exactly as haul_offers_api._charge is.
     Retry-After points at the next UTC midnight, when the counter rolls.
     """
-    cap = _daily_cap()
-    key = {"PK": store.partition, "SK": "ABOUTCAP"}
+    key = {"PK": store.partition, "SK": counter}
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     for _ in range(QUOTA_CAS_ATTEMPTS):
         item = store.table.get_item(Key=key).get("Item")
@@ -286,7 +291,7 @@ def _charge(store: DynamoImportStore) -> None:
             now = datetime.now(timezone.utc)
             midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             raise HTTPException(
-                status_code=429, detail="about daily cap reached",
+                status_code=429, detail=f"{what} daily cap reached",
                 headers={"Retry-After": str(max(1, int((midnight - now).total_seconds())))})
         try:
             if item is None:
@@ -312,7 +317,7 @@ def _charge(store: DynamoImportStore) -> None:
                 continue
             raise
         return
-    raise RuntimeError("about cap contention: compare-and-set did not settle")
+    raise RuntimeError(f"{what} cap contention: compare-and-set did not settle")
 
 
 class AboutRequest(BaseModel):

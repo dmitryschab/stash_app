@@ -132,7 +132,7 @@
       <p>We do not rely on consent for any of the above, so there is no consent for you to withdraw — instead, deleting your account (below) ends the processing entirely. If we ever add something genuinely optional, we will ask for consent separately and it will be refusable without losing the rest.</p>
 
       <h2>Where it is processed</h2>
-      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. Speech-to-text runs at Groq, which is outside the EU; see international transfers below. While that analysis runs, the caption, hashtags, creator name and sound title of each imported video also go to Cloudflare's Clef model, through OpenRouter, Inc., for a first category guess that the full analysis then replaces; the images of a photo post go to a vision model at OpenRouter to be read.</p>
+      <p>Stash runs on a single server we operate in Amazon Web Services' <strong>eu-north-1 region (Stockholm, Sweden)</strong>. Your import queue and the database holding your library are in the same region. Text analysis runs on AWS Bedrock in <strong>eu-central-1 (Frankfurt, Germany)</strong>, on an open-weights model hosted inside AWS — the captions and transcripts sent there are not passed to the model's original publisher. When you search, what you typed and the short descriptions of up to 60 of your saves go to Anthropic's Claude Haiku model on AWS Bedrock in the EU, which picks the saves that answer it; AWS runs that model, and Anthropic does not receive the request. Speech-to-text runs at Groq, which is outside the EU; see international transfers below. While that analysis runs, the caption, hashtags, creator name and sound title of each imported video also go to Cloudflare's Clef model, through OpenRouter, Inc., for a first category guess that the full analysis then replaces; the images of a photo post go to a vision model at OpenRouter to be read.</p>
       <p>This is shared infrastructure. Your rows sit in the same database table and the same queue as other users', separated by your account identifier rather than by having a server of your own.</p>
       <p>To transcribe a video and read its on-screen text, our server fetches the video from TikTok, extracts the audio and samples some frames, and deletes the downloaded file as soon as that is done. Stash does not keep copies of TikTok videos.</p>
 
@@ -140,7 +140,7 @@
       <p>These are our sub-processors. We do not share your data with anyone else, and we do not sell it.</p>
       <dl>
         <dt>Amazon Web Services EMEA SARL</dt>
-        <dd>Hosting, the import queue, and the database (eu-north-1, Stockholm); text analysis on Bedrock (eu-central-1, Frankfurt). Receives everything listed under "What we collect".</dd>
+        <dd>Hosting, the import queue, and the database (eu-north-1, Stockholm); text analysis and search on Bedrock (eu-central-1, Frankfurt). Receives everything listed under "What we collect".</dd>
         <dt>Groq, Inc.</dt>
         <dd>Speech-to-text. Receives the audio track extracted from a saved video and returns the transcript. It does not receive your account identifier, your email, or your library.</dd>
         <dt>OpenRouter, Inc.</dt>

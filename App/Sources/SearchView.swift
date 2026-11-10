@@ -8,7 +8,10 @@
 //
 // The ranking is the Kit's `SearchIndex`. Four hundred milliseconds after the typing stops the
 // query goes to the box for an embedding; once that lands, fails, or runs out of time, the
-// query is ranked once and that list is final. Nothing re-sorts under the reader's thumb: while
+// query is ranked once. Online, the top of that ranking then goes to the box's /search, where
+// Claude Haiku reads each save's about-text against the request and picks the ones that answer
+// it, best first (BoxSearchClient); its picks are the list. Offline, failed or slow, the ranking
+// itself is the list. Either way that list is final. Nothing re-sorts under the reader's thumb: while
 // the next query settles, the last final list stays where it is under one "Searching…" line.
 //
 // `SearchGrip` is the gesture arithmetic and `SearchSuggestions` is what an empty field offers
@@ -72,12 +75,12 @@ struct SearchOverlay: View {
     @AppStorage("recentSearches") private var recentSearchesRaw = ""
 
     /// The library flattened for ranking, and the last final ranking over it. Both are filled off
-    /// the main thread; a render only maps ids back onto rows. `finalMatches` and `finalQuery`
+    /// the main thread; a render only maps ids back onto rows. `finalIDs` and `finalQuery`
     /// are only ever written together, so the rows on screen are always one query's whole answer.
     @Environment(\.modelContext) private var context
     @State private var index: [SearchEntry] = []
     @State private var indexRevision = 0
-    @State private var finalMatches: [SearchMatch] = []
+    @State private var finalIDs: [String] = []
     @State private var finalQuery = ""
 
     var body: some View {
@@ -216,24 +219,57 @@ struct SearchOverlay: View {
         guard !query.isEmpty else {
             // An empty field ends the search: the next query is a first one again, shown as
             // "Searching…" alone rather than over an older query's rows.
-            finalMatches = []
+            finalIDs = []
             finalQuery = ""
             return
         }
         guard embeddedQuery == query, indexRevision > 0, finalQuery != query else { return }
         let entries = index, embedding = queryEmbedding
-        let result = await Task.detached(priority: .userInitiated) {
-            SearchIndex.rank(entries, query: query, embedding: embedding)
+        let (ranked, pool) = await Task.detached(priority: .userInitiated) {
+            (SearchIndex.rank(entries, query: query, embedding: embedding).map(\.videoID),
+             // No vector means no box: the pool is only worth sending when the embedding came back.
+             embedding == nil ? [] : SearchIndex.rank(entries, query: query, embedding: embedding,
+                                                      floor: 0)
+                .prefix(BoxSearchClient.maxCandidates).map(\.videoID))
         }.value
         guard !Task.isCancelled else { return }
-        finalMatches = result
+        let picked = await haikuPicks(query: query, pool: pool)
+        guard !Task.isCancelled else { return }
+        // Haiku picking nothing reads as "No saves matched" for a request the ranking could still
+        // answer in part: show the ranking's list instead. Search never apologises.
+        finalIDs = picked.flatMap { $0.isEmpty ? nil : $0 } ?? ranked
         finalQuery = query
+    }
+
+    /// The pool's ids Haiku says answer the query, best first; nil when it could not say — box
+    /// down, cap spent, model refused, or slower than the deadline.
+    /// ponytail: a fixed 10 s, the box's 8 s model timeout plus the round trip; not measured.
+    private func haikuPicks(query: String, pool: [String]) async -> [String]? {
+        let byID = Dictionary(videos.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
+        let candidates = pool.compactMap { id -> BoxSearchClient.Candidate? in
+            guard let video = byID[id] else { return nil }
+            // A save still waiting for its about-text is read by its summary, as the index does.
+            let text = video.about.flatMap { $0.isEmpty ? nil : $0 } ?? video.summary
+            return text.isEmpty ? nil : BoxSearchClient.Candidate(id: id, about: text)
+        }
+        guard !candidates.isEmpty else { return nil }
+        let client = BoxSearchClient(config: PipelineCenter.currentConfig())
+        return await withTaskGroup(of: [String]?.self) { group in
+            group.addTask { try? await client.pick(query: query, candidates: candidates) }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
     }
 
     /// The ranked ids back onto the live rows. A save deleted since it was ranked drops out.
     private var results: [Video] {
         let byID = Dictionary(videos.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
-        return finalMatches.compactMap { byID[$0.videoID] }
+        return finalIDs.compactMap { byID[$0] }
     }
 
     // MARK: - Pieces

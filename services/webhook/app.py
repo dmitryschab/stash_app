@@ -59,6 +59,9 @@ app.include_router(embeddings_router)
 # What search matches a save against — one route, a daily cap instead of quota. See about_api.py.
 from about_api import router as about_router  # noqa: E402
 app.include_router(about_router)
+# Haiku picks which of search's candidates answer the request — one route, a daily cap. See search_api.py.
+from search_api import router as search_router  # noqa: E402
+app.include_router(search_router)
 # Haul's price check — one route, a daily cap instead of quota. See haul_offers_api.py.
 from haul_offers_api import router as haul_offers_router  # noqa: E402
 app.include_router(haul_offers_router)

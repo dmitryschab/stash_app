@@ -13,3 +13,4 @@ curl_cffi  # gives yt-dlp a browser impersonation target; without it TikTok fetc
 boto3
 pytest
 httpx
+anthropic[bedrock]  # search_api: Claude Haiku on Bedrock (AnthropicBedrockMantle)
