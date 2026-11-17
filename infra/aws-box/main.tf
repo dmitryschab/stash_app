@@ -4,7 +4,6 @@ terraform {
     aws   = { source = "hashicorp/aws", version = "~> 5.0" }
     tls   = { source = "hashicorp/tls", version = "~> 4.0" }
     local = { source = "hashicorp/local", version = "~> 2.4" }
-    http  = { source = "hashicorp/http", version = "~> 3.4" }
   }
 }
 
@@ -63,14 +62,6 @@ provider "aws" {
   }
 }
 
-# Lock SSH to the machine running terraform, not the whole internet.
-data "http" "myip" {
-  url = "https://checkip.amazonaws.com"
-}
-
-locals {
-  operator_cidr = "${chomp(data.http.myip.response_body)}/32"
-}
 
 # Latest Ubuntu 24.04 LTS from Canonical.
 data "aws_ami" "ubuntu" {
@@ -121,11 +112,13 @@ resource "aws_security_group" "box" {
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    description = "SSH from operator IP only"
+    # Open to any address on the owner's say (2026-11-17): deploys run from changing networks.
+    # sshd is key-only (PasswordAuthentication no), so the key is the only gate.
+    description = "SSH from any IP, key only"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [local.operator_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
