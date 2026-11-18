@@ -618,7 +618,7 @@ final class PipelineCenter {
     private func runCloudImport(url: URL) async {
         dismissedError = nil   // a new import is a new chance to be told what went wrong
         guard !isImporting, let runner = makeRunner(), let client = Self.makeCloudClient() else {
-            lastError = "Stash isn't configured — check the base URL in Settings."
+            lastError = "Stash isn't configured. Check the base URL in Settings."
             return
         }
         lastError = nil
@@ -826,7 +826,7 @@ final class PipelineCenter {
         guard let runner = makeRunner(), let client = Self.makeCloudClient() else {
             links.forEach { _ = try? inbox.write($0) }
             pendingShares.removeAll()
-            lastError = "Stash isn't configured — check the base URL in Settings."
+            lastError = "Stash isn't configured. Check the base URL in Settings."
             return
         }
         isImporting = true
@@ -854,8 +854,8 @@ final class PipelineCenter {
             persistShareImports()
             setPendingShares(stage: .reading, videoIDs: bookmarks.map(\.id))
             lastSummary = bookmarks.count == 1
-                ? "Saved a shared TikTok — reading it now"
-                : "Saved \(bookmarks.count) shared TikToks — reading them now"
+                ? "Saved a shared TikTok, reading it now"
+                : "Saved \(bookmarks.count) shared TikToks, reading them now"
             syncCloudImportIfNeeded()
         } catch {
             bookmarks.forEach { _ = try? inbox.write($0.url) }
@@ -911,14 +911,14 @@ final class PipelineCenter {
             // The save itself is safe — only the deep read is missing. Keep the entries so the
             // next foreground after the budget refills finishes the job.
             deepPassBlocked = true
-            lastError = "Import budget used up — the shared TikTok is saved, but its transcript "
+            lastError = "Import budget used up. The shared TikTok is saved, but its transcript "
                 + "and on-screen text are not. \(quota.monthLimit) more on "
                 + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted) + "."
             return
         }
         guard !transcripts.stoppedEarly, !visual.stoppedEarly else {
             deepPassBlocked = true
-            lastError = "Stopped part-way through reading the shared TikTok — Stash will finish "
+            lastError = "Stopped part-way through reading the shared TikTok. Stash will finish "
                 + "it next time you open the app."
             return
         }
@@ -940,7 +940,7 @@ final class PipelineCenter {
     /// Flips the placeholders to their failure caption, then clears them a beat later — the
     /// inbox files remain the durable record of the share, so the card only has to say what
     /// happened before getting out of the way.
-    private func failPendingShares(message: String = "Couldn't sync — will retry",
+    private func failPendingShares(message: String = "Couldn't sync, will retry",
                                    holdSeconds: UInt64 = 4) {
         guard !pendingShares.isEmpty else { return }
         setPendingShares(stage: .failed(message))
@@ -1104,11 +1104,11 @@ final class PipelineCenter {
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
         if let quota = result.quotaExhausted {
-            lastError = "Import budget used up — filled \(result.filled), \(result.remaining) "
+            lastError = "Import budget used up: filled \(result.filled), \(result.remaining) "
                 + "still to go. \(quota.monthLimit) more on "
                 + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted) + "."
         } else if result.stoppedEarly {
-            lastError = "Transcription is being throttled — filled \(result.filled), "
+            lastError = "Transcription is being throttled: filled \(result.filled), "
                 + "\(result.remaining) still to go. Try again in an hour."
         } else {
             lastSummary = "Filled \(result.filled) transcripts · \(result.remaining) left"
@@ -1173,11 +1173,11 @@ final class PipelineCenter {
             Task { @MainActor [weak self] in self?.progress = (done, total) }
         }
         if let quota = result.quotaExhausted {
-            lastError = "Import budget used up — read \(result.filled), \(result.remaining) "
+            lastError = "Import budget used up: read \(result.filled), \(result.remaining) "
                 + "still to go. \(quota.monthLimit) more on "
                 + quota.monthResetDate.formatted(date: .abbreviated, time: .omitted) + "."
         } else if result.stoppedEarly {
-            lastError = "Stopped after repeated download failures — read \(result.filled), "
+            lastError = "Stopped after repeated download failures: read \(result.filled), "
                 + "\(result.remaining) still to go. Check your connection and try again."
         } else {
             lastSummary = "Read on-screen text for \(result.filled) · \(result.remaining) left"
@@ -1379,7 +1379,7 @@ final class PipelineCenter {
                                       importID: status.importID, now: now) else { return }
         let content = UNMutableNotificationContent()
         content.title = "Your newest saves are sorted"
-        content.body = "Open Stash to browse — the rest keeps sorting."
+        content.body = "Open Stash to browse. The rest keeps sorting."
         content.sound = .default
         // Same identifier on every background: a second schedule replaces the first.
         UNUserNotificationCenter.current().add(UNNotificationRequest(

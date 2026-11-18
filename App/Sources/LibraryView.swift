@@ -68,7 +68,7 @@ struct LibraryView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, stashTabBarClearance)
-                .animation(.spring(duration: 0.45, bounce: 0.25), value: center.pendingShares)
+                .animation(.stash(.spring(duration: 0.45, bounce: 0)), value: center.pendingShares)
             }
             .background(Color.stashBackground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -237,7 +237,7 @@ struct LibraryView: View {
             Micro(text: label, size: 12, color: .stashInk)
         }
         .foregroundStyle(Color.stashInk)
-        .padding(.horizontal, 13)
+        .padding(.horizontal, 12)
         .frame(height: 44)
         .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
         .contentShape(Capsule())
@@ -284,7 +284,7 @@ struct LibraryView: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                 }
-                .padding(.horizontal, 11)
+                .padding(.horizontal, 12)
                 .frame(height: 28)
                 .background(Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2))
                 .minTapTarget()
@@ -304,7 +304,7 @@ struct LibraryView: View {
             IntentListView(title: intent.deskTitle, tint: intent.deskTint, videos: shelf)
         }
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 ForEach(shelf.prefix(12), id: \.videoID) { video in
                     NavigationLink { VideoDetailView(video: video) } label: {
                         PosterCard(video: video)
@@ -360,8 +360,8 @@ struct LibraryView: View {
         shelfHeader(intent.deskTitle, count: shelf.count, tint: intent.deskTint) {
             IntentListView(title: intent.deskTitle, tint: intent.deskTint, videos: shelf)
         }
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)],
-                  spacing: 9) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                  spacing: 8) {
             ForEach(shelf.prefix(4), id: \.videoID) { video in
                 NavigationLink { VideoDetailView(video: video) } label: {
                     MoodTile(video: video)
@@ -394,7 +394,7 @@ struct LibraryView: View {
                                     .foregroundStyle(Color.stashInk)
                                     .lineLimit(1)
                                 Text("Not classified yet")
-                                    .font(.archivo(12.5))
+                                    .font(.archivo(13))
                                     .foregroundStyle(Color.categoryOther.asType)
                                     .lineLimit(1)
                             }
@@ -403,7 +403,7 @@ struct LibraryView: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(Color.stashInk.opacity(0.4))
                         }
-                        .padding(.vertical, 13)
+                        .padding(.vertical, 12)
                     }
                     .buttonStyle(.plain)
                     Divider().overlay(Color.stashInk.opacity(0.12))
@@ -498,7 +498,7 @@ private struct PosterCard: View {
     let video: Video
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             ShelfArt(video: video, width: 104, height: 128)
             Text(video.rowTitle)
                 .font(.archivo(12, .bold))
@@ -506,7 +506,7 @@ private struct PosterCard: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(2, reservesSpace: true)
             Text(video.topics.first ?? video.category?.singular ?? "")
-                .font(.archivo(10.5))
+                .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .lineLimit(1)
         }
@@ -520,7 +520,7 @@ private struct MoodTile: View {
     let video: Video
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             ShelfArt(video: video, width: nil, height: 104)
             Text(video.rowTitle)
                 .font(.archivo(12, .bold))
@@ -546,11 +546,11 @@ private struct JustSavedRow: View {
 
     var body: some View {
         let tint = video.category?.color ?? .stashInk
-        HStack(alignment: .top, spacing: 11) {
+        HStack(alignment: .top, spacing: 12) {
             ShelfArt(video: video, width: 58, height: 74)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(video.rowTitle)
-                    .font(.archivo(14.5, .bold))
+                    .font(.archivo(15, .bold))
                     .foregroundStyle(Color.stashInk)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
@@ -572,7 +572,7 @@ private struct JustSavedRow: View {
             .frame(minHeight: 74)
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
 }
@@ -591,7 +591,7 @@ private struct BuyShelfRow: View {
 
     var body: some View {
         NavigationLink { HaulDetailView(video: video, pick: pick, pickIndex: pickIndex) } label: {
-            HStack(spacing: 11) {
+            HStack(spacing: 12) {
                 Thumbnail(url: PickFrameStore.shared.frame(videoID: video.videoID, pickIndex: pickIndex)
                               ?? video.thumbnailURL,
                           category: video.category, size: 44)
@@ -602,14 +602,14 @@ private struct BuyShelfRow: View {
                         .lineLimit(1)
                     Text([pick.kind, video.author.isEmpty ? "" : "@\(video.author)"]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.archivo(11.5))
+                        .font(.archivo(12))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 if !price.isEmpty {
                     Micro(text: price, size: 11, color: .stashHaul)
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, 8)
                         .frame(height: 28)
                         .background(Capsule().strokeBorder(Color.stashHaul, lineWidth: 1.2))
                 } else {
@@ -618,7 +618,7 @@ private struct BuyShelfRow: View {
                         .foregroundStyle(Color.stashHaul)
                 }
             }
-            .padding(.vertical, 9)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -638,11 +638,11 @@ struct LibraryRow: View {
     var badgeTint: Color = .stashInk
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 12) {
             Thumbnail(url: video.thumbnailURL, category: video.category, size: 52)
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.rowTitle)
-                    .font(.archivo(14.5, .bold))
+                    .font(.archivo(15, .bold))
                     .foregroundStyle(Color.stashInk)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
@@ -660,7 +660,7 @@ struct LibraryRow: View {
                             Micro(text: topic, size: 11, color: tint.asType)
                         }
                         Text(meta)
-                            .font(.archivo(11.5))
+                            .font(.archivo(12))
                             .foregroundStyle(Color.stashInk.opacity(0.62))
                             .lineLimit(1)
                     }
@@ -671,7 +671,7 @@ struct LibraryRow: View {
                 // A label, not a control — the row behind it is the target. It only has to be
                 // readable, which at 7.5 pt it was not.
                 Micro(text: badge, size: 11, color: badgeTint)
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 8)
                     .frame(height: 28)
                     .background(Capsule().strokeBorder(badgeTint, lineWidth: 1.2))
             } else if let link = video.soleMusicPick?.link {
@@ -690,7 +690,7 @@ struct LibraryRow: View {
                     .foregroundStyle(Color.stashInk.opacity(0.4))
             }
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
     }
 
     private var meta: String {
@@ -862,7 +862,7 @@ private struct IncomingShareCard: View {
     private var isFailed: Bool { if case .failed = stage { true } else { false } }
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 12) {
             ShimmerBlock(cornerRadius: 10)
                 .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 6) {
@@ -875,9 +875,9 @@ private struct IncomingShareCard: View {
             Spacer(minLength: 0)
         }
         .stashOutlineCard(padding: 12)
-        .animation(.easeOut(duration: 0.25), value: caption)
+        .animation(.stash(.easeOut(duration: 0.25)), value: caption)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Syncing a shared TikTok — \(caption)")
+        .accessibilityLabel("Syncing a shared TikTok: \(caption)")
     }
 }
 

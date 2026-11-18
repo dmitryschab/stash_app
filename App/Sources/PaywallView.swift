@@ -39,7 +39,7 @@ struct PaywallView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 appTile.padding(.top, 28)
 
                 Text("Stash Pro")
@@ -49,9 +49,9 @@ struct PaywallView: View {
                 Text("Everything you save, read back as recipes, track lists and summaries you can search.")
                     .font(.archivo(14))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
-                    .multilineTextAlignment(.center)
+                    .multilineTextAlignment(.leading)
                     .lineSpacing(4)
-                    .frame(maxWidth: 300)
+                    .frame(maxWidth: 300, alignment: .leading)
                     .padding(.top, 10)
 
                 benefits.padding(.top, 26)
@@ -60,12 +60,14 @@ struct PaywallView: View {
 
                 priceLine.padding(.top, 26)
                 subscribeButton.padding(.top, 14)
-                restoreButton.padding(.top, 10)
+                // Under the button the small print stays centred; everything above it leads
+                // from the left edge like the rest of the app.
+                restoreButton.frame(maxWidth: .infinity).padding(.top, 10)
 
-                renewalTerms.padding(.top, 20)
-                legalLine.padding(.top, 12)
+                renewalTerms.frame(maxWidth: .infinity).padding(.top, 20)
+                legalLine.frame(maxWidth: .infinity).padding(.top, 12)
                 if showsAccountLinks {
-                    accountLinks.padding(.top, 26).padding(.bottom, 28)
+                    accountLinks.frame(maxWidth: .infinity).padding(.top, 26).padding(.bottom, 28)
                 } else {
                     Spacer(minLength: 28)
                 }
@@ -122,7 +124,7 @@ struct PaywallView: View {
             } else if store.displayPrice.isEmpty {
                 ProgressView().tint(.stashInk)
             } else {
-                VStack(spacing: 4) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("\(store.displayPrice) per month")
                         .font(.archivo(20, .heavy))
                         .foregroundStyle(Color.stashInk)
@@ -225,11 +227,11 @@ struct PaywallView: View {
                     .font(.system(size: 32, weight: .semibold))
                     .foregroundStyle(Color.stashOnInk)
             )
-            .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
+            .shadow(color: Color.stashDeepInk.opacity(0.22), radius: 15, y: 8)
     }
 
     private func errorLine(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 13, weight: .bold))
             Text(message)

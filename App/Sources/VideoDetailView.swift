@@ -91,8 +91,8 @@ struct VideoDetailView: View {
                 CategoryBadge(category: category)
             } else if video.unavailable {
                 Micro(text: "Unavailable", size: 12, color: Color.categoryOther.asType)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                     .background(Capsule().strokeBorder(Color.categoryOther, lineWidth: 1.5))
             }
             if isCoding { openInTikTok }
@@ -153,7 +153,7 @@ struct VideoDetailView: View {
                 .foregroundStyle(Color.stashInk)
                 .padding(.top, 16)
             Text(byline)
-                .font(.archivo(12.5, .semibold))
+                .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .padding(.top, 8)
             // The coding page says it in "The point" instead.
@@ -202,7 +202,7 @@ struct VideoDetailView: View {
                             .foregroundStyle(Color.stashInk)
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                     Divider().overlay(Color.stashInk.opacity(0.12))
                 }
             }
@@ -223,7 +223,7 @@ struct VideoDetailView: View {
                             .lineSpacing(3)
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                 }
             }
             .padding(.top, 4)
@@ -238,7 +238,7 @@ struct VideoDetailView: View {
         sectionHeader(picks.count == 1 ? "Track" : "\(picks.count) releases")
         VStack(alignment: .leading, spacing: 14) {
             ForEach(Array(picks.enumerated()), id: \.offset) { index, pick in
-                HStack(spacing: 13) {
+                HStack(spacing: 12) {
                     if picks.count == 1 {
                         Thumbnail(url: video.thumbnailURL, category: .music, size: 46)
                     } else {
@@ -253,7 +253,7 @@ struct VideoDetailView: View {
                             .foregroundStyle(Color.stashInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(pickByline(pick))
-                            .font(.archivo(12.5))
+                            .font(.archivo(13))
                             .foregroundStyle(Color.stashInk.opacity(0.62))
                     }
                     Spacer(minLength: 0)
@@ -336,17 +336,17 @@ struct VideoDetailView: View {
     }
 
     private func contrastColumn(_ label: String, _ text: String, highlighted: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             Micro(text: label, size: 11,
                   color: highlighted ? tint : .stashInk.opacity(0.62))
             Text(text)
-                .font(.archivo(12.5))
+                .font(.archivo(13))
                 .foregroundStyle(Color.stashInk.opacity(highlighted ? 1 : 0.62))
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(11)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(highlighted ? tint : Color.stashInk.opacity(0.28),
@@ -382,7 +382,7 @@ struct VideoDetailView: View {
                     codeItemText(item, dimmed: checked)
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 9)
+                .padding(.vertical, 8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -397,7 +397,7 @@ struct VideoDetailView: View {
                         .foregroundStyle(tint.asType)
                         .padding(.top, 2)
                 }
-                .padding(.vertical, 9)
+                .padding(.vertical, 8)
                 .contentShape(Rectangle())
             }
             .accessibilityLabel("Open \(item.text)")
@@ -408,7 +408,7 @@ struct VideoDetailView: View {
             // is not a greyed-out one.
             Button {
                 guard hasDetail else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(.stash(.easeOut(duration: 0.2))) {
                     if open { expanded.remove(index) } else { expanded.insert(index) }
                 }
             } label: {
@@ -428,7 +428,7 @@ struct VideoDetailView: View {
                             .multilineTextAlignment(.leading)
                         if open, hasDetail {
                             Text(item.detail)
-                                .font(.archivo(12.5))
+                                .font(.archivo(13))
                                 .foregroundStyle(Color.stashInk.opacity(0.62))
                                 .lineSpacing(2)
                                 .multilineTextAlignment(.leading)
@@ -443,7 +443,7 @@ struct VideoDetailView: View {
                             .rotationEffect(.degrees(open ? 90 : 0))
                     }
                 }
-                .padding(.vertical, 9)
+                .padding(.vertical, 8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -460,7 +460,7 @@ struct VideoDetailView: View {
                 .multilineTextAlignment(.leading)
             if !item.detail.isEmpty {
                 Text(item.detail)
-                    .font(.archivo(12.5))
+                    .font(.archivo(13))
                     .foregroundStyle(Color.stashInk.opacity(dimmed ? 0.35 : 0.6))
                     .lineSpacing(2)
                     .multilineTextAlignment(.leading)
@@ -504,7 +504,7 @@ struct VideoDetailView: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(tint.asType)
                     }
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Open \(pageName(link)) on \(host(link))")
@@ -577,7 +577,7 @@ struct VideoDetailView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(Color.stashInk.opacity(0.4))
                     }
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -647,7 +647,7 @@ struct VideoDetailView: View {
     /// only thing at the foot of the screen, which is the only thing a reader wants there.
     private var actions: some View {
         Link(destination: video.url) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 Image(systemName: video.category == .film ? "arrow.up.right.square" : "play.rectangle")
                     .font(.system(size: 15, weight: .semibold))
                 Text(video.category == .film ? "Watch on TikTok" : "Open in TikTok")

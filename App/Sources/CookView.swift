@@ -104,13 +104,13 @@ struct CookView: View {
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                TopicChip(label: "all", isOn: focus == nil) { focus = nil }
+                TopicChip(label: "All", isOn: focus == nil) { focus = nil }
                 ForEach(rowTopics) { topic in
                     TopicChip(label: topic.name, count: topic.count, isOn: focus == topic.name) {
                         focus = focus == topic.name ? nil : topic.name
                     }
                 }
-                TopicChip(label: "more", symbol: "ellipsis", isOn: false) { browsingTopics = true }
+                TopicChip(label: "More", symbol: "ellipsis", isOn: false) { browsingTopics = true }
             }
         }
         .sheet(isPresented: $browsingTopics) {
@@ -125,10 +125,20 @@ struct CookView: View {
                     .padding(.top, 14)
                     .padding(.bottom, 8)
                     .id(run.id)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: 3), spacing: 12) {
                     ForEach(run.items, id: \.videoID) { video in
                         NavigationLink { RecipeDetailView(video: video) } label: {
-                            WallTile(video: video)
+                            VStack(alignment: .leading, spacing: 4) {
+                                WallTile(video: video)
+                                // Films names every poster; thumbnails alone left recipes to be
+                                // told apart by picture, and by nothing while they load.
+                                Text(video.rowTitle)
+                                    .font(.archivo(12, .bold))
+                                    .foregroundStyle(Color.stashInk)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(video.rowTitle)
@@ -136,7 +146,7 @@ struct CookView: View {
                 }
             }
         }
-        .animation(.easeOut(duration: 0.35), value: focus)
+        .animation(.stash(.easeOut(duration: 0.35)), value: focus)
     }
 
     private var emptyState: some View {
@@ -146,7 +156,7 @@ struct CookView: View {
             title: "Nothing to cook yet",
             message: videos.isEmpty
                 ? "Recipes land here as a wall once your favorites are in."
-                : "None of your saves came back as a recipe yet — the wall fills as they are analyzed.",
+                : "None of your saves came back as a recipe yet. The wall fills as they are analyzed.",
             offersImport: videos.isEmpty
         )
     }
@@ -177,7 +187,7 @@ struct TopicChip: View {
     let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             if let symbol {
                 Image(systemName: symbol)
                     .font(.system(size: 9, weight: .black))
@@ -200,7 +210,7 @@ struct TopicChip: View {
                 Capsule().strokeBorder(Color.stashInk.opacity(0.28), lineWidth: 1.2)
             }
         }
-        .padding(.vertical, 7)          // pads the target, not the pill
+        .padding(.vertical, 8)          // pads the target, not the pill
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .accessibilityElement(children: .combine)
@@ -300,7 +310,7 @@ struct TopicPicker: View {
                     }
                 }
                 if trimmed.isEmpty, hiddenCount > 0 {
-                    Text("\(hiddenCount) more topics sit on one save each — search to find them.")
+                    Text("\(hiddenCount) more topics sit on one save each. Search to find them.")
                         .font(.archivo(12, .medium))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                         .padding(.vertical, 18)
@@ -378,7 +388,7 @@ struct RecipeDetailView: View {
 
     @State private var isCooking = false
 
-    private let cream = Color(hex: 0xF7F1E1)
+    private let cream = Color.stashCream
 
     var body: some View {
         ScrollView {
@@ -444,7 +454,7 @@ struct RecipeDetailView: View {
             .frame(maxWidth: .infinity)
             .clipped()
             LinearGradient(
-                colors: [Color(hex: 0x201A12).opacity(0.55), Color(hex: 0x201A12).opacity(0.12)],
+                colors: [Color.stashDeepInk.opacity(0.55), Color.stashDeepInk.opacity(0.12)],
                 startPoint: .bottom, endPoint: .top
             )
             VStack {
@@ -452,17 +462,17 @@ struct RecipeDetailView: View {
                     StashBackButton(tint: cream)
                     Spacer()
                     Micro(text: "Recipe", size: 12, color: cream)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .background(Color.categoryRecipe, in: Capsule())
                 }
                 .padding(.top, 58)
                 Spacer()
-                HStack(spacing: 7) {
+                HStack(spacing: 8) {
                     ForEach(video.topics.prefix(3), id: \.self) { topic in
                         Micro(text: topic, size: 11, color: cream)
                             .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
+                            .padding(.vertical, 4)
                             .background(Capsule().strokeBorder(cream.opacity(0.6), lineWidth: 1.2))
                     }
                     Spacer()
@@ -490,7 +500,7 @@ struct RecipeDetailView: View {
                             .foregroundStyle(Color.stashInk)
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                     if ingredient != ingredients.last {
                         Divider().overlay(Color.stashInk.opacity(0.12))
                     }
@@ -514,12 +524,12 @@ struct RecipeDetailView: View {
                             // 26pt fits two digits — recipes routinely run past step 9.
                             .frame(width: 26, alignment: .leading)
                         Text(step)
-                            .font(.archivo(13.5))
+                            .font(.archivo(14))
                             .foregroundStyle(Color.stashInk)
                             .lineSpacing(3)
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 8)
                 }
             }
             .padding(.top, 6)
@@ -563,7 +573,7 @@ struct CookModeView: View {
     @State private var showingIngredients = false
     @State private var finished = false
 
-    private let cream = Color(hex: 0xF7F1E1)
+    private let cream = Color.stashCream
 
     private var currentStep: String { steps.indices.contains(step) ? steps[step] : "" }
 
@@ -680,7 +690,7 @@ struct CookModeView: View {
     private var forThisStep: some View {
         let used = CookMatcher.ingredients(in: currentStep, from: ingredients)
         if !used.isEmpty {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 Micro(text: "For this step", size: 11, color: cream.opacity(0.7))
                 ForEach(used, id: \.self) { ingredient in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {

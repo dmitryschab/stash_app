@@ -29,7 +29,7 @@ struct WatchSection: View {
 
     /// The poster is always dark (a photo under a black gradient), so its type is always cream —
     /// not `stashOnInk`, which turns to ink in dark mode.
-    private let cream = Color(hex: 0xF7F1E1)
+    private let cream = Color.stashCream
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -52,14 +52,14 @@ struct WatchSection: View {
                 poster
             }
         }
-        .animation(.easeOut(duration: 0.25), value: playing)
+        .animation(.stash(.easeOut(duration: 0.25)), value: playing)
     }
 
     // MARK: - Compact row
 
     private var clipRow: some View {
         Button { playing = true } label: {
-            HStack(spacing: 11) {
+            HStack(spacing: 12) {
                 Color.clear
                     .overlay {
                         if let url = video.thumbnailURL {
@@ -73,7 +73,7 @@ struct WatchSection: View {
                         }
                     }
                     .frame(width: 40, height: 52)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Watch the clip")
                         .font(.archivo(14, .bold))
@@ -125,7 +125,7 @@ struct WatchSection: View {
                 .clipped()
                 .allowsHitTesting(false)
             LinearGradient(
-                colors: [.black.opacity(0.3), .black.opacity(0.6)],
+                colors: [Color.stashDeepInk.opacity(0.3), Color.stashDeepInk.opacity(0.6)],
                 startPoint: .top, endPoint: .bottom
             )
             VStack(alignment: .leading, spacing: 0) {
@@ -134,7 +134,7 @@ struct WatchSection: View {
                 Spacer(minLength: 0)
                 if let line = firstLine {
                     Text("“\(line)”")
-                        .font(.archivo(12.5, .semibold))
+                        .font(.archivo(13, .semibold))
                         .foregroundStyle(cream)
                         .lineLimit(3)
                         .lineSpacing(2)
@@ -148,7 +148,7 @@ struct WatchSection: View {
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(cream)
                 .frame(width: 44, height: 44)
-                .background(Circle().fill(Color.black.opacity(0.25)))
+                .background(Circle().fill(Color.stashDeepInk.opacity(0.25)))
                 .overlay(Circle().strokeBorder(cream, lineWidth: 1.5))
         }
         .frame(maxWidth: .infinity)

@@ -55,7 +55,7 @@ struct StashScrollView<Content: View>: View {
             .refreshable { await PipelineCenter.shared.refresh() }
             .onChange(of: reselect) { _, signal in
                 guard signal.tab == tab else { return }
-                withAnimation(.easeOut(duration: 0.32)) {
+                withAnimation(.stash(.easeOut(duration: 0.32))) {
                     proxy.scrollTo(topID, anchor: .top)
                 }
             }

@@ -179,19 +179,8 @@ struct HaulView: View {
 
     private func chip(_ title: String, selected: Bool, symbol: String? = nil,
                       action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Text(title)
-                if let symbol { Image(systemName: symbol).font(.system(size: 11, weight: .semibold)) }
-            }
-            .font(.archivo(13, .semibold))
-            .foregroundStyle(selected ? Color.stashOnInk : .stashInk)
-            .padding(.horizontal, 17).frame(minHeight: 44)
-            .background(selected ? Color.stashInk : .clear, in: Capsule())
-            .overlay(Capsule().strokeBorder(selected ? Color.stashInk : .stashHaul, lineWidth: 1.25))
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        // The chip every other tab uses. Haul drew its own, taller and in tan.
+        TopicChip(label: title, symbol: symbol, isOn: selected, action: action)
     }
 
     private var listHeading: some View {
@@ -204,7 +193,7 @@ struct HaulView: View {
                     ForEach(HaulSort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: 4) {
                     Text(sort.rawValue).font(.archivo(13))
                     Image(systemName: "arrow.up.arrow.down").font(.system(size: 11))
                 }.frame(minHeight: 44)
@@ -363,7 +352,7 @@ private struct HaulProductRow: View {
         NavigationLink {
             HaulDetailView(video: item.video, pick: item.pick, pickIndex: item.index)
         } label: {
-            HStack(spacing: 13) {
+            HStack(spacing: 12) {
                 HaulProductArtwork(video: item.video, pickIndex: item.index)
                     .frame(width: typeSize.isAccessibilitySize ? 60 : 78, height: typeSize.isAccessibilitySize ? 60 : 78)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -371,9 +360,9 @@ private struct HaulProductRow: View {
                     Text(item.pick.name).font(.archivo(16, .bold))
                         .lineLimit(typeSize.isAccessibilitySize ? nil : 2).foregroundStyle(Color.stashInk)
                     if showCreator && !item.video.author.isEmpty {
-                        Text("@\(item.video.author)").font(.archivo(12.5)).foregroundStyle(Color.stashInk.opacity(0.7))
+                        Text("@\(item.video.author)").font(.archivo(13)).foregroundStyle(Color.stashInk.opacity(0.7))
                     } else if !item.pick.kind.isEmpty {
-                        Text(item.pick.kind.capitalized).font(.archivo(12.5)).foregroundStyle(Color.stashInk.opacity(0.7))
+                        Text(item.pick.kind.capitalized).font(.archivo(13)).foregroundStyle(Color.stashInk.opacity(0.7))
                     }
                     if !item.pick.price.isEmpty {
                         Text("Mentioned: \(item.pick.price)").font(.archivo(12)).foregroundStyle(Color.stashInk.opacity(0.7))

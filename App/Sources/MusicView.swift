@@ -409,7 +409,7 @@ struct MusicView: View {
                     let count = items.filter(option.matches).count
                     // A chip that can only show an empty wall is not a filter.
                     if option == .all || count > 0 {
-                        TopicChip(label: option.rawValue,
+                        TopicChip(label: option.rawValue.sentenceCased,
                                   count: option == .all ? nil : count,
                                   unit: "records", isOn: filter == option) {
                             focus = filter == option ? .all : option
@@ -427,7 +427,7 @@ struct MusicView: View {
                 ForEach(Sorting.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Micro(text: sorting.rawValue, size: 11, color: .stashInk.opacity(0.65))
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.system(size: 10, weight: .black))
@@ -486,8 +486,8 @@ struct MusicView: View {
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
         }
-        .animation(.easeOut(duration: 0.3), value: sorting)
-        .animation(.spring(duration: 0.5, bounce: 0.25), value: items.map(\.id))
+        .animation(.stash(.easeOut(duration: 0.3)), value: sorting)
+        .animation(.stash(.spring(duration: 0.5, bounce: 0)), value: items.map(\.id))
     }
 
     private var emptyState: some View {
@@ -497,7 +497,7 @@ struct MusicView: View {
             title: "No records yet",
             message: videos.isEmpty
                 ? "Songs land here as whole albums once your favorites are in."
-                : "None of your saves came back as music yet — albums appear as they are analyzed.",
+                : "None of your saves came back as music yet. Albums appear as they are analyzed.",
             offersImport: videos.isEmpty
         )
     }
@@ -545,7 +545,7 @@ private struct SleeveTile: View {
     var strip: [URL?] = []
 
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 8) {
             SleeveArt(title: item.title, artist: item.artist, artwork: artwork, strip: strip)
             HStack {
                 Micro(text: item.coverageLabel, size: 11,
@@ -617,7 +617,7 @@ struct SleeveArt: View {
             .clipped()                       // touch region too, not just the drawing
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.14), radius: 8, y: 6)
+            .shadow(color: Color.stashDeepInk.opacity(0.14), radius: 8, y: 6)
         } else {
             typographic
         }
@@ -641,7 +641,7 @@ struct SleeveArt: View {
                         .foregroundStyle(style.foreground)
                         .padding(14)
                 } else {
-                    VStack(alignment: .leading, spacing: 7) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text(title.lowercased())
                             .font(.archivo(26, .black))
                             .minimumScaleFactor(0.5)
@@ -663,7 +663,7 @@ struct SleeveArt: View {
                 }
             }
             .aspectRatio(1, contentMode: .fit)
-            .shadow(color: .black.opacity(0.14), radius: 8, y: 6)
+            .shadow(color: Color.stashDeepInk.opacity(0.14), radius: 8, y: 6)
     }
 }
 
@@ -684,10 +684,10 @@ struct SleeveStrip: View {
             }
             if sleeves.count > 4 {
                 Text("+\(sleeves.count - 4)")
-                    .font(.archivo(9.5, .heavy))
+                    .font(.archivo(11, .heavy))
                     .foregroundStyle(foreground)
                     .frame(width: Self.size, height: Self.size)
-                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.22)))
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.stashDeepInk.opacity(0.22)))
             }
         }
     }
@@ -701,11 +701,11 @@ struct SleeveStrip: View {
             }
         }
         .frame(width: Self.size, height: Self.size)
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.black.opacity(0.18), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.stashDeepInk.opacity(0.18), lineWidth: 1))
     }
 
-    private var blank: some View { Color.black.opacity(0.22) }
+    private var blank: some View { Color.stashDeepInk.opacity(0.22) }
 }
 
 /// Stable per-album collage jitter (Swift's `hashValue` reseeds every launch).
@@ -741,7 +741,7 @@ struct AlbumDetailView: View {
                 SleeveArt(title: album.title, artist: album.artist, artwork: store.sleeve(for: album))
                     .frame(width: 196, height: 196)
                     .rotationEffect(.degrees(-1.4))
-                    .shadow(color: .black.opacity(0.2), radius: 14, y: 10)
+                    .shadow(color: Color.stashDeepInk.opacity(0.2), radius: 14, y: 10)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 18)
                 masthead
@@ -767,15 +767,15 @@ struct AlbumDetailView: View {
             StashBackButton()
             Spacer()
             Micro(text: "Album", size: 12, color: .stashOnAccent)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(SleeveArt(title: album.title, artist: album.artist).chipColor, in: Capsule())
         }
         .padding(.top, 8)
     }
 
     private var masthead: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 4) {
             Text(album.title)
                 .font(.archivo(27, .black))
                 .foregroundStyle(Color.stashInk)
@@ -807,8 +807,8 @@ struct AlbumDetailView: View {
             Micro(text: "From your TikToks · \(album.saves.count)", size: 12, color: .categoryRecipe)
             ForEach(Array(album.saves.enumerated()), id: \.element.id) { index, save in
                 Link(destination: save.video.url) {
-                    HStack(spacing: 11) {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    HStack(spacing: 12) {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(saveTint(index))
                             .frame(width: 34, height: 34)
                             .overlay {
@@ -818,11 +818,11 @@ struct AlbumDetailView: View {
                             }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(save.trackName)
-                                .font(.archivo(13.5, .bold))
+                                .font(.archivo(14, .bold))
                                 .foregroundStyle(Color.stashInk)
                                 .lineLimit(1)
                             Text(saveByline(save))
-                                .font(.archivo(11.5))
+                                .font(.archivo(12))
                                 .foregroundStyle(Color.stashInk.opacity(0.62))
                                 .lineLimit(1)
                         }
@@ -833,7 +833,7 @@ struct AlbumDetailView: View {
                             .foregroundStyle(Color.stashInk.opacity(0.62))
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .strokeBorder(Color.stashInk, lineWidth: 1.5)
@@ -873,7 +873,7 @@ struct AlbumDetailView: View {
                     }
                 } else {
                     Text("Fetching the tracklist…")
-                        .font(.archivo(12.5))
+                        .font(.archivo(13))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                         .padding(.vertical, 10)
                         .task { await store.loadTracklist(collectionID) }
@@ -902,7 +902,7 @@ struct AlbumDetailView: View {
                     .foregroundStyle(save != nil ? Color.categoryRecipe : Color.stashInk)
                     .frame(width: 20, alignment: .leading)
                 Text(name)
-                    .font(.archivo(13.5, save != nil ? .bold : .semibold))
+                    .font(.archivo(14, save != nil ? .bold : .semibold))
                     .foregroundStyle(Color.stashInk)
                     .lineLimit(1)
             }
@@ -990,7 +990,7 @@ struct MusicListDetailView: View {
                 SleeveArt(title: list.title, artist: list.subtitle, strip: sleeves)
                     .frame(width: 196, height: 196)
                     .rotationEffect(.degrees(-1.4))
-                    .shadow(color: .black.opacity(0.2), radius: 14, y: 10)
+                    .shadow(color: Color.stashDeepInk.opacity(0.2), radius: 14, y: 10)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 18)
                 masthead
@@ -1011,15 +1011,15 @@ struct MusicListDetailView: View {
             StashBackButton()
             Spacer()
             Micro(text: "Selection", size: 12, color: .stashOnAccent)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(SleeveArt(title: list.title, artist: list.subtitle).chipColor, in: Capsule())
         }
         .padding(.top, 8)
     }
 
     private var masthead: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 4) {
             Text(list.title)
                 .font(.archivo(27, .black))
                 .foregroundStyle(Color.stashInk)
@@ -1055,7 +1055,7 @@ struct MusicListDetailView: View {
         let album = store.ref(for: list, at: index).flatMap { $0.trackName.isEmpty ? $0 : nil }
         let isOpen = expanded.contains(index)
         return VStack(spacing: 0) {
-            HStack(spacing: 11) {
+            HStack(spacing: 12) {
                 Text("\(index + 1)")
                     .font(.archivo(12, .black))
                     .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.62))
@@ -1073,10 +1073,10 @@ struct MusicListDetailView: View {
                         pending = target
                     }
                 } label: {
-                    HStack(spacing: 11) {
+                    HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(pick.title)
-                                .font(.archivo(13.5, .bold))
+                                .font(.archivo(14, .bold))
                                 .foregroundStyle(Color.stashInk)
                                 .lineLimit(2)
                             Micro(text: subtitle(for: pick), size: 11,
@@ -1096,7 +1096,7 @@ struct MusicListDetailView: View {
                                     : "Search for \(pick.title)")
                 if album != nil {
                     Button {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(.stash(.easeOut(duration: 0.2))) {
                             if isOpen { expanded.remove(index) } else { expanded.insert(index) }
                         }
                     } label: {
@@ -1146,12 +1146,12 @@ struct MusicListDetailView: View {
                 }
             } else {
                 Text("Fetching the tracklist…")
-                    .font(.archivo(12.5))
+                    .font(.archivo(13))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
                     .padding(.vertical, 8)
             }
         }
-        .padding(.leading, 31)
+        .padding(.leading, 32)
         .padding(.top, 8)
         .task { await store.loadTracklist(album.collectionID) }
     }
@@ -1177,13 +1177,13 @@ struct MusicListDetailView: View {
 
     private var clipLink: some View {
         Link(destination: list.video.url) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 Image(systemName: "play.fill").font(.system(size: 12, weight: .bold))
                 Micro(text: "Open the clip", size: 12, color: .stashInk)
             }
             .foregroundStyle(Color.stashInk)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
+            .padding(.vertical, 16)
             .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
         }
     }
@@ -1273,15 +1273,15 @@ struct PreviewButton: View {
         Button { player.toggle(key, pick: pick) } label: {
             Group {
                 if isCurrent && player.isLoading {
-                    ProgressView().controlSize(.mini).tint(.white)
+                    ProgressView().controlSize(.mini).tint(Color.stashCream)
                 } else {
                     Image(systemName: isMissing ? "speaker.slash.fill" : isCurrent ? "stop.fill" : "play.fill")
                         .font(.system(size: size * 0.36, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.stashCream)
                 }
             }
             .frame(width: size, height: size)
-            .background(Circle().fill(Color.black.opacity(isMissing ? 0.3 : 0.6)))
+            .background(Circle().fill(Color.stashDeepInk.opacity(isMissing ? 0.3 : 0.6)))
             // Pads the target, not the disc: every size this is drawn at — 34 on the wall, 26
             // and 24 and 22 in the tracklists — reaches the 44 pt minimum.
             .padding(max(5, (44 - size) / 2))

@@ -60,7 +60,7 @@ struct FilmSection: View {
         let content = VStack(alignment: .leading, spacing: 6) {
             poster(pick: pick, lookup: lookup)
             Text(pick.title)
-                .font(.archivo(12.5, .bold))
+                .font(.archivo(13, .bold))
                 .foregroundStyle(Color.stashInk)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -105,7 +105,7 @@ struct FilmSection: View {
                             ShimmerBlock(cornerRadius: 10)
                         }
                     } else {
-                        posterPlaceholder(title: pick.title)
+                        FilmSleeve(title: pick.title)
                     }
                 }
             }
@@ -114,18 +114,7 @@ struct FilmSection: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func posterPlaceholder(title: String) -> some View {
-        Rectangle()
-            .fill(tint.opacity(0.14))
-            .overlay {
-                Text(title)
-                    .font(.archivo(13, .heavy))
-                    .foregroundStyle(tint.asType)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
-                    .padding(8)
-            }
-    }
+
 
     private func accessibilityLabel(pick: FilmPick) -> String {
         guard let year = pick.year else { return pick.title }
@@ -164,4 +153,22 @@ struct FilmSection: View {
             .padding(.horizontal, 20)
     }
     .background(Color.stashBackground)
+}
+
+/// A film with no poster: the film blue with its title, the same on the wall, in a list
+/// card and on a save's page.
+struct FilmSleeve: View {
+    let title: String
+    var showsTitle = true
+
+    var body: some View {
+        Color.categoryFilm
+            .overlay(alignment: .bottomLeading) {
+                if showsTitle {
+                    Micro(text: title, size: 14, color: .stashOnAccent)
+                        .lineLimit(3)
+                        .padding(10)
+                }
+            }
+    }
 }

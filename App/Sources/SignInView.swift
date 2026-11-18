@@ -39,20 +39,20 @@ struct SignInView: View {
     @State private var tiktokStorefront: String?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             Spacer()
             appTile
             Text("Your saves, sorted")
                 .font(.archivo(27, .heavy))
                 .foregroundStyle(Color.stashInk)
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.leading)
                 .padding(.top, 20)
             Text("Stash turns the videos you bookmark on TikTok into a searchable library. Sign in to keep it yours.")
                 .font(.archivo(14))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.leading)
                 .lineSpacing(4)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 300, alignment: .leading)
                 .padding(.top, 10)
 
             if !showsCodeField { codeToggle.padding(.top, 20) }
@@ -60,8 +60,8 @@ struct SignInView: View {
 
             Spacer()
 
-            cloudNote
-            consentLine.padding(.top, 12).padding(.bottom, 16)
+            cloudNote.frame(maxWidth: .infinity)
+            consentLine.frame(maxWidth: .infinity).padding(.top, 12).padding(.bottom, 16)
 
             // Opened, the field sits on the button it submits through, not a screenful above it.
             if showsCodeField { inviteField.padding(.bottom, 16) }
@@ -98,7 +98,7 @@ struct SignInView: View {
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.stashBackground.ignoresSafeArea())
-        .animation(.easeInOut(duration: 0.2), value: showsCodeField)
+        .animation(.stash(.easeInOut(duration: 0.2)), value: showsCodeField)
         .task {
             if TikTokLogin.signInEnabled {
                 tiktokStorefront = await TikTokConnectSection.regionStorefront()
@@ -143,7 +143,7 @@ struct SignInView: View {
                     .font(.system(size: 38, weight: .semibold))
                     .foregroundStyle(Color.stashOnInk)
             )
-            .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
+            .shadow(color: Color.stashDeepInk.opacity(0.22), radius: 15, y: 8)
     }
 
     /// Deliberately quiet: a buyer never needs this, and a prominent code box on a paid app's
@@ -174,7 +174,7 @@ struct SignInView: View {
     }
 
     private func errorLine(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 13, weight: .bold))
             Text(message)

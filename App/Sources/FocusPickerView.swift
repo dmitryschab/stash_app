@@ -61,7 +61,7 @@ struct FocusPickerView: View {
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.stashBackground.ignoresSafeArea())
-        .animation(.easeOut(duration: 0.2), value: refused)
+        .animation(.stash(.easeOut(duration: 0.2)), value: refused)
     }
 
     private func toggle(_ category: Category) {

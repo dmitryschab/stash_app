@@ -80,7 +80,7 @@ struct LatelyView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             StashWordmarkRow(trailing: period)
-            Text("Lately.")
+            Text("Lately")
                 .font(.archivo(33, .heavy))
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
@@ -103,7 +103,7 @@ struct LatelyView: View {
                 + Date().formatted(.dateTime.month(.wide).day())
         }
         let style = Date.FormatStyle().month(.abbreviated).day()
-        return "FROM YOUR SAVES · \(snapshot.recentStart.formatted(style))–"
+        return "From your saves · \(snapshot.recentStart.formatted(style))–"
             + snapshot.anchor.formatted(style)
     }
 
@@ -111,11 +111,11 @@ struct LatelyView: View {
     /// rearrange itself because an import finished.
     private var refreshControl: some View {
         Button { store.acceptProposal() } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 11, weight: .bold))
                 Text("New connections")
-                    .font(.archivo(12.5, .bold))
+                    .font(.archivo(13, .bold))
             }
             .foregroundStyle(Color.stashOnInk)
             .padding(.horizontal, 14)
@@ -214,11 +214,11 @@ struct LatelyView: View {
                         .foregroundStyle(Color.stashInk)
                         .multilineTextAlignment(.leading)
                         .padding(.trailing, 36)
-                    VStack(alignment: .leading, spacing: 9) {
+                    VStack(alignment: .leading, spacing: 8) {
                         source(recent, dated: connection.recentDate)
                         source(older, dated: connection.olderDate)
                     }
-                    .padding(.top, 13)
+                    .padding(.top, 12)
                     cta("See the connection", on: .stashInk)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -296,7 +296,7 @@ struct LatelyView: View {
         HStack(spacing: -10) {
             ForEach(Array(videos), id: \.videoID) { video in
                 Thumbnail(url: video.thumbnailURL, category: video.category, size: 44)
-                    .overlay(RoundedRectangle(cornerRadius: 11)
+                    .overlay(RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(border, lineWidth: 2))
             }
         }
@@ -306,7 +306,7 @@ struct LatelyView: View {
     }
 
     private func source(_ video: Video?, dated: Date) -> some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 12) {
             Thumbnail(url: video?.thumbnailURL, category: video?.category, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(video?.rowTitle ?? "Save no longer available")
@@ -315,7 +315,7 @@ struct LatelyView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Text(dated.formatted(.dateTime.month(.abbreviated).day().year()))
-                    .font(.archivo(11.5))
+                    .font(.archivo(12))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
             }
             Spacer(minLength: 0)
@@ -326,7 +326,7 @@ struct LatelyView: View {
     /// the outbound arrow is reserved for the taps that actually leave Stash.
     private func cta(_ title: String, on tint: Color) -> some View {
         HStack(spacing: 6) {
-            Text(title).font(.archivo(12.5, .bold))
+            Text(title).font(.archivo(13, .bold))
             Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
         }
         .foregroundStyle(tint.opacity(0.9))

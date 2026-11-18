@@ -33,23 +33,23 @@ struct WelcomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 appTile.padding(.top, 40)
 
                 Text(count.map { "\($0) videos on us" } ?? "Free videos on us")
                     .font(.archivo(30, .heavy))
                     .foregroundStyle(Color.stashInk)
-                    .multilineTextAlignment(.center)
+                    .multilineTextAlignment(.leading)
                     .padding(.top, 24)
 
                 Text(count.map {
-                    "Import your TikTok saves and Stash reads the first \($0) for free — no card, nothing to cancel."
-                } ?? "Import your TikTok saves and Stash reads the first batch for free — no card, nothing to cancel.")
+                    "Import your TikTok saves and Stash reads the first \($0) for free. No card, nothing to cancel."
+                } ?? "Import your TikTok saves and Stash reads the first batch for free. No card, nothing to cancel.")
                     .font(.archivo(14))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
-                    .multilineTextAlignment(.center)
+                    .multilineTextAlignment(.leading)
                     .lineSpacing(4)
-                    .frame(maxWidth: 310)
+                    .frame(maxWidth: 310, alignment: .leading)
                     .padding(.top, 10)
 
                 steps.padding(.top, 30)
@@ -67,6 +67,7 @@ struct WelcomeView: View {
                     .foregroundStyle(Color.stashInk.opacity(0.62))
                     .tint(Color.stashInk)
                     .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                     .padding(.top, 18)
                     .padding(.bottom, 32)
             }
@@ -101,7 +102,7 @@ struct WelcomeView: View {
                     .font(.archivo(13, .heavy))
                     .foregroundStyle(Color.stashOnInk)
             }
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.archivo(15, .bold))
                     .foregroundStyle(Color.stashInk)
@@ -119,13 +120,13 @@ struct WelcomeView: View {
     /// paywall's does: a hardcoded one disagrees with what Apple charges in every storefront
     /// but ours, and that disagreement is a rejection.
     private var afterCard: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(Subscription.shared.displayPrice.isEmpty
                  ? "After that, Stash Pro keeps it going, monthly, cancel any time."
                  : "After that, Stash Pro keeps it going: \(Subscription.shared.displayPrice) a month, cancel any time.")
                 .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.75))
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.leading)
                 .lineSpacing(3)
             Text("Your saves stay readable either way.")
                 .font(.archivo(12))
@@ -133,7 +134,7 @@ struct WelcomeView: View {
         }
         .padding(.vertical, 16)
         .padding(.horizontal, 20)
-        .frame(maxWidth: 330)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(Color.stashInk.opacity(0.18), lineWidth: 1.5)
@@ -149,7 +150,7 @@ struct WelcomeView: View {
                     .font(.system(size: 32, weight: .semibold))
                     .foregroundStyle(Color.stashOnInk)
             )
-            .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
+            .shadow(color: Color.stashDeepInk.opacity(0.22), radius: 15, y: 8)
     }
 }
 

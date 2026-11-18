@@ -20,7 +20,7 @@ struct DataDownloadGuideView: View {
                         .font(.archivo(28, .heavy))
                         .foregroundStyle(Color.stashInk)
                         .padding(.top, 8)
-                    Text("Stash builds your library from the export TikTok gives you. It takes two minutes to request — TikTok prepares it in minutes to a couple of days.")
+                    Text("Stash builds your library from the export TikTok gives you. It takes two minutes to request, and TikTok prepares it in minutes to a couple of days.")
                         .font(.archivo(14))
                         .foregroundStyle(Color.stashInk.opacity(0.75))
                         .lineSpacing(4)
@@ -31,7 +31,7 @@ struct DataDownloadGuideView: View {
                     section("Request it", steps: [
                         "In TikTok: Profile → ☰ → Settings and privacy",
                         "Account → Download your data",
-                        "\"All data\" or anything that includes Activity — then Request data",
+                        "\"All data\" or anything that includes Activity, then Request data",
                     ]).padding(.top, 22)
 
                     openTikTokButton.padding(.top, 18)
@@ -108,7 +108,7 @@ struct DataDownloadGuideView: View {
             Image(systemName: "clock")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.stashOnAccent)
-            Text("TikTok prepares the export — usually within the hour, occasionally a day or two. You'll see it under \"Download data\" when it's ready.")
+            Text("TikTok prepares the export, usually within the hour, occasionally a day or two. You'll see it under \"Download data\" when it's ready.")
                 .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashOnAccent)
                 .lineSpacing(3)
@@ -123,7 +123,7 @@ struct DataDownloadGuideView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
             Text("Stash reads only your Favorite Videos list from the export. Everything else in the file is ignored and never leaves your phone.")
-                .font(.archivo(12.5))
+                .font(.archivo(13))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .lineSpacing(3)
         }
@@ -135,7 +135,7 @@ struct DataDownloadGuideView: View {
 /// Ink that stays ink. `categoryOther` is the one jewel that does not change between
 /// themes, so text on it must not either: `stashInk` flips to cream in dark mode and all
 /// but disappears against the amber.
-private let calloutInk = Color(light: 0x201A12, dark: 0x1D0E06)
+private let calloutInk = Color.stashDeepInk
 
 /// The one step that costs days when it is missed: a TXT or HTML export parses into nothing,
 /// and the user only finds out after the wait. Promoted out of the numbered list, where it
@@ -252,8 +252,8 @@ struct InstagramSavesGuideView: View {
             Image(systemName: "lock")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
-            Text("Stash reads only your saved reels from the export — saved photo posts are skipped. Everything else in the file is ignored and never leaves your phone.")
-                .font(.archivo(12.5))
+            Text("Stash reads only your saved reels from the export; saved photo posts are skipped. Everything else in the file is ignored and never leaves your phone.")
+                .font(.archivo(13))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .lineSpacing(3)
         }

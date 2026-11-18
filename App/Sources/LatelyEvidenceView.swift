@@ -74,7 +74,7 @@ struct LatelyEvidenceView: View {
         let older = byID[connection.olderID]
         heading(kicker: "A connection", title: shared(connection))
         if let recent, let older {
-            explanation("Both saves mention these topics. That is the whole of the claim — "
+            explanation("Both saves mention these topics. That is the whole of the claim: "
                 + "Lately is not saying one answers the other.")
             section("The recent save", [recent])
             section("The older save", [older])
@@ -115,7 +115,7 @@ struct LatelyEvidenceView: View {
 
     private func explanation(_ text: String) -> some View {
         Text(text)
-            .font(.archivo(13.5, .semibold))
+            .font(.archivo(14, .semibold))
             .foregroundStyle(Color.stashInk.opacity(0.62))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
@@ -139,7 +139,7 @@ struct LatelyEvidenceView: View {
     }
 
     private func row(_ video: Video) -> some View {
-        HStack(spacing: 13) {
+        HStack(spacing: 12) {
             Thumbnail(url: video.thumbnailURL, category: video.category, size: 46)
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.rowTitle)
@@ -148,7 +148,7 @@ struct LatelyEvidenceView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Text(video.bookmarkedAt.formatted(.dateTime.month(.abbreviated).day().year()))
-                    .font(.archivo(12.5))
+                    .font(.archivo(13))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
             }
             Spacer(minLength: 0)

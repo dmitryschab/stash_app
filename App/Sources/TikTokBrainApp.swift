@@ -356,7 +356,7 @@ struct RootView: View {
                         if let userID = session.userID {
                             UserDefaults.standard.set(true, forKey: Self.welcomeKey(userID))
                         }
-                        withAnimation(.easeOut(duration: 0.25)) { welcomeDismissed = true }
+                        withAnimation(.stash(.easeOut(duration: 0.25))) { welcomeDismissed = true }
                     }
                 }
             } else if subscription.hasSynced && session.quota != nil {
@@ -409,7 +409,7 @@ struct RootView: View {
             splashStalled = false   // a splash shown again (sign-out, sign-in) gets its own beat
             try? await Task.sleep(for: .seconds(8))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { splashStalled = true }
+            withAnimation(.stash(.easeOut(duration: 0.25))) { splashStalled = true }
         }
     }
 
@@ -457,7 +457,7 @@ struct RootView: View {
             .environment(\.stashTabBarHidden, $tabBarHidden)
             // On the sections only: the search screen's own header gets no magnifier.
             .environment(\.openSearch) {
-                withAnimation(.spring(duration: 0.35, bounce: 0.15)) { searchOpen = true }
+                withAnimation(.stash(.spring(duration: 0.35, bounce: 0))) { searchOpen = true }
             }
 
             // Over the tab, under the pill: the tab keeps its scroll position for when search closes.
@@ -517,8 +517,8 @@ struct RootView: View {
             }
             .presentationDetents([.large])
         }
-        .animation(.easeOut(duration: 0.25), value: searchOpen)
-        .animation(.spring(duration: 0.4, bounce: 0.2), value: center.shellStatus)
+        .animation(.stash(.easeOut(duration: 0.25)), value: searchOpen)
+        .animation(.stash(.spring(duration: 0.4, bounce: 0)), value: center.shellStatus)
         // The scenePhase watcher already fired by the time sign-in completes, so kick the
         // pipeline here — this is the first moment there is an authenticated user to work for.
         .task(id: session.userID) {
@@ -578,7 +578,7 @@ private struct ImportSyncPill: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: open) {
-                HStack(spacing: 9) {
+                HStack(spacing: 8) {
                     leading
                     Micro(text: text, size: 11, color: .stashOnInk)
                         .lineLimit(1)
@@ -617,7 +617,7 @@ private struct ImportSyncPill: View {
             Capsule()
                 .fill(Color.stashInk)
                 .frame(height: 34)
-                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+                .shadow(color: Color.stashDeepInk.opacity(0.2), radius: 10, y: 5)
         }
         .padding(.horizontal, 60)
     }
@@ -721,10 +721,10 @@ struct StashTabBar: View {
         .clipShape(Capsule())
         .scaleEffect(held ? 1.03 : 1)
         .offset(y: held ? -3 : 0)
-        .shadow(color: .black.opacity(held ? 0.4 : 0.28), radius: held ? 22 : 15, y: held ? 12 : 8)
+        .shadow(color: Color.stashDeepInk.opacity(held ? 0.4 : 0.28), radius: held ? 22 : 15, y: held ? 12 : 8)
         .simultaneousGesture(gripGesture, including: searchOpen ? .none : .all)
         .sensoryFeedback(.impact(weight: .medium), trigger: held) { _, now in now }
-        .animation(.spring(duration: 0.35, bounce: 0.25), value: held)
+        .animation(.stash(.spring(duration: 0.35, bounce: 0)), value: held)
         // VoiceOver and Switch Control users never need the gesture.
         .accessibilityAction(named: "Search") { open() }
         .onChange(of: searchOpen) { _, open in
@@ -752,7 +752,7 @@ struct StashTabBar: View {
         HStack(spacing: 0) {
             ForEach(slots) { tab in
                 let open = tab == selection
-                VStack(spacing: 3) {
+                VStack(spacing: 4) {
                     Image(systemName: tab.symbol)
                         .font(.system(size: 17, weight: .semibold))
                     if labelsAlwaysOn {
@@ -779,7 +779,7 @@ struct StashTabBar: View {
                     .onChange(of: proxy.size.width) { _, width in slotStripWidth = width }
             }
         }
-        .animation(.spring(duration: 0.3, bounce: 0.2), value: selection)
+        .animation(.stash(.spring(duration: 0.3, bounce: 0)), value: selection)
         .opacity(held ? 0.3 : 1)
         // The pill is a fixed height and each slot a fixed width, as on a system tab bar, so
         // its labels stop growing where the longest still fits: past this "LIBRARY" truncated.
@@ -858,7 +858,7 @@ struct StashTabBar: View {
                 held = false
                 guard case .second(true, let drag) = value else {
                     gripEndedAt = Date()
-                    withAnimation(.spring(duration: 0.35, bounce: 0.3)) { grip = 0 }
+                    withAnimation(.stash(.spring(duration: 0.35, bounce: 0.3))) { grip = 0 }
                     return
                 }
                 let translation = drag?.translation ?? .zero
@@ -867,7 +867,7 @@ struct StashTabBar: View {
                     open()
                     return
                 }
-                withAnimation(.spring(duration: 0.35, bounce: 0.3)) { grip = 0 }
+                withAnimation(.stash(.spring(duration: 0.35, bounce: 0.3))) { grip = 0 }
                 if hypot(translation.width, translation.height) < Self.tapTravel,
                    let index = TabSlots.slotIndex(x: drag?.startLocation.x ?? 0,
                                                   stripWidth: slotStripWidth, count: slots.count) {
@@ -885,7 +885,7 @@ struct StashTabBar: View {
     private static let tapTravel: CGFloat = 10
 
     private func open() {
-        withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+        withAnimation(.stash(.spring(duration: 0.35, bounce: 0))) {
             grip = 1
             searchOpen = true
         }
@@ -893,7 +893,7 @@ struct StashTabBar: View {
 
     private func close() {
         fieldFocused = false
-        withAnimation(.spring(duration: 0.35, bounce: 0.15)) { searchOpen = false }
+        withAnimation(.stash(.spring(duration: 0.35, bounce: 0))) { searchOpen = false }
     }
 
     private func color(for tab: StashTab) -> Color {

@@ -166,7 +166,7 @@ enum SampleData {
                 hashtags: ["recipe", "dinner"],
                 category: .recipe,
                 title: "One-pan lemon orzo",
-                summary: "Orzo cooked straight in the stock with lemon and spinach — one pan, no draining.",
+                summary: "Orzo cooked straight in the stock with lemon and spinach, one pan, no draining.",
                 topics: ["one pan", "quick dinners"],
                 transcript: "The orzo cooks in the stock, so the starch stays in the pan and thickens the sauce.",
                 recipeJSON: json([
@@ -186,7 +186,7 @@ enum SampleData {
                 title: "Smashed cucumber salad",
                 summary: "Cucumbers smashed so the dressing sticks, salted first to draw the water out.",
                 topics: ["salads", "quick dinners"],
-                transcript: "Smash them instead of slicing — the torn edges hold about twice as much dressing.",
+                transcript: "Smash them instead of slicing. The torn edges hold about twice as much dressing.",
                 recipeJSON: json([
                     "name": "Smashed cucumber salad",
                     "ingredients": ["4 mini cucumbers", "1 tsp salt", "2 tbsp rice vinegar", "1 tbsp soy sauce", "1 tsp chilli oil", "1 clove garlic"],
@@ -202,7 +202,7 @@ enum SampleData {
                 hashtags: ["recipe", "dessert"],
                 category: .recipe,
                 title: "Two-ingredient chocolate mousse",
-                summary: "Chocolate and water whipped over ice — no eggs, no cream.",
+                summary: "Chocolate and water whipped over ice, no eggs, no cream.",
                 topics: ["dessert", "baking"],
                 transcript: "It is only chocolate and water. Whipping it over ice is what turns it into mousse.",
                 recipeJSON: json([
@@ -242,7 +242,7 @@ enum SampleData {
                 hashtags: ["music", "synthwave"],
                 category: .music,
                 title: "Midnight City",
-                summary: "Synth anthem used as the backing track — resolved to a universal link.",
+                summary: "Synth anthem used as the backing track, resolved to a universal link.",
                 topics: ["synthwave", "night drive"],
                 transcript: nil,
                 trackJSON: json([
@@ -496,7 +496,7 @@ enum SampleData {
                 title: "Lisbon in a day on foot",
                 summary: "A walking route that takes the viewpoints downhill and skips the tram queue entirely.",
                 topics: ["lisbon", "city walks"],
-                transcript: "Start at the top and walk down — every viewpoint on this route is below the last one."
+                transcript: "Start at the top and walk down. Every viewpoint on this route is below the last one."
             ),
             make(
                 id: "7234567890000000018",

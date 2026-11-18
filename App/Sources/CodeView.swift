@@ -106,13 +106,13 @@ struct CodeView: View {
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                TopicChip(label: "all", isOn: focus == nil) { focus = nil }
+                TopicChip(label: "All", isOn: focus == nil) { focus = nil }
                 ForEach(rowTags) { tag in
                     TopicChip(label: tag.name, count: tag.count, isOn: focus == tag.name) {
                         focus = focus == tag.name ? nil : tag.name
                     }
                 }
-                TopicChip(label: "more", symbol: "ellipsis", isOn: false) { browsingTags = true }
+                TopicChip(label: "More", symbol: "ellipsis", isOn: false) { browsingTags = true }
             }
         }
         .sheet(isPresented: $browsingTags) {
@@ -139,7 +139,7 @@ struct CodeView: View {
                     Micro(text: shelf.sentenceCased, size: 12, color: .stashOnAccent.opacity(0.8))
                 }
             }
-            .padding(.top, 5)
+            .padding(.top, 4)
             if !summary.isEmpty {
                 Text(summary)
                     .font(.archivo(14, .semibold))
@@ -151,7 +151,7 @@ struct CodeView: View {
             HStack(spacing: 6) {
                 ForEach((note?.techTags ?? []).prefix(2), id: \.self) { tag in
                     Micro(text: tag, size: 11, color: .stashOnAccent)
-                        .padding(.horizontal, 11)
+                        .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(Capsule().strokeBorder(Color.stashOnAccent.opacity(0.5), lineWidth: 1.2))
                 }
@@ -183,7 +183,7 @@ struct CodeView: View {
                 }
             }
         }
-        .animation(.easeOut(duration: 0.35), value: focus)
+        .animation(.stash(.easeOut(duration: 0.35)), value: focus)
     }
 
     private var emptyState: some View {
@@ -193,7 +193,7 @@ struct CodeView: View {
             title: "Nothing in code yet",
             message: videos.isEmpty
                 ? "Coding saves land here, links first, once your favorites are in."
-                : "None of your saves came back as code yet — the shelf fills as they are analyzed.",
+                : "None of your saves came back as code yet. The shelf fills as they are analyzed.",
             offersImport: videos.isEmpty
         )
     }
@@ -212,7 +212,7 @@ private struct CodeRow: View {
         let note = video.codeNote
         let tag = note?.techTags.first
         let links = note?.links.count ?? 0
-        HStack(spacing: 11) {
+        HStack(spacing: 12) {
             Thumbnail(url: video.thumbnailURL, category: .coding, size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.rowTitle)
@@ -238,13 +238,13 @@ private struct CodeRow: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(Color.stashInk.opacity(0.4))
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
     }
 
     /// "Carries links" is a property of the save, not a door out of the app — a glyph, never
     /// the outbound arrow.
     private func linkMark(_ links: Int) -> some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Image(systemName: "link").font(.system(size: 9, weight: .bold))
             Text("\(links)").font(.archivo(12))
         }

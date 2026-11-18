@@ -25,16 +25,19 @@ struct MindMapView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Pushed from the Library header rather than owning a tab, so it carries its
             // own back control (matching Import) instead of a nav bar.
-            StashBackButton()
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-
-            HStack(alignment: .bottom, spacing: 12) {
-                StashHeader(title: "Mind map", trailing: "\(videos.count) saves")
+            // Fit rides with the back control: beside the title it squeezed the header row
+            // and pulled the magnifier in from the edge it holds on every other screen.
+            HStack {
+                StashBackButton()
+                Spacer()
                 if !categories.isEmpty { fitButton }
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)
+
+            StashHeader(title: "Mind map", trailing: "\(videos.count) saves")
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
 
             if categories.isEmpty {
                 emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -76,7 +79,9 @@ struct MindMapView: View {
         GeometryReader { geo in
             TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isPaused)) { context in
                 Canvas { gc, size in
-                    draw(in: &gc, size: size, tSec: context.date.timeIntervalSinceReferenceDate)
+                    // The breathing discs and travelling dashes are cosmetic; Reduce Motion holds them still.
+                    draw(in: &gc, size: size,
+                         tSec: UIAccessibility.isReduceMotionEnabled ? 0 : context.date.timeIntervalSinceReferenceDate)
                 }
                 .onChange(of: context.date) { engine.tick() }
             }
@@ -102,7 +107,7 @@ struct MindMapView: View {
             .onChange(of: engine.isSettled) {
                 // re-frame the settled layout unless the user already took the camera
                 if engine.isSettled, !hasInteracted {
-                    withAnimation(.easeOut(duration: 0.4)) {
+                    withAnimation(.stash(.easeOut(duration: 0.4))) {
                         camera = .fit(nodes: engine.nodes, size: canvasSize)
                     }
                 }
@@ -166,7 +171,7 @@ struct MindMapView: View {
             .onEnded { _ in zoomBase = nil }
     }
 
-    // MARK: - Drawing (atlasflow draw pass: grid → edges+pulses → glows → nodes → labels)
+    // MARK: - Drawing (atlasflow draw pass: grid → edges+pulses → nodes → labels)
 
     private let dimAlpha = 0.12
 
@@ -174,7 +179,6 @@ struct MindMapView: View {
         let lit = engine.litIndices()
         drawGrid(&gc, size: size)
         for edge in engine.edges { drawEdge(&gc, edge: edge, lit: lit, tSec: tSec) }
-        drawGlows(&gc, lit: lit, tSec: tSec)
         drawNodes(&gc, lit: lit, tSec: tSec)
     }
 
@@ -238,25 +242,10 @@ struct MindMapView: View {
         }
     }
 
-    /// Radial halos behind the hub and category discs, alpha-pulsing per node.
-    private func drawGlows(_ gc: inout GraphicsContext, lit: Set<Int>?, tSec: Double) {
-        for (i, n) in engine.nodes.enumerated() where n.tier <= 1 {
-            if let lit, !lit.contains(i) { continue }
-            let p = camera.worldToScreen(n.x, n.y)
-            let r = n.radius * camera.zoom * 3.2
-            let alpha = 0.3 + 0.12 * sin(tSec * 1.1 + n.phase)
-            gc.fill(
-                Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                with: .radialGradient(
-                    Gradient(colors: [n.color.opacity(0.45 * alpha), n.color.opacity(0)]),
-                    center: p, startRadius: 0, endRadius: r
-                )
-            )
-        }
-    }
-
     private func drawNodes(_ gc: inout GraphicsContext, lit: Set<Int>?, tSec: Double) {
         let labelTier = camera.zoom >= 0.55 ? 2 : camera.zoom >= 0.35 ? 1 : 0
+        // Type is drawn after every disc, so a neighbouring disc never covers a name.
+        var texts: [(text: String, at: CGPoint, size: CGFloat, color: Color)] = []
         for (i, n) in engine.nodes.enumerated() {
             let dimmed = lit.map { !$0.contains(i) } ?? false
             let opacity = dimmed ? dimAlpha : 1.0
@@ -280,27 +269,28 @@ struct MindMapView: View {
             let selected = engine.selectedIndex == i
             switch n.tier {
             case 0:
-                drawText(&gc, "You", at: p, size: 12 * camera.zoom, color: .stashOnInk.opacity(opacity))
+                texts.append(("You", p, 12 * camera.zoom, .stashOnInk.opacity(opacity)))
             case 1:
-                drawText(&gc, n.label, at: CGPoint(x: p.x, y: p.y - 6 * camera.zoom),
-                         size: 9.5 * camera.zoom, color: n.color.onJewel.opacity(opacity))
-                drawText(&gc, "\(n.count)", at: CGPoint(x: p.x, y: p.y + 7 * camera.zoom),
-                         size: 10 * camera.zoom, color: n.color.onJewel.opacity(opacity))
+                // The count fits any disc; the name does not ("Learning" spilled out of a
+                // small one and vanished against the page), so it sits under the disc in ink.
+                texts.append(("\(n.count)", p, 13 * camera.zoom, n.color.onJewel.opacity(opacity)))
+                texts.append((n.label, CGPoint(x: p.x, y: p.y + r + 10), 12, .stashInk.opacity(opacity)))
             default:
                 // label tiers: far views shed topic labels (free declutter)
                 if !dimmed, labelTier == 2 || selected {
-                    drawText(&gc, n.label, at: CGPoint(x: p.x, y: p.y + r + 11),
-                             size: selected ? 13 : min(11, 11 * camera.zoom + 3),
-                             color: .stashInk.opacity(selected ? 1 : 0.85))
+                    texts.append((n.label, CGPoint(x: p.x, y: p.y + r + 11),
+                                  selected ? 13 : 11, .stashInk.opacity(selected ? 1 : 0.85)))
                 }
             }
         }
+        for text in texts { drawText(&gc, text.text, at: text.at, size: text.size, color: text.color) }
     }
 
     private func drawText(_ gc: inout GraphicsContext, _ text: String, at point: CGPoint,
                           size: CGFloat, color: Color) {
         let resolved = gc.resolve(
-            Text(text).font(.archivo(max(size, 4), .heavy)).foregroundStyle(color)
+            // 11pt is the floor: zooming out shrinks the map, not the type.
+            Text(text).font(.archivo(max(size, 11), .bold)).foregroundStyle(color)
         )
         gc.draw(resolved, at: point, anchor: .center)
     }
@@ -322,7 +312,7 @@ struct MindMapView: View {
                 Micro(text: "\(engine.neighbors[i].count) links", size: 12)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 11)
+            .padding(.vertical, 12)
             .background(Color.stashSurface, in: Capsule())
             .overlay(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
             .padding(.bottom, stashTabBarClearance)

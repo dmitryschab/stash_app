@@ -212,8 +212,8 @@ struct ImportView: View {
     /// Both halves of the spent badge are pinned across themes, the same trick the guide's
     /// callout uses. `stashOnAccent` is cream in light and near-black in dark, so a capsule
     /// filled with it would swallow the dark text it is there to carry.
-    private static let spentBadgeFill = Color(light: 0xF7F1E1, dark: 0xF7F1E1)
-    private static let spentBadgeInk = Color(light: 0x201A12, dark: 0x1D0E06)
+    private static let spentBadgeFill = Color.stashCream
+    private static let spentBadgeInk = Color.stashDeepInk
 
     /// The screen's one budget number. Settings counts the same allowance out bucket by bucket;
     /// here it is the single figure spending is measured against.
@@ -231,8 +231,8 @@ struct ImportView: View {
                 Micro(text: text, size: 11, color: Self.spentBadgeInk)
             }
             .foregroundStyle(Self.spentBadgeInk)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(Capsule().fill(Self.spentBadgeFill))
         } else {
             Micro(text: text, size: 11, color: .stashOnAccent.opacity(0.7))
@@ -321,7 +321,7 @@ struct ImportView: View {
             let sorted = "Sorted \(cloud.fastPass.done) of \(cloud.fastPass.total)"
             if cloud.fastPass.total > CloudImportLimits.firstSlice,
                cloud.fastPass.done >= CloudImportLimits.firstSlice {
-                return "Your newest saves are ready — browse while the rest sorts · " + sorted
+                return "Your newest saves are ready. Browse while the rest sorts · " + sorted
             }
             return sorted + " · you can close the app, Stash pings you when it is done"
         case .ready:
@@ -330,7 +330,7 @@ struct ImportView: View {
             let sorted = max(0, cloud.fastPass.done - cloud.unavailable)
             let missed = cloud.unavailable + cloud.partialFailures
             return "\(sorted) videos sorted onto your shelves"
-                + (missed > 0 ? " · \(missed) could not be read — private or deleted on TikTok" : "")
+                + (missed > 0 ? " · \(missed) could not be read (private or deleted on TikTok)" : "")
         case .idle:
             guard cloud.state == .cancelled else { return nil }
             return "Cancelled · \(cloud.fastPass.done) of \(cloud.fastPass.total) sorted"
@@ -350,7 +350,7 @@ struct ImportView: View {
             return "\(progress.done) of \(progress.total) processed"
         }
         if let summary = controller.lastSummary { return summary }
-        return "Sync the videos you favorite — or import an export below."
+        return "Sync the videos you favorite, or import an export below."
     }
 
     #if DEBUG
@@ -381,7 +381,7 @@ struct ImportView: View {
             && heroTitle(hero(box(.fastPass, 1, 2))) == "Syncing your saves"
             && heroTitle(hero(nil)) == "Import your saves"
             && heroSubtitle(.ready, finished)
-                == "929 videos sorted onto your shelves · 12 could not be read — private or deleted on TikTok"
+                == "929 videos sorted onto your shelves · 12 could not be read (private or deleted on TikTok)"
             && heroSubtitle(.ready, box(.completed, 20, 20)) == "20 videos sorted onto your shelves"
             && heroSubtitle(.syncing, box(.fastPass, 4, 9))
                 == "Sorted 4 of 9 · you can close the app, Stash pings you when it is done"
@@ -391,17 +391,17 @@ struct ImportView: View {
             && heroSubtitle(.syncing, box(.fastPass, 0, 941, map: CloudImportMap(sampled: 60, done: 12)))
                 == "Shaping your library from 60 saves · 12 sorted so far"
             && heroSubtitle(.syncing, box(.fastPass, 412, 941, map: CloudImportMap(sampled: 60, done: 60)))
-                == "Your newest saves are ready — browse while the rest sorts · Sorted 412 of 941"
+                == "Your newest saves are ready. Browse while the rest sorts · Sorted 412 of 941"
             // A map that stalled must not hold the card: once the fast pass has passed the
             // sample, progress is the honest line.
             && heroSubtitle(.syncing, box(.fastPass, 412, 941, map: CloudImportMap(sampled: 60, done: 12)))
-                == "Your newest saves are ready — browse while the rest sorts · Sorted 412 of 941"
+                == "Your newest saves are ready. Browse while the rest sorts · Sorted 412 of 941"
             // The box sorts newest first in slices of 100: the line changes at the slice, and a
             // library that is one slice never shows it.
             && heroSubtitle(.syncing, box(.fastPass, 99, 941))
                 == "Sorted 99 of 941 · you can close the app, Stash pings you when it is done"
             && heroSubtitle(.syncing, box(.fastPass, 100, 941))
-                == "Your newest saves are ready — browse while the rest sorts · Sorted 100 of 941"
+                == "Your newest saves are ready. Browse while the rest sorts · Sorted 100 of 941"
             && heroSubtitle(.syncing, box(.fastPass, 60, 100))
                 == "Sorted 60 of 100 · you can close the app, Stash pings you when it is done"
             // A spent budget has to say so in words, not only in the badge's colour.
@@ -447,8 +447,8 @@ struct ImportView: View {
             }
             .disabled(controller.isImporting)
             .opacity(controller.isImporting ? 0.5 : 1)
-            Text("TikTok or Instagram · zip, folder or JSON — Stash unpacks it.")
-                .font(.archivo(11.5, .semibold))
+            Text("TikTok or Instagram: zip, folder or JSON. Stash unpacks it.")
+                .font(.archivo(12, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
@@ -505,7 +505,7 @@ struct ImportView: View {
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.archivo(15, .heavy))
                         .foregroundStyle(Color.stashInk)
@@ -553,7 +553,7 @@ struct ImportView: View {
         controller.drainSharedInbox()
         // The drain is a round trip; without a word here a good paste and a dead button look
         // identical until the save lands in the Library.
-        pasteNotice = "Saved — Stash is fetching it."
+        pasteNotice = "Saved. Stash is fetching it."
     }
 
     private func errorLine(_ error: String) -> some View {
@@ -582,7 +582,7 @@ struct ImportView: View {
             HStack {
                 Micro(text: "Model box", size: 12)
                 Spacer()
-                HStack(spacing: 7) {
+                HStack(spacing: 8) {
                     Image(systemName: controller.boxStatus.symbol)
                         .font(.system(size: 12, weight: .bold))
                     Micro(text: controller.boxStatus.label, size: 12, color: controller.boxStatus.color)
@@ -593,7 +593,7 @@ struct ImportView: View {
                 Task { await controller.pingBox() }
             } label: {
                 Micro(text: "Check again", size: 12, color: .stashInk)
-                    .padding(.horizontal, 13)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
             }
@@ -725,7 +725,7 @@ struct SettingsView: View {
                         field("Whisper model", text: $whisperModel, placeholder: BoxDefaults.whisperModel)
                     }
                     Section {
-                        Text("Analysis and transcription run on the Stash cloud by default. Point the base URL at your own model box for local development — models are pinned server-side either way.")
+                        Text("Analysis and transcription run on the Stash cloud by default. Point the base URL at your own model box for local development; models are pinned server-side either way.")
                             .font(.archivo(13))
                             .foregroundStyle(.secondary)
                     }
@@ -754,7 +754,7 @@ struct SettingsView: View {
                             }
                         }
                         .disabled(controller.isImporting)
-                        Text("Re-runs classification on every saved video against the current categories, using text already fetched — no re-download. Costs a few cents and can take several minutes.")
+                        Text("Re-runs classification on every saved video against the current categories, using text already fetched, with no re-download. Costs a few cents and can take several minutes.")
                             .font(.archivo(13))
                             .foregroundStyle(.secondary)
 
@@ -774,7 +774,7 @@ struct SettingsView: View {
                             Text("Read on-screen text (\(missingVisualText))")
                         }
                         .disabled(controller.isImporting || missingVisualText == 0)
-                        Text("Reads the words burned into each video's frames — often the real content on TikTok — and re-analyzes with them. Reading is done on your device, but each video has to be fetched through Stash first, so this spends one unit of your budget per video.")
+                        Text("Reads the words burned into each video's frames, often the real content on TikTok, and re-analyzes with them. Reading is done on your device, but each video has to be fetched through Stash first, so this spends one unit of your budget per video.")
                             .font(.archivo(13))
                             .foregroundStyle(.secondary)
                     }
@@ -783,7 +783,7 @@ struct SettingsView: View {
                     #if DEBUG
                     Section("Developer") {
                         Toggle("Force on-device import", isOn: $forceLocalImport)
-                        Text("Cloud import is the default — the box processes the whole library in the background. Enable this to run the on-device pipeline instead (local-box development).")
+                        Text("Cloud import is the default: the box processes the whole library in the background. Enable this to run the on-device pipeline instead (local-box development).")
                             .font(.archivo(13))
                             .foregroundStyle(.secondary)
                     }
@@ -891,7 +891,7 @@ struct SettingsView: View {
                             .foregroundStyle(isOn ? Color.accentColor : .secondary)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(tab.label)
-                            Text(pinned ? "Always on — Import and Settings live here" : tab.blurb)
+                            Text(pinned ? "Always on: Import and Settings live here" : tab.blurb)
                                 .font(.archivo(13))
                                 .foregroundStyle(.secondary)
                         }
@@ -909,7 +909,7 @@ struct SettingsView: View {
             // way back from; the recommended set is one row away.
             Button("Reset to recommended") { slotsRaw = TabSlots.encode(TabSlots.fallback) }
                 .disabled(slots == TabSlots.fallback)
-            Text("Up to \(TabSlots.maximum) sections fit on the bar. Whatever you leave off keeps its saves — anything with its own shelf goes back to Library.")
+            Text("Up to \(TabSlots.maximum) sections fit on the bar. Whatever you leave off keeps its saves; anything with its own shelf goes back to Library.")
                 .font(.archivo(13))
                 .foregroundStyle(.secondary)
         }

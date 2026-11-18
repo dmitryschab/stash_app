@@ -59,18 +59,8 @@ struct HaulDetailView: View {
 
     private var topBar: some View {
         HStack(spacing: 12) {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(width: 44, height: 44)
-                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.2))
-                    // Without this the glyph is the only target: the circle is a background,
-                    // which never takes a touch. A rectangle rather than the circle it draws,
-                    // because a thumb aimed at the ring lands on the corner as often as inside
-                    // it, and a miss on the only way off the page reads as a dead button.
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Back")
+            // The same bare chevron as every other pushed screen; this one wore a ring.
+            StashBackButton()
             Spacer(minLength: 0)
             Text(HaulCategory.category(for: pick).label)
                 .font(.archivo(12, .semibold))
@@ -94,8 +84,7 @@ struct HaulDetailView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .background(Circle().strokeBorder(Color.stashInk, lineWidth: 1.2))
+                    .frame(width: 44, height: 44, alignment: .trailing)
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Product options")
@@ -183,7 +172,7 @@ struct HaulDetailView: View {
 
     private var boughtButton: some View {
         Button { setShoppingState(shoppingState == .bought ? nil : .bought) } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 if shoppingState == .bought { Image(systemName: "checkmark.circle.fill") }
                 Text(shoppingState == .bought ? "Bought" : "Mark as bought")
             }
@@ -219,7 +208,7 @@ struct HaulDetailView: View {
 
     private var countryButton: some View {
         Button { editingCountry = true } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 Text(countryName)
                     .font(.archivo(13, .semibold))
                     .fixedSize(horizontal: false, vertical: true)
@@ -275,12 +264,12 @@ struct HaulDetailView: View {
                         Text(primary.label)
                         Image(systemName: "arrow.up.right")
                     }
-                    .font(.archivo(15, .bold))
+                    .font(.archivo(17, .heavy))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Color.stashOnInk)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 14)
-                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .background(Color.stashInk, in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -332,7 +321,7 @@ struct HaulDetailView: View {
             Text("Refreshing prices…")
                 .font(.archivo(11))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
-                .padding(.top, 5)
+                .padding(.top, 4)
         } else if offerStore.refreshFailed(name: pick.name, country: country) {
             Text("Couldn’t refresh prices. The last offers are still available.")
                 .font(.archivo(12))
@@ -355,7 +344,7 @@ struct HaulDetailView: View {
             return (first, "View at \(first.merchant)", "View at \(first.merchant)")
         }
         // The visible label spends its words on the price, so the spoken one names the shop.
-        return (cheapest, "Buy the cheapest — \(cheapest.price)",
+        return (cheapest, "Buy the cheapest: \(cheapest.price)",
                 "Buy the cheapest, \(cheapest.price), at \(cheapest.merchant)")
     }
 
@@ -403,7 +392,7 @@ struct HaulDetailView: View {
         .padding(.horizontal, 14)
         .background(Color.stashSurface.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.stashHaul, lineWidth: 1.2))
-        .padding(.top, 3)
+        .padding(.top, 4)
     }
 
     private func merchantMark(_ offer: HaulOffer) -> some View {
@@ -411,12 +400,12 @@ struct HaulDetailView: View {
             .font(.archivo(19, .heavy))
             .foregroundStyle(Color.stashInk)
             .frame(width: 34, height: 38)
-            .background(Color.stashSurface, in: RoundedRectangle(cornerRadius: 9))
+            .background(Color.stashSurface, in: RoundedRectangle(cornerRadius: 10))
             .accessibilityHidden(true)
     }
 
     private func merchantName(_ offer: HaulOffer) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(offer.merchant)
                 .font(.archivo(14, .bold))
                 .foregroundStyle(Color.stashInk)
@@ -518,8 +507,8 @@ struct HaulDetailView: View {
             }
             .foregroundStyle(Color.stashInk)
             .padding(10)
-            .background(Color.stashSurface.opacity(0.4), in: RoundedRectangle(cornerRadius: 15))
-            .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Color.stashInk.opacity(0.15), lineWidth: 1))
+            .background(Color.stashSurface.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.stashInk.opacity(0.15), lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -545,7 +534,7 @@ struct HaulDetailView: View {
         return primaryOffer([]) == nil
             && primaryOffer([offer("Amazon", 99)])?.label == "View at Amazon"
             && primaryOffer(cheaperBelow)?.offer.merchant == "Logitech"
-            && primaryOffer(cheaperBelow)?.label == "Buy the cheapest — EUR 94.99"
+            && primaryOffer(cheaperBelow)?.label == "Buy the cheapest: EUR 94.99"
             && primaryOffer(cheaperBelow)?.spoken == "Buy the cheapest, EUR 94.99, at Logitech"
             && primaryOffer(cheapestFirst)?.label == "View at Amazon"  // ranked first is already cheapest
             && primaryOffer(mixed)?.label == "View at Amazon"          // two currencies do not compare

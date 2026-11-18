@@ -43,7 +43,7 @@ struct ConnectFlowView: View {
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.stashBackground.ignoresSafeArea())
-        .animation(.easeInOut(duration: 0.25), value: step)
+        .animation(.stash(.easeInOut(duration: 0.25)), value: step)
     }
 
     // MARK: - Step 1 · Connect entry point
@@ -62,7 +62,7 @@ struct ConnectFlowView: View {
                 .font(.archivo(27, .heavy))
                 .foregroundStyle(Color.stashInk)
                 .padding(.top, 20)
-            Text("Stash organizes the videos you save on TikTok into a searchable library — automatically.")
+            Text("Stash organizes the videos you save on TikTok into a searchable library, automatically.")
                 .font(.archivo(14))
                 .foregroundStyle(Color.stashInk.opacity(0.62))
                 .multilineTextAlignment(.center)
@@ -86,7 +86,7 @@ struct ConnectFlowView: View {
                     .font(.system(size: 38, weight: .semibold))
                     .foregroundStyle(Color.stashOnInk)
             )
-            .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
+            .shadow(color: Color.stashDeepInk.opacity(0.22), radius: 15, y: 8)
     }
 
     // MARK: - Step 2 · What Stash will access
@@ -123,7 +123,7 @@ struct ConnectFlowView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.stashOnAccent)
             Text("Everything except your favourites is discarded the moment it arrives.")
-                .font(.archivo(13.5, .semibold))
+                .font(.archivo(14, .semibold))
                 .foregroundStyle(Color.stashOnAccent)
                 .lineSpacing(3)
             Spacer(minLength: 0)
@@ -200,13 +200,13 @@ private struct AccessRow: View {
                 }
             }
             .frame(width: 28, height: 28)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.archivo(17, .heavy))
                     .foregroundStyle(granted ? Color.stashInk : Color.stashInk.opacity(0.62))
                 if let detail {
                     Text(detail)
-                        .font(.archivo(13.5))
+                        .font(.archivo(14))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineSpacing(2)
                 }
@@ -231,13 +231,13 @@ private struct PreviewRow: View {
                     .foregroundStyle(Color.stashInk)
                     .lineLimit(1)
                 Text(subtitle)
-                    .font(.archivo(12.5))
+                    .font(.archivo(13))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 13)
+        .padding(.vertical, 12)
     }
 }
 

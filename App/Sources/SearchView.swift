@@ -390,14 +390,14 @@ struct SearchOverlay: View {
                 // for its about-text shows its title alone.
                 if let about = video.about, !about.isEmpty {
                     Text(about)
-                        .font(.archivo(12.5))
+                        .font(.archivo(13))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 13)
+        .padding(.vertical, 12)
     }
 }
 
@@ -457,7 +457,7 @@ enum SearchSuggestions {
     #endif
 }
 
-/// Outlined uppercase chips that wrap onto multiple lines.
+/// Chips that wrap onto multiple lines.
 struct FlowChips: View {
     let chips: [String]
     let onTap: (String) -> Void
@@ -465,16 +465,9 @@ struct FlowChips: View {
     var body: some View {
         FlexibleWrap(spacing: 8) {
             ForEach(chips, id: \.self) { chip in
-                Button { onTap(chip) } label: {
-                    Micro(text: chip, size: 13, color: .stashInk)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
-                        // The pill draws ~31 pt tall; the thumb gets 44. `FlexibleWrap`
-                        // measures the grown size, so the rows space themselves.
-                        .minTapTarget()
-                }
-                .buttonStyle(.plain)
+                // The chip every tab uses; it pads its own 44 pt target, and `FlexibleWrap`
+                // measures the grown size, so the rows space themselves.
+                TopicChip(label: chip, isOn: false) { onTap(chip) }
             }
         }
     }

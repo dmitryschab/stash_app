@@ -70,6 +70,7 @@ extension Color {
     static let stashOnInk = Color(light: 0xF7F1E1, dark: 0x201A12)      // text on the ink pill
     static let stashOnAccent = Color(light: 0xF7F1E1, dark: 0x1D0E06)   // text on jewel cards
     static let stashCream = Color(hex: 0xF7F1E1)   // text on a fill that stays dark in both themes
+    static let stashDeepInk = Color(hex: 0x1D0E06) // ink that stays ink: light jewels, shadows, scrims
 
     // Pairings. Orange, teal, olive and amber are too light for cream in light mode: 2.6–3.6:1
     // under cream text and 2.5–3.4:1 as small type on the page, against a 4.5:1 floor.
@@ -88,7 +89,7 @@ extension Color {
     /// Text and glyphs on this colour as a fill: dark ink on the four light jewels in both
     /// themes (dark mode already set it there), `stashOnAccent` on everything else.
     var onJewel: Color {
-        Self.lightJewels.contains { $0.jewel == self } ? Color(hex: 0x1D0E06) : .stashOnAccent
+        Self.lightJewels.contains { $0.jewel == self } ? .stashDeepInk : .stashOnAccent
     }
 
     /// This colour as type or a glyph on the page: the four light jewels deepened for cream.
@@ -100,6 +101,8 @@ extension Color {
 // MARK: - Spacing
 
 /// Two gaps, so spacing can say "same group" or "next group" and nothing in between.
+/// Everything else is a literal on the same grid: 2, then steps of 4 with 6, 10, 14 and 18
+/// between them. Radii are even steps from 6 to 18, and 22; type is whole points from 11.
 enum StashSpacing {
     static let group: CGFloat = 24
     static let item: CGFloat = 10
@@ -208,7 +211,7 @@ struct StashPrimaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 if let systemImage {
                     Image(systemName: systemImage).font(.system(size: 15, weight: .semibold))
                 }
@@ -237,6 +240,14 @@ extension View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(Color.stashInk.opacity(0.9), lineWidth: 1.5)
             )
+    }
+}
+
+extension Animation {
+    /// The app's motion, which is none under Reduce Motion: state still changes, it just does
+    /// not travel. Read at each call, so the setting takes effect on the next change.
+    static func stash(_ animation: Animation) -> Animation? {
+        UIAccessibility.isReduceMotionEnabled ? nil : animation
     }
 }
 
@@ -281,7 +292,7 @@ struct ShimmerModifier: ViewModifier {
                 content.overlay {
                     GeometryReader { geo in
                         LinearGradient(
-                            colors: [.clear, .white.opacity(0.55), .clear],
+                            colors: [.clear, Color.stashCream.opacity(0.55), .clear],
                             startPoint: .leading, endPoint: .trailing)
                             .frame(width: geo.size.width * 0.6)
                             .offset(x: geo.size.width * 1.6 * phase - geo.size.width * 0.6)
@@ -560,8 +571,8 @@ struct CategoryBadge: View {
 
     var body: some View {
         Micro(text: category.singular, size: 12, color: category.color.onJewel)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(category.color, in: Capsule())
     }
 }
@@ -614,7 +625,7 @@ struct StashEmptyState: View {
     private var waitingMessage: String {
         let requested = Date(timeIntervalSince1970: exportRequestedAt)
             .formatted(.relative(presentation: .named))
-        return "You asked for your export \(requested). TikTok emails when it is ready — "
+        return "You asked for your export \(requested). TikTok emails when it is ready, "
             + "usually within the hour, sometimes a day or two. Then bring the file in here."
     }
 }
@@ -698,10 +709,10 @@ struct TimeRail: View {
     private let inset: CGFloat = 10
 
     var body: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             ForEach(entries) { entry in
                 Button {
-                    withAnimation { proxy.scrollTo(destination(of: entry.target), anchor: .top) }
+                    withAnimation(.stash(.default)) { proxy.scrollTo(destination(of: entry.target), anchor: .top) }
                 } label: {
                     Micro(
                         text: entry.label,
@@ -713,7 +724,7 @@ struct TimeRail: View {
             }
         }
         .padding(.vertical, inset)
-        .padding(.horizontal, 5)
+        .padding(.horizontal, 4)
         .background(Capsule().fill(Color.stashBackground.opacity(0.92)))
         .overlay(Capsule().strokeBorder(Color.stashInk.opacity(0.12), lineWidth: 1))
         .background(
@@ -763,13 +774,13 @@ struct InfoChip: View {
     var tint: Color = .stashInk
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             Image(systemName: systemImage).font(.system(size: 11, weight: .bold))
             Micro(text: text, size: 12, color: tint)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
         .background(Capsule().strokeBorder(tint, lineWidth: 1.5))
     }
 }
@@ -791,7 +802,7 @@ struct StashBackButton: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(tint.opacity(0.75))
                 // The cream variant sits on a photo; a soft shadow keeps it legible on a bright one.
-                .shadow(color: .black.opacity(tint == .stashInk ? 0 : 0.45), radius: 3, y: 1)
+                .shadow(color: Color.stashDeepInk.opacity(tint == .stashInk ? 0 : 0.45), radius: 3, y: 1)
                 .frame(width: 36, height: 36)
                 .contentShape(Rectangle().inset(by: -4))
         }
@@ -873,7 +884,7 @@ struct SkeletonRow: View {
     @State private var breathe = false
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(tint.opacity(0.12))
                 .frame(width: 52, height: 52)

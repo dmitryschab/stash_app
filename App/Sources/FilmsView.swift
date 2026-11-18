@@ -311,7 +311,7 @@ struct FilmsView: View {
             .frame(height: 30)
             .background { if isOn { Capsule().fill(Color.stashInk) } }
             .contentShape(Capsule())
-            .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { mode = value } }
+            .onTapGesture { withAnimation(.stash(.easeOut(duration: 0.2))) { mode = value } }
             .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : [.isButton])
     }
 
@@ -319,14 +319,14 @@ struct FilmsView: View {
         let topics = topics(in: saves)
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                TopicChip(label: "all", isOn: focus == .all) { focus = .all }
+                TopicChip(label: "All", isOn: focus == .all) { focus = .all }
                 ForEach(rowTopics(topics)) { topic in
                     // The count is saves carrying the topic, not films — say so to VoiceOver.
                     TopicChip(label: topic.name, count: topic.count, unit: "saves", isOn: focus == .topic(topic.name)) {
                         focus = focus == .topic(topic.name) ? .all : .topic(topic.name)
                     }
                 }
-                TopicChip(label: "more", symbol: "ellipsis", isOn: false) { browsingTopics = true }
+                TopicChip(label: "More", symbol: "ellipsis", isOn: false) { browsingTopics = true }
             }
         }
         .sheet(isPresented: $browsingTopics) {
@@ -340,7 +340,7 @@ struct FilmsView: View {
                 listCard(video, filmsByID: filmsByID, seen: seen)
             }
         }
-        .animation(.easeOut(duration: 0.35), value: focus)
+        .animation(.stash(.easeOut(duration: 0.35)), value: focus)
     }
 
     /// One list save as a card; tapping opens the save's own page, not a film's.
@@ -382,8 +382,8 @@ struct FilmsView: View {
                 }
             }
         }
-        .animation(.easeOut(duration: 0.35), value: focus)
-        .animation(.easeOut(duration: 0.35), value: seenJSON)
+        .animation(.stash(.easeOut(duration: 0.35)), value: focus)
+        .animation(.stash(.easeOut(duration: 0.35)), value: seenJSON)
     }
 
     /// One flag per film; nothing else in the store moves.
@@ -412,7 +412,7 @@ struct FilmsView: View {
             symbol: "movieclapper",
             tint: .categoryFilm,
             title: "No films yet.",
-            message: "Save a TikTok that names a movie — or ten — and it lands here.",
+            message: "Save a TikTok that names a movie, or ten, and it lands here.",
             offersImport: videos.isEmpty
         )
     }
@@ -440,7 +440,7 @@ private struct FilmTile: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             ZStack {
                 if film.isFromList, !compact {
                     shape.fill(Color.categoryFilm.opacity(0.14)).offset(x: 6, y: -6)
@@ -502,16 +502,7 @@ private struct FilmTile: View {
             }
     }
 
-    private var sleeve: some View {
-        Color.categoryFilm
-            .overlay(alignment: .bottomLeading) {
-                if !compact {
-                    Micro(text: film.title, size: 14, color: .stashOnAccent)
-                        .lineLimit(3)
-                        .padding(10)
-                }
-            }
-    }
+    private var sleeve: some View { FilmSleeve(title: film.title, showsTitle: !compact) }
 }
 
 // MARK: - List card
@@ -531,7 +522,7 @@ private struct ListCard: View {
     private static let fan = 5
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(video.rowTitle)
                 .font(.archivo(15, .heavy))
                 .foregroundStyle(Color.stashInk)
@@ -539,7 +530,7 @@ private struct ListCard: View {
                 .multilineTextAlignment(.leading)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(subline)
-                    .font(.archivo(11.5))
+                    .font(.archivo(12))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -666,13 +657,13 @@ private struct FilmPageView: View {
     /// A row that leaves the app, so it wears the arrow (F5) — same frame as the "Saved in" rows.
     private func linkRow(_ title: String, _ detail: String, _ url: URL) -> some View {
         Link(destination: url) {
-            HStack(spacing: 11) {
+            HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.archivo(13.5, .bold))
+                        .font(.archivo(14, .bold))
                         .foregroundStyle(Color.stashInk)
                     Text(detail)
-                        .font(.archivo(11.5))
+                        .font(.archivo(12))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                 }
                 Spacer(minLength: 0)
@@ -711,16 +702,16 @@ private struct FilmPageView: View {
     }
 
     private func row(_ video: Video, _ mark: FilmWall.Mark) -> some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.rowTitle)
-                    .font(.archivo(13.5, .bold))
+                    .font(.archivo(14, .bold))
                     .foregroundStyle(Color.stashInk)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 if !video.author.isEmpty {
                     Text("@\(video.author)")
-                        .font(.archivo(11.5))
+                        .font(.archivo(12))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
