@@ -51,7 +51,7 @@ struct MindMapView: View {
     /// the fixed header rather than over the canvas it re-frames.
     private var fitButton: some View {
         Button { rebuild() } label: {
-            Micro(text: "Fit", size: 9.5, tracking: 1.2, color: .stashInk)
+            Micro(text: "Fit", size: 11, color: .stashInk)
                 .padding(.horizontal, 14)
                 .frame(height: 30)
                 .background(Color.stashSurface, in: Capsule())
@@ -280,10 +280,10 @@ struct MindMapView: View {
             let selected = engine.selectedIndex == i
             switch n.tier {
             case 0:
-                drawText(&gc, "YOU", at: p, size: 12 * camera.zoom, color: .stashOnInk.opacity(opacity), tracking: 1.5)
+                drawText(&gc, "You", at: p, size: 12 * camera.zoom, color: .stashOnInk.opacity(opacity))
             case 1:
                 drawText(&gc, n.label, at: CGPoint(x: p.x, y: p.y - 6 * camera.zoom),
-                         size: 9.5 * camera.zoom, color: n.color.onJewel.opacity(opacity), tracking: 1)
+                         size: 9.5 * camera.zoom, color: n.color.onJewel.opacity(opacity))
                 drawText(&gc, "\(n.count)", at: CGPoint(x: p.x, y: p.y + 7 * camera.zoom),
                          size: 10 * camera.zoom, color: n.color.onJewel.opacity(opacity))
             default:
@@ -298,9 +298,9 @@ struct MindMapView: View {
     }
 
     private func drawText(_ gc: inout GraphicsContext, _ text: String, at point: CGPoint,
-                          size: CGFloat, color: Color, tracking: CGFloat = 0) {
+                          size: CGFloat, color: Color) {
         let resolved = gc.resolve(
-            Text(text).font(.archivo(max(size, 4), .heavy)).tracking(tracking).foregroundStyle(color)
+            Text(text).font(.archivo(max(size, 4), .heavy)).foregroundStyle(color)
         )
         gc.draw(resolved, at: point, anchor: .center)
     }
@@ -313,13 +313,13 @@ struct MindMapView: View {
             let n = engine.nodes[i]
             HStack(spacing: 10) {
                 Circle().fill(n.color).frame(width: 10, height: 10)
-                Text(n.tier == 2 ? n.label : n.label.capitalized)
+                Text(n.label)
                     .font(.archivo(14, .bold))
                     .foregroundStyle(Color.stashInk)
                 if n.tier == 1 {
-                    Micro(text: "\(n.count) saves", size: 10, tracking: 1.2)
+                    Micro(text: "\(n.count) saves", size: 12)
                 }
-                Micro(text: "\(engine.neighbors[i].count) links", size: 10, tracking: 1.2)
+                Micro(text: "\(engine.neighbors[i].count) links", size: 12)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 11)

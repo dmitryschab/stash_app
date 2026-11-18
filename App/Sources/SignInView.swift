@@ -42,16 +42,6 @@ struct SignInView: View {
         VStack(spacing: 0) {
             Spacer()
             appTile
-            HStack(spacing: 8) {
-                ForEach(librarySegments, id: \.self) { category in
-                    Circle().fill(category.color).frame(width: 9, height: 9)
-                }
-            }
-            .padding(.top, 16)
-            // Decoration: one dot per library category. VoiceOver reading five unnamed
-            // circles before the headline is noise, not information.
-            .accessibilityHidden(true)
-
             Text("Your saves, sorted")
                 .font(.archivo(27, .heavy))
                 .foregroundStyle(Color.stashInk)
@@ -160,7 +150,7 @@ struct SignInView: View {
     /// first screen reads as "you also need permission to be here".
     private var codeToggle: some View {
         Button { showsCodeField = true } label: {
-            Micro(text: "Have a code?", size: 10, tracking: 1.8,
+            Micro(text: "Have a code?", size: 12,
                   color: .stashInk.opacity(0.62))
                 .minTapTarget()
         }
@@ -169,7 +159,7 @@ struct SignInView: View {
 
     private var inviteField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Micro(text: "Code", size: 10, tracking: 1.8)
+            Micro(text: "Code", size: 12)
             TextField("", text: $inviteCode)
                 .font(.archivo(17, .semibold))
                 .foregroundStyle(Color.stashInk)

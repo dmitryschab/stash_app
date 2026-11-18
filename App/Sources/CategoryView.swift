@@ -72,7 +72,7 @@ struct CategoryView: View {
     private var list: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
+                Micro(text: run.title, size: 12, color: .stashInk.opacity(0.62))
                     .padding(.top, 14)
                     .padding(.bottom, 4)
                     .id(run.id)

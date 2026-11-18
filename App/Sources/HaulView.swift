@@ -196,8 +196,8 @@ struct HaulView: View {
 
     private var listHeading: some View {
         HStack {
-            Text(status == .all ? "YOUR FINDS" : "\(status.rawValue.uppercased()) · \(shown.count)")
-                .font(.archivo(11, .bold)).tracking(1.5)
+            Text(status == .all ? "Your finds" : "\(status.rawValue.sentenceCased) · \(shown.count)")
+                .font(.archivo(13, .semibold))
             Spacer()
             Menu {
                 Picker("Sort finds", selection: $sort) {

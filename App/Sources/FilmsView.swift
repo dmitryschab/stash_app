@@ -262,7 +262,7 @@ struct FilmsView: View {
                         } else {
                             if focus == .all, let newest = lists.first {
                                 listCard(newest, filmsByID: filmsByID, seen: seen,
-                                         label: "Newest list · \(newest.bookmarkedAt.formatted(.relative(presentation: .named)))")
+                                         label: "Newest, \(newest.bookmarkedAt.formatted(.relative(presentation: .named)))")
                                     .padding(.top, 10)
                             }
                             wall(runs: runs, savesByID: savesByID, seen: seen).padding(.top, 4)
@@ -306,7 +306,7 @@ struct FilmsView: View {
 
     private func segmentPill(_ label: String, _ value: Mode) -> some View {
         let isOn = mode == value
-        return Micro(text: label, size: 9.5, tracking: 1, color: isOn ? .stashOnInk : .stashInk.opacity(0.65))
+        return Micro(text: label, size: 11, color: isOn ? .stashOnInk : .stashInk.opacity(0.65))
             .padding(.horizontal, 14)
             .frame(height: 30)
             .background { if isOn { Capsule().fill(Color.stashInk) } }
@@ -359,7 +359,7 @@ struct FilmsView: View {
     private func wall(runs: [MonthRun<FilmWall.Film>], savesByID: [String: Video], seen: Set<String>) -> some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
+                Micro(text: run.title, size: 12, color: .stashInk.opacity(0.62))
                     .padding(.top, 14)
                     .padding(.bottom, 8)
                     .id(run.id)
@@ -458,7 +458,7 @@ private struct FilmTile: View {
                     .fixedSize(horizontal: false, vertical: true)
                 let yearLine = [film.year.map(String.init), seen ? "seen" : nil].compactMap { $0 }
                 if !yearLine.isEmpty {
-                    Micro(text: yearLine.joined(separator: " · "), size: 9.5, tracking: 1.2, color: .stashInk.opacity(0.62))
+                    Micro(text: yearLine.joined(separator: " · "), size: 11, color: .stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
             }
@@ -506,7 +506,7 @@ private struct FilmTile: View {
         Color.categoryFilm
             .overlay(alignment: .bottomLeading) {
                 if !compact {
-                    Micro(text: film.title, size: 12, tracking: 0.4, color: .stashOnAccent)
+                    Micro(text: film.title, size: 14, color: .stashOnAccent)
                         .lineLimit(3)
                         .padding(10)
                 }
@@ -524,7 +524,7 @@ private struct ListCard: View {
     let films: [FilmWall.Film]
     let refs: [String: FilmRef?]
     let seen: Set<String>
-    /// Over the title; defaults to when the clip was saved.
+    /// Beside the byline; defaults to when the clip was saved.
     var label: String? = nil
     let resolve: (FilmWall.Film) async -> Void
 
@@ -532,17 +532,22 @@ private struct ListCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Micro(text: label ?? video.bookmarkedAt.formatted(.relative(presentation: .named)),
-                  size: 9.5, tracking: 1.8, color: .categoryFilm)
             Text(video.rowTitle)
                 .font(.archivo(15, .heavy))
                 .foregroundStyle(Color.stashInk)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
-            Text(subline)
-                .font(.archivo(11.5))
-                .foregroundStyle(Color.stashInk.opacity(0.62))
-                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(subline)
+                    .font(.archivo(11.5))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Micro(text: label ?? video.bookmarkedAt.formatted(.relative(presentation: .named)),
+                      size: 11, color: .categoryFilm)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+            }
             HStack(spacing: 4) {
                 ForEach(films.prefix(Self.fan)) { film in
                     FilmTile(film: film, ref: refs[film.id], seen: seen.contains(film.id), caption: false, compact: true)
@@ -550,7 +555,7 @@ private struct ListCard: View {
                         .task(id: film.id) { await resolve(film) }
                 }
                 if films.count > Self.fan {
-                    Micro(text: "+\(films.count - Self.fan)", size: 9.5, tracking: 0.4, color: .stashInk.opacity(0.62))
+                    Micro(text: "+\(films.count - Self.fan)", size: 11, color: .stashInk.opacity(0.62))
                         .frame(width: 36, height: 54)
                         .background(Color.stashInk.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
@@ -603,7 +608,7 @@ private struct FilmPageView: View {
                     .foregroundStyle(Color.stashInk)
                     .padding(.top, 20)
                 if let year = film.year {
-                    Micro(text: String(year), size: 10, tracking: 1.8, color: .stashInk.opacity(0.62))
+                    Micro(text: String(year), size: 12, color: .stashInk.opacity(0.62))
                         .padding(.top, 6)
                 }
                 actions.padding(.top, 18)
@@ -695,7 +700,7 @@ private struct FilmPageView: View {
 
     private var savesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Micro(text: "Saved in", size: 10, tracking: 2, color: .categoryFilm)
+            Micro(text: "Saved in", size: 12, color: .categoryFilm)
             ForEach(film.marks) { mark in
                 if let video = saves[mark.sourceID] {
                     NavigationLink { VideoDetailView(video: video) } label: { row(video, mark) }
@@ -722,7 +727,7 @@ private struct FilmPageView: View {
             }
             Spacer(minLength: 0)
             if mark.isList {
-                Micro(text: "\(mark.position) of \(mark.outOf)", size: 9.5, tracking: 1.2,
+                Micro(text: "\(mark.position) of \(mark.outOf)", size: 11,
                       color: .categoryFilm)
             }
             // The row pushes the save's own screen. Music's identical-looking rows leave the

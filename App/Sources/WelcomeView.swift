@@ -83,17 +83,17 @@ struct WelcomeView: View {
 
     private var steps: some View {
         VStack(alignment: .leading, spacing: 16) {
-            step("1", "square.and.arrow.down", "Import your saves",
+            step("1", "Import your saves",
                  "Ask TikTok for your data, or share a video straight to Stash.")
-            step("2", "waveform", "Stash reads them",
+            step("2", "Stash reads them",
                  "It watches and listens to each one, then writes down what was in it.")
-            step("3", "magnifyingglass", "Find it again",
+            step("3", "Find it again",
                  "Recipes, tracks, links and products, searchable by what was said.")
         }
         .frame(maxWidth: 330, alignment: .leading)
     }
 
-    private func step(_ number: String, _ symbol: String, _ title: String, _ body: String) -> some View {
+    private func step(_ number: String, _ title: String, _ body: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
             ZStack {
                 Circle().fill(Color.stashInk).frame(width: 28, height: 28)
@@ -102,14 +102,9 @@ struct WelcomeView: View {
                     .foregroundStyle(Color.stashOnInk)
             }
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.stashInk.opacity(0.7))
-                    Text(title)
-                        .font(.archivo(15, .bold))
-                        .foregroundStyle(Color.stashInk)
-                }
+                Text(title)
+                    .font(.archivo(15, .bold))
+                    .foregroundStyle(Color.stashInk)
                 Text(body)
                     .font(.archivo(13))
                     .foregroundStyle(Color.stashInk.opacity(0.62))
@@ -125,10 +120,9 @@ struct WelcomeView: View {
     /// but ours, and that disagreement is a rejection.
     private var afterCard: some View {
         VStack(spacing: 6) {
-            Micro(text: "After that", size: 9.5, tracking: 2, color: .stashInk.opacity(0.62))
             Text(Subscription.shared.displayPrice.isEmpty
-                 ? "Stash Pro keeps it going, monthly, cancel any time."
-                 : "Stash Pro keeps it going — \(Subscription.shared.displayPrice) a month, cancel any time.")
+                 ? "After that, Stash Pro keeps it going, monthly, cancel any time."
+                 : "After that, Stash Pro keeps it going: \(Subscription.shared.displayPrice) a month, cancel any time.")
                 .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.75))
                 .multilineTextAlignment(.center)

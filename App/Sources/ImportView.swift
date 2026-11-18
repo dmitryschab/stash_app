@@ -180,20 +180,15 @@ struct ImportView: View {
     /// the budget left, the progress bar.
     private var syncCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Micro(text: "Your saves", size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
-                Spacer()
-                if let quota = session.quota { budgetBadge(quota) }
-            }
             Text(heroTitleLine)
                 .font(.archivo(23, .heavy))
                 .foregroundStyle(Color.stashOnAccent)
-                .padding(.top, 9)
             Text(subtitleLine)
                 .font(.archivo(13, .semibold))
                 .foregroundStyle(Color.stashOnAccent.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
+            if let quota = session.quota { budgetBadge(quota).padding(.top, 10) }
             if let progress = localProgress, progress.total > 0 {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -233,14 +228,14 @@ struct ImportView: View {
         if quota.remaining == 0 {
             HStack(spacing: 6) {
                 Image(systemName: "hourglass").font(.system(size: 10, weight: .bold))
-                Micro(text: text, size: 9.5, tracking: 1.6, color: Self.spentBadgeInk)
+                Micro(text: text, size: 11, color: Self.spentBadgeInk)
             }
             .foregroundStyle(Self.spentBadgeInk)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(Capsule().fill(Self.spentBadgeFill))
         } else {
-            Micro(text: text, size: 9.5, tracking: 1.6, color: .stashOnAccent.opacity(0.7))
+            Micro(text: text, size: 11, color: .stashOnAccent.opacity(0.7))
         }
     }
 
@@ -423,7 +418,7 @@ struct ImportView: View {
     /// OpenRouter) gets the caption and hashtags for the first sort.
     private var cloudDisclosure: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Micro(text: "Processed in the cloud", size: 10, tracking: 1.8)
+            Micro(text: "Processed in the cloud", size: 12)
             Text("Stash servers download each video you submit. Its audio goes to Groq, Inc. "
                  + "(United States) for speech-to-text; the caption, transcript and on-screen "
                  + "text go to AWS Bedrock (Frankfurt) to write the summary and pick the "
@@ -436,7 +431,7 @@ struct ImportView: View {
                 .foregroundStyle(Color.stashInk.opacity(0.65))
                 .fixedSize(horizontal: false, vertical: true)
             Link(destination: StashLegal.privacy) {
-                Micro(text: "Read the privacy policy", size: 10, tracking: 1.2, color: .stashInk)
+                Micro(text: "Read the privacy policy", size: 12, color: .stashInk)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -585,19 +580,19 @@ struct ImportView: View {
     private var boxCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Micro(text: "Model box", size: 10, tracking: 1.8)
+                Micro(text: "Model box", size: 12)
                 Spacer()
                 HStack(spacing: 7) {
                     Image(systemName: controller.boxStatus.symbol)
                         .font(.system(size: 12, weight: .bold))
-                    Micro(text: controller.boxStatus.label, size: 10, tracking: 1.2, color: controller.boxStatus.color)
+                    Micro(text: controller.boxStatus.label, size: 12, color: controller.boxStatus.color)
                 }
                 .foregroundStyle(controller.boxStatus.color)
             }
             Button {
                 Task { await controller.pingBox() }
             } label: {
-                Micro(text: "Check again", size: 10, tracking: 1.4, color: .stashInk)
+                Micro(text: "Check again", size: 12, color: .stashInk)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 8)
                     .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))
@@ -611,14 +606,14 @@ struct ImportView: View {
 
     private var librarySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Micro(text: "Library", size: 10, tracking: 1.8)
+            Micro(text: "Library", size: 12)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 ForEach(librarySegments, id: \.self) { category in
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(count(category))")
                             .font(.archivo(26, .heavy))
                             .foregroundStyle(category.color.onJewel)
-                        Micro(text: category.displayName, size: 10, tracking: 1.4, color: category.color.onJewel)
+                        Micro(text: category.displayName, size: 12, color: category.color.onJewel)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
@@ -631,7 +626,7 @@ struct ImportView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 12, weight: .bold))
-                        Micro(text: "Needs a look", size: 10, tracking: 1.4, color: Color.categoryOther.asType)
+                        Micro(text: "Needs a look", size: 12, color: Color.categoryOther.asType)
                     }
                     .foregroundStyle(Color.categoryOther.asType)
                     Spacer()

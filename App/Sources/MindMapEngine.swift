@@ -137,7 +137,7 @@ final class MindMapEngine {
         var edgeList: [(Int, Int)] = []
 
         built.append(GraphNode(
-            id: "you", label: "YOU", color: .stashInk, tier: 0, count: 0,
+            id: "you", label: "You", color: .stashInk, tier: 0, count: 0,
             x: 0, y: 0, radius: 30, pinned: true
         ))
 
@@ -149,7 +149,7 @@ final class MindMapEngine {
             let cx = 150 * cos(angle), cy = 150 * sin(angle)
             let categoryIdx = built.count
             built.append(GraphNode(
-                id: "cat-\(model.category.rawValue)", label: model.category.singular.uppercased(),
+                id: "cat-\(model.category.rawValue)", label: model.category.singular,
                 color: model.category.color, tier: 1, count: model.videoCount,
                 x: cx, y: cy, radius: radius
             ))

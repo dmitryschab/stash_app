@@ -126,17 +126,20 @@ struct CodeView: View {
         let note = video.codeNote
         let summary = note.flatMap { $0.summary.isEmpty ? nil : $0.summary } ?? video.summary
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Micro(text: ["Latest save", note?.shelfLabel].compactMap { $0 }.joined(separator: " · "),
-                      size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.65))
-                Spacer()
-                Micro(text: video.bookmarkedAt.formatted(.relative(presentation: .named)), size: 10, tracking: 2, color: .stashOnAccent.opacity(0.65))
-            }
             Text(video.rowTitle)
                 .font(.archivo(24, .heavy))
                 .foregroundStyle(Color.stashOnAccent)
                 .multilineTextAlignment(.leading)
-                .padding(.top, 10)
+            // What this card is and when, after the title it describes rather than over it.
+            HStack {
+                Micro(text: "Latest save, \(video.bookmarkedAt.formatted(.relative(presentation: .named)))",
+                      size: 12, color: .stashOnAccent.opacity(0.8))
+                Spacer()
+                if let shelf = note?.shelfLabel {
+                    Micro(text: shelf.sentenceCased, size: 12, color: .stashOnAccent.opacity(0.8))
+                }
+            }
+            .padding(.top, 5)
             if !summary.isEmpty {
                 Text(summary)
                     .font(.archivo(14, .semibold))
@@ -147,7 +150,7 @@ struct CodeView: View {
             }
             HStack(spacing: 6) {
                 ForEach((note?.techTags ?? []).prefix(2), id: \.self) { tag in
-                    Micro(text: tag, size: 9.5, tracking: 1.4, color: .stashOnAccent)
+                    Micro(text: tag, size: 11, color: .stashOnAccent)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 6)
                         .background(Capsule().strokeBorder(Color.stashOnAccent.opacity(0.5), lineWidth: 1.2))
@@ -169,7 +172,7 @@ struct CodeView: View {
     private var rows: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
+                Micro(text: run.title, size: 12, color: .stashInk.opacity(0.62))
                     .padding(.top, 18)
                     .padding(.bottom, 4)
                     .id(run.id)
@@ -218,7 +221,7 @@ private struct CodeRow: View {
                     .lineLimit(1)
                 HStack(spacing: 4) {
                     if let tag {
-                        Micro(text: tag, size: 10, tracking: 1.2, color: .categoryCoding)
+                        Micro(text: tag, size: 12, color: .categoryCoding)
                     }
                     let meta = meta(label: note?.shelfLabel, tagged: tag != nil)
                     if !meta.isEmpty {

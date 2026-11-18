@@ -716,8 +716,8 @@ final class PipelineCenter {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             if submitting.count < bookmarks.count, let quota {
                 let refills = quota.monthResetDate.formatted(date: .abbreviated, time: .omitted)
-                lastSummary = "Submitted the newest \(submission.accepted) of \(bookmarks.count) "
-                    + "· that is the whole budget · \(quota.monthLimit) more on \(refills)"
+                lastSummary = "Submitted the newest \(submission.accepted) of \(bookmarks.count). "
+                    + "That is the whole budget; \(quota.monthLimit) more on \(refills)."
             } else {
                 lastSummary = "Submitted \(submission.accepted) videos · \(newCount) new"
             }
@@ -924,7 +924,7 @@ final class PipelineCenter {
         }
         shareImports.removeAll { shares.contains($0.id) }
         persistShareImports()
-        lastSummary = "Shared TikTok ready · \(transcripts.filled) transcribed · "
+        lastSummary = "Shared TikTok ready: \(transcripts.filled) transcribed, "
             + "\(visual.filled) read on screen"
     }
 

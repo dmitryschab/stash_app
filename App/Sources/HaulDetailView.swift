@@ -72,8 +72,8 @@ struct HaulDetailView: View {
             }
             .accessibilityLabel("Back")
             Spacer(minLength: 0)
-            Text(HaulCategory.category(for: pick).label.uppercased())
-                .font(.archivo(11, .bold))
+            Text(HaulCategory.category(for: pick).label)
+                .font(.archivo(12, .semibold))
                 .foregroundStyle(Color.stashHaul)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
@@ -133,7 +133,7 @@ struct HaulDetailView: View {
                 .padding(.top, 12)
                 .accessibilityAddTraits(.isHeader)
             if !pick.kind.isEmpty {
-                Text(pick.kind.prefix(1).uppercased() + pick.kind.dropFirst())
+                Text(pick.kind.sentenceCased)
                     .font(.archivo(16))
                     .foregroundStyle(Color.stashInk.opacity(0.7))
                     .padding(.top, 4)

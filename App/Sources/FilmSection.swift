@@ -37,7 +37,7 @@ struct FilmSection: View {
     }
 
     private var sectionHeader: some View {
-        Micro(text: films.count == 1 ? "Film" : "\(films.count) films", size: 11, tracking: 2, color: tint.asType)
+        Micro(text: films.count == 1 ? "Film" : "\(films.count) films", size: 13, color: tint.asType)
             .padding(.top, 20)
     }
 

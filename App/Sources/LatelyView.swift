@@ -137,7 +137,7 @@ struct LatelyView: View {
                 view(for: card, historical: snapshot.isHistorical(at: Date()))
             }
             if let undoable = store.undoable { undoBar(undoable) }
-            Micro(text: "You're caught up", size: 10, tracking: 1.6,
+            Micro(text: "You're caught up", size: 12,
                   color: .stashInk.opacity(0.62))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 10)
@@ -167,8 +167,6 @@ struct LatelyView: View {
                               card: LatelySelector.Card, historical: Bool) -> some View {
         let evidence = interest.evidenceIDs.compactMap { byID[$0] }
         return VStack(alignment: .leading, spacing: 0) {
-            cardHeader(historical ? "YOU WERE EXPLORING" : "YOUR CURRENT RABBIT HOLE",
-                       card: card, on: .stashCream)
             NavigationLink {
                 LatelyEvidenceView(card: card, videos: byID)
             } label: {
@@ -178,8 +176,8 @@ struct LatelyView: View {
                         .foregroundStyle(Color.stashCream)
                         .multilineTextAlignment(.leading)
                         .modifier(TopicHeadline())
-                        .padding(.top, 9)
-                    Text(explanation(interest))
+                        .padding(.trailing, 36)   // clear of the Hide menu in the corner
+                    Text((historical ? "You were exploring" : "Your current rabbit hole") + ": " + explanation(interest))
                         .font(.archivo(13, .semibold))
                         .foregroundStyle(Color.stashCream.opacity(0.82))
                         .multilineTextAlignment(.leading)
@@ -193,6 +191,7 @@ struct LatelyView: View {
             }
             .buttonStyle(.plain)
         }
+        .overlay(alignment: .topTrailing) { cardMenu(card, on: .stashCream) }
         .stashCard(fill: .stashLatelyNow)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(historical ? "You were exploring" : "Current interest"): "
@@ -206,7 +205,6 @@ struct LatelyView: View {
         let recent = byID[connection.recentID]
         let older = byID[connection.olderID]
         return VStack(alignment: .leading, spacing: 0) {
-            cardHeader("A CONNECTION", card: card, on: .stashInk)
             NavigationLink {
                 LatelyEvidenceView(card: card, videos: byID)
             } label: {
@@ -215,7 +213,7 @@ struct LatelyView: View {
                         .font(.archivo(19, .heavy))
                         .foregroundStyle(Color.stashInk)
                         .multilineTextAlignment(.leading)
-                        .padding(.top, 9)
+                        .padding(.trailing, 36)
                     VStack(alignment: .leading, spacing: 9) {
                         source(recent, dated: connection.recentDate)
                         source(older, dated: connection.olderDate)
@@ -228,6 +226,7 @@ struct LatelyView: View {
             }
             .buttonStyle(.plain)
         }
+        .overlay(alignment: .topTrailing) { cardMenu(card, on: .stashInk) }
         .stashOutlineCard(padding: 18)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("A connection. \(shared(connection)). "
@@ -240,7 +239,6 @@ struct LatelyView: View {
                                card: LatelySelector.Card, historical: Bool) -> some View {
         let evidence = returning.recentIDs.compactMap { byID[$0] }
         return VStack(alignment: .leading, spacing: 0) {
-            cardHeader(historical ? "YOU RETURNED TO" : "BACK TO", card: card, on: .stashOnAccent)
             NavigationLink {
                 LatelyEvidenceView(card: card, videos: byID)
             } label: {
@@ -250,8 +248,8 @@ struct LatelyView: View {
                         .foregroundStyle(Color.stashOnAccent)
                         .multilineTextAlignment(.leading)
                         .modifier(TopicHeadline())
-                        .padding(.top, 9)
-                    Text(explanation(returning))
+                        .padding(.trailing, 36)   // clear of the Hide menu in the corner
+                    Text((historical ? "You returned" : "Back again") + ": " + explanation(returning))
                         .font(.archivo(13, .semibold))
                         .foregroundStyle(Color.stashOnAccent.opacity(0.82))
                         .multilineTextAlignment(.leading)
@@ -265,6 +263,7 @@ struct LatelyView: View {
             }
             .buttonStyle(.plain)
         }
+        .overlay(alignment: .topTrailing) { cardMenu(card, on: .stashOnAccent) }
         .stashCard(fill: .stashLatelyBack)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Returning interest: \(returning.displayTheme). "
@@ -273,28 +272,24 @@ struct LatelyView: View {
 
     // MARK: - Card parts
 
-    /// The kind label and the Hide menu. The menu sits outside the card's NavigationLink on
-    /// purpose: nesting a menu inside a link gives two overlapping targets and the wrong one
-    /// wins about half the time.
-    private func cardHeader(_ label: String, card: LatelySelector.Card,
-                            on tint: Color) -> some View {
-        HStack(spacing: 8) {
-            Micro(text: label, size: 9.5, tracking: 1.6, color: tint.opacity(0.75))
-            Spacer(minLength: 0)
-            Menu {
-                Button("Hide this connection", systemImage: "eye.slash") {
-                    store.hide(card)
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(tint.opacity(0.75))
-                    .frame(width: 44, height: 44, alignment: .trailing)
-                    .contentShape(Rectangle())
+    /// The Hide menu, laid over the card's top corner. It sits outside the card's
+    /// NavigationLink on purpose: nesting a menu inside a link gives two overlapping targets
+    /// and the wrong one wins about half the time. The card's kind used to sit beside it as a
+    /// label over the topic; it now opens the line under the topic.
+    private func cardMenu(_ card: LatelySelector.Card, on tint: Color) -> some View {
+        Menu {
+            Button("Hide this connection", systemImage: "eye.slash") {
+                store.hide(card)
             }
-            .accessibilityLabel("Card options")
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(tint.opacity(0.75))
+                .padding(.top, 10)
+                .frame(width: 44, height: 44, alignment: .topTrailing)
+                .contentShape(Rectangle())
         }
-        .frame(minHeight: 44)
+        .accessibilityLabel("Card options")
     }
 
     private func thumbnails(_ videos: some Collection<Video>, border: Color) -> some View {
@@ -359,10 +354,11 @@ struct LatelyView: View {
 
     // MARK: - Copy
 
-    /// Only what the counts and dates support. "5 saves about AI agents · Sep 6–18" is a fact
-    /// about the library; anything richer would be a claim about the videos.
+    /// Only what the counts and dates support. "5 saves, Sep 6–18" is a fact about the
+    /// library; anything richer would be a claim about the videos. The topic is the card's
+    /// title, so the line under it does not say it again.
     private func explanation(_ interest: LatelySelector.CurrentInterest) -> String {
-        "\(count(interest.saveCount)) about \(interest.displayTheme) · "
+        "\(count(interest.saveCount)), "
             + range(interest.firstDate, interest.lastDate)
     }
 

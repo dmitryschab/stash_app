@@ -23,7 +23,7 @@ struct ConnectFlowView: View {
                 Spacer()
                 if step != .success {
                     Button { dismiss() } label: {
-                        Micro(text: "Cancel", size: 11, tracking: 1.7, color: .stashInk.opacity(0.62))
+                        Micro(text: "Cancel", size: 13, color: .stashInk.opacity(0.62))
                     }
                     .buttonStyle(.plain)
                 }
@@ -167,7 +167,7 @@ struct ConnectFlowView: View {
     /// A short taste of the organized library, using the app's category tiles.
     private var previewList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Micro(text: "First in", size: 10, tracking: 1.8)
+            Micro(text: "First in", size: 12)
             PreviewRow(category: .recipe, title: "15-minute miso ramen", subtitle: "Recipe · 5 ingredients")
             Divider().overlay(Color.stashInk.opacity(0.12))
             PreviewRow(category: .music, title: "Midnight City", subtitle: "M83 · synthwave")

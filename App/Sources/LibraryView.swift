@@ -113,7 +113,7 @@ struct LibraryView: View {
     private var justSaved: some View {
         let newest = justSavedVideos
         if !newest.isEmpty {
-            Micro(text: "Just saved", size: 10, tracking: 2, color: .stashInk)
+            Micro(text: "Just saved", size: 12, color: .stashInk)
                 .frame(height: 44)
                 .padding(.top, 16)
             VStack(alignment: .leading, spacing: 0) {
@@ -158,7 +158,7 @@ struct LibraryView: View {
 
     /// A desk with nothing landed yet, named so the skeletons under it read as a shelf.
     private func sortingHeader(_ intent: SaveIntent) -> some View {
-        Micro(text: "\(intent.deskTitle) · sorting", size: 10, tracking: 2, color: intent.deskTint)
+        Micro(text: "\(intent.deskTitle) · sorting", size: 12, color: intent.deskTint)
             .frame(height: 44)
             .padding(.top, 16)
     }
@@ -234,7 +234,7 @@ struct LibraryView: View {
         HStack(spacing: 6) {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .semibold))
-            Micro(text: label, size: 10, tracking: 1.2, color: .stashInk)
+            Micro(text: label, size: 12, color: .stashInk)
         }
         .foregroundStyle(Color.stashInk)
         .padding(.horizontal, 13)
@@ -255,7 +255,7 @@ struct LibraryView: View {
         // a save, and the map knows nothing about picks.
         if let watch = desked[.watch] { watchShelf(watch) } else if sorting(.watch) > 0 { sortingHeader(.watch) }
         sortingShelf(.watch)
-        if let doable = desked[.tryIt] { rowShelf(.tryIt, doable, badge: "try it") } else if sorting(.tryIt) > 0 { sortingHeader(.tryIt) }
+        if let doable = desked[.tryIt] { rowShelf(.tryIt, doable, badge: "Try it") } else if sorting(.tryIt) > 0 { sortingHeader(.tryIt) }
         sortingShelf(.tryIt)
         if !buyPicks.isEmpty { buyShelf(buyPicks) }
         if let mood = desked[.mood] { moodShelf(mood) } else if sorting(.mood) > 0 { sortingHeader(.mood) }
@@ -273,13 +273,13 @@ struct LibraryView: View {
     private func shelfHeader(_ title: String, count: Int, tint: Color,
                              @ViewBuilder destination: @escaping () -> some View) -> some View {
         HStack(alignment: .center, spacing: 6) {
-            // Colour marks the shelf; it no longer fills it. The dot is the only tint left here.
-            Circle().fill(tint).frame(width: 6, height: 6)
-            Micro(text: "\(title) · \(count)", size: 10, tracking: 2, color: .stashInk)
+            // Colour marks the shelf; it no longer fills it. The name is the only tint left
+            // here, and the capsule beside it carries the count.
+            Micro(text: title, size: 12, color: tint.asType)
             Spacer()
             NavigationLink { destination() } label: {
                 HStack(spacing: 4) {
-                    Micro(text: "All \(count)", size: 9.5, tracking: 1.4)
+                    Micro(text: "All \(count)", size: 11)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.stashInk.opacity(0.62))
@@ -562,13 +562,12 @@ private struct JustSavedRow: View {
                         .lineLimit(2)
                 }
                 Spacer(minLength: 0)
-                HStack(spacing: 5) {
-                    Circle().fill(tint).frame(width: 6, height: 6)
-                    Micro(text: [video.category?.singular, intent.deskTitle.lowercased(), when]
-                              .compactMap { $0 }.joined(separator: " · "),
-                          size: 9.5, tracking: 1.2, color: tint.asType)
-                        .lineLimit(2)
-                }
+                // Kind and intent read as one phrase, then when: one separator a line.
+                Micro(text: [[video.category?.singular, intent.deskTitle.lowercased()]
+                                 .compactMap { $0 }.joined(separator: ", ").sentenceCased, when]
+                          .compactMap { $0 }.joined(separator: " · "),
+                      size: 11, color: tint.asType)
+                    .lineLimit(2)
             }
             .frame(minHeight: 74)
             Spacer(minLength: 0)
@@ -609,7 +608,7 @@ private struct BuyShelfRow: View {
                 }
                 Spacer(minLength: 0)
                 if !price.isEmpty {
-                    Micro(text: price, size: 9.5, tracking: 0.8, color: .stashHaul)
+                    Micro(text: price, size: 11, color: .stashHaul)
                         .padding(.horizontal, 9)
                         .frame(height: 28)
                         .background(Capsule().strokeBorder(Color.stashHaul, lineWidth: 1.2))
@@ -658,7 +657,7 @@ struct LibraryRow: View {
                 } else {
                     HStack(spacing: 4) {
                         if let topic = video.topics.first {
-                            Micro(text: topic, size: 9.5, tracking: 1, color: tint.asType)
+                            Micro(text: topic, size: 11, color: tint.asType)
                         }
                         Text(meta)
                             .font(.archivo(11.5))
@@ -671,7 +670,7 @@ struct LibraryRow: View {
             if let badge {
                 // A label, not a control — the row behind it is the target. It only has to be
                 // readable, which at 7.5 pt it was not.
-                Micro(text: badge, size: 9.5, tracking: 1, color: badgeTint)
+                Micro(text: badge, size: 11, color: badgeTint)
                     .padding(.horizontal, 9)
                     .frame(height: 28)
                     .background(Capsule().strokeBorder(badgeTint, lineWidth: 1.2))
@@ -722,7 +721,7 @@ private struct IntentListView: View {
                     HStack {
                         StashBackButton()
                         Spacer()
-                        Micro(text: "\(videos.count) saves", size: 10, tracking: 1.4,
+                        Micro(text: "\(videos.count) saves", size: 12,
                               color: .stashInk.opacity(0.62))
                     }
                     .padding(.top, 8)
@@ -732,7 +731,7 @@ private struct IntentListView: View {
                         .padding(.top, 16)
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(sections, id: \.id) { section in
-                            Micro(text: section.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
+                            Micro(text: section.title, size: 12, color: .stashInk.opacity(0.62))
                                 .padding(.top, 18)
                                 .padding(.bottom, 4)
                                 .id(section.id)
@@ -771,7 +770,7 @@ private struct BuyListView: View {
                 HStack {
                     StashBackButton()
                     Spacer()
-                    Micro(text: "\(picks.count) picks", size: 10, tracking: 1.4,
+                    Micro(text: "\(picks.count) picks", size: 12,
                           color: .stashInk.opacity(0.62))
                 }
                 .padding(.top, 8)
@@ -869,7 +868,7 @@ private struct IncomingShareCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 ShimmerBlock().frame(width: 150, height: 11)
                 ShimmerBlock().frame(width: 90, height: 9)
-                Micro(text: caption, size: 10, tracking: 1.6,
+                Micro(text: caption, size: 12,
                       color: isFailed ? .categoryOther : .categoryMusic)
                     .padding(.top, 2)
             }

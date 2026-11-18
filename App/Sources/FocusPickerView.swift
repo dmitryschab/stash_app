@@ -23,7 +23,7 @@ struct FocusPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: StashSpacing.group) {
-            Micro(text: "YOUR LIBRARY", size: 11, tracking: 3.4, color: .stashInk)
+            Micro(text: "Your library", size: 13, color: .stashInk)
                 .padding(.top, 28)
             MapBar(shares: shares)
             Text("What do you want to find fast?")
@@ -42,7 +42,7 @@ struct FocusPickerView: View {
                 }
             }
             if refused {
-                Micro(text: "Three keeps every tab labelled; add more in Settings", size: 9.5, tracking: 1.2,
+                Micro(text: "Three keeps every tab labelled; add more in Settings", size: 11,
                       color: Color.categoryOther.asType)
                     .transition(.opacity)
             }
@@ -51,7 +51,7 @@ struct FocusPickerView: View {
                 .disabled(picks.isEmpty)
                 .opacity(picks.isEmpty ? 0.5 : 1)
             Button { onDone([]) } label: {
-                Micro(text: "Skip", size: 11, tracking: 1.7, color: .stashInk.opacity(0.62))
+                Micro(text: "Skip", size: 13, color: .stashInk.opacity(0.62))
                     .frame(maxWidth: .infinity)
                     .minTapTarget()
             }

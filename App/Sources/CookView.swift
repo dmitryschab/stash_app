@@ -121,7 +121,7 @@ struct CookView: View {
     private var wall: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(runs) { run in
-                Micro(text: run.title, size: 10, tracking: 2.2, color: .stashInk.opacity(0.62))
+                Micro(text: run.title, size: 12, color: .stashInk.opacity(0.62))
                     .padding(.top, 14)
                     .padding(.bottom, 8)
                     .id(run.id)
@@ -183,11 +183,11 @@ struct TopicChip: View {
                     .font(.system(size: 9, weight: .black))
                     .foregroundStyle(foreground)
             }
-            Micro(text: label, size: 9.5, tracking: 0.8, color: foreground)
+            Micro(text: label, size: 11, color: foreground)
             if let count {
                 // Quieter than the label, but an unselected chip sits on the cream page, where
                 // 9.5 pt has an ink floor of 0.62 — 0.4 of an already dimmed ink was 0.26.
-                Micro(text: "\(count)", size: 9.5, tracking: 0.4,
+                Micro(text: "\(count)", size: 11,
                       color: isOn ? foreground.opacity(0.6) : .stashInk.opacity(0.62))
             }
         }
@@ -323,7 +323,7 @@ struct TopicPicker: View {
                     .foregroundStyle(Color.stashInk)
                 Spacer()
                 if let count {
-                    Micro(text: "\(count)", size: 10, tracking: 0.4, color: .stashInk.opacity(0.62))
+                    Micro(text: "\(count)", size: 12, color: .stashInk.opacity(0.62))
                 }
                 Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 15, weight: .semibold))
@@ -400,7 +400,7 @@ struct RecipeDetailView: View {
                     if let cookedAt = CookedLog.date(for: video.videoID) {
                         let when = Calendar.current.isDateInToday(cookedAt)
                             ? "today" : cookedAt.formatted(.relative(presentation: .named))
-                        Micro(text: "Cooked \(when)", size: 10, tracking: 1.8, color: .categoryRecipe)
+                        Micro(text: "Cooked \(when)", size: 12, color: .categoryRecipe)
                             .padding(.top, 8)
                     }
                     if let recipe = video.recipe {
@@ -451,7 +451,7 @@ struct RecipeDetailView: View {
                 HStack {
                     StashBackButton(tint: cream)
                     Spacer()
-                    Micro(text: "Recipe", size: 10, tracking: 1.8, color: cream)
+                    Micro(text: "Recipe", size: 12, color: cream)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 7)
                         .background(Color.categoryRecipe, in: Capsule())
@@ -460,7 +460,7 @@ struct RecipeDetailView: View {
                 Spacer()
                 HStack(spacing: 7) {
                     ForEach(video.topics.prefix(3), id: \.self) { topic in
-                        Micro(text: topic, size: 9.5, tracking: 1.4, color: cream)
+                        Micro(text: topic, size: 11, color: cream)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(Capsule().strokeBorder(cream.opacity(0.6), lineWidth: 1.2))
@@ -479,7 +479,7 @@ struct RecipeDetailView: View {
     @ViewBuilder
     private func ingredientsSection(_ ingredients: [String]) -> some View {
         if !ingredients.isEmpty {
-            Micro(text: "Ingredients · \(ingredients.count)", size: 10, tracking: 2, color: .categoryRecipe)
+            Micro(text: "Ingredients · \(ingredients.count)", size: 12, color: .categoryRecipe)
                 .padding(.top, 18)
             VStack(spacing: 0) {
                 ForEach(ingredients, id: \.self) { ingredient in
@@ -503,7 +503,7 @@ struct RecipeDetailView: View {
     @ViewBuilder
     private func methodSection(_ steps: [String]) -> some View {
         if !steps.isEmpty {
-            Micro(text: "Method · Summarized from the video", size: 10, tracking: 2, color: .categoryRecipe)
+            Micro(text: "Method · Summarized from the video", size: 12, color: .categoryRecipe)
                 .padding(.top, 16)
             VStack(spacing: 0) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
@@ -592,10 +592,10 @@ struct CookModeView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close")
                 Spacer()
-                Micro(text: title, size: 10, tracking: 2.2, color: cream.opacity(0.75))
+                Micro(text: title, size: 12, color: cream.opacity(0.75))
                     .lineLimit(1)
                 Spacer()
-                Micro(text: "\(step + 1) / \(steps.count)", size: 10, tracking: 1.4, color: cream.opacity(0.75))
+                Micro(text: "\(step + 1) / \(steps.count)", size: 12, color: cream.opacity(0.75))
             }
             HStack(spacing: 6) {
                 ForEach(steps.indices, id: \.self) { index in
@@ -637,9 +637,8 @@ struct CookModeView: View {
                 Button {
                     if step + 1 < steps.count { step += 1 } else { finish() }
                 } label: {
-                    Text(step + 1 < steps.count ? "NEXT STEP" : "DONE")
-                        .font(.archivo(13, .heavy))
-                        .tracking(0.8)
+                    Text(step + 1 < steps.count ? "Next step" : "Done")
+                        .font(.archivo(17, .heavy))
                         .foregroundStyle(Color.categoryRecipe)
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
@@ -647,7 +646,7 @@ struct CookModeView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Micro(text: "Screen stays awake", size: 9.5, tracking: 1.6, color: cream.opacity(0.55))
+            Micro(text: "Screen stays awake", size: 11, color: cream.opacity(0.55))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 14)
         }
@@ -663,7 +662,7 @@ struct CookModeView: View {
     private var ingredientsButton: some View {
         if !ingredients.isEmpty {
             Button { showingIngredients = true } label: {
-                Micro(text: "Ingredients · \(ingredients.count)", size: 10, tracking: 1.8, color: cream)
+                Micro(text: "Ingredients · \(ingredients.count)", size: 12, color: cream)
                     .padding(.horizontal, 18)
                     .frame(height: 44)
                     .background(Capsule().strokeBorder(cream, lineWidth: 1.5))
@@ -682,7 +681,7 @@ struct CookModeView: View {
         let used = CookMatcher.ingredients(in: currentStep, from: ingredients)
         if !used.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
-                Micro(text: "For this step", size: 9.5, tracking: 1.8, color: cream.opacity(0.7))
+                Micro(text: "For this step", size: 11, color: cream.opacity(0.7))
                 ForEach(used, id: \.self) { ingredient in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Rectangle().fill(cream.opacity(0.75)).frame(width: 6, height: 6)
@@ -703,7 +702,7 @@ struct CookModeView: View {
                 Text("Ingredients")
                     .font(.archivo(26, .heavy))
                     .foregroundStyle(cream)
-                Micro(text: "\(ingredients.count) in this recipe", size: 10, tracking: 1.8,
+                Micro(text: "\(ingredients.count) in this recipe", size: 12,
                       color: cream.opacity(0.75))
                     .padding(.top, 6)
                 ForEach(ingredients, id: \.self) { ingredient in
@@ -751,13 +750,12 @@ struct CookModeView: View {
                 .font(.archivo(15, .semibold))
                 .foregroundStyle(cream.opacity(0.85))
                 .padding(.top, 6)
-            Micro(text: "Marked as cooked · today", size: 10, tracking: 1.8, color: cream.opacity(0.7))
+            Micro(text: "Marked as cooked · today", size: 12, color: cream.opacity(0.7))
                 .padding(.top, 16)
             Spacer()
             Button { dismiss() } label: {
-                Text("Back to the recipe".uppercased())
-                    .font(.archivo(13, .heavy))
-                    .tracking(0.8)
+                Text("Back to the recipe")
+                    .font(.archivo(17, .heavy))
                     .foregroundStyle(Color.categoryRecipe)
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)

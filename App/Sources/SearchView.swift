@@ -90,7 +90,7 @@ struct SearchOverlay: View {
                     StashHeader(title: "Search", trailing: "\(videos.count) saves")
                         .padding(.top, 8)
 
-                    Micro(text: "By what's said and shown", size: 10, tracking: 1.8)
+                    Micro(text: "By what's said and shown", size: 12)
                         .padding(.top, 14)
 
                     if videos.isEmpty {
@@ -294,7 +294,7 @@ struct SearchOverlay: View {
             ProgressView()
                 .controlSize(.mini)
                 .tint(.stashInk.opacity(0.62))
-            Micro(text: "Searching…", size: 10, tracking: 1.4)
+            Micro(text: "Searching…", size: 12)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Searching")
@@ -308,7 +308,7 @@ struct SearchOverlay: View {
         let topics = SearchSuggestions.topTopics(in: videos, limit: 5)
         return VStack(alignment: .leading, spacing: 10) {
             if !recents.isEmpty {
-                Micro(text: "Recent", size: 10, tracking: 1.8)
+                Micro(text: "Recent", size: 12)
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(recents, id: \.self) { recent in
                         Button { query = recent } label: {
@@ -330,14 +330,14 @@ struct SearchOverlay: View {
                 }
             }
             if !topics.isEmpty {
-                Micro(text: "From your saves", size: 10, tracking: 1.8)
+                Micro(text: "From your saves", size: 12)
                     .padding(.top, recents.isEmpty ? 0 : 10)
                 FlowChips(chips: topics.map(\.topic), onTap: { query = $0 })
             }
             if recents.isEmpty, topics.isEmpty {
                 // A library with saves but no topics yet — say what the field reaches rather
                 // than leaving the screen blank under its own title.
-                Micro(text: "Search what your saves say and show", size: 10, tracking: 1.2)
+                Micro(text: "Search what your saves say and show", size: 12)
             }
         }
     }
@@ -466,7 +466,7 @@ struct FlowChips: View {
         FlexibleWrap(spacing: 8) {
             ForEach(chips, id: \.self) { chip in
                 Button { onTap(chip) } label: {
-                    Micro(text: chip, size: 11, tracking: 0.7, color: .stashInk)
+                    Micro(text: chip, size: 13, color: .stashInk)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
                         .background(Capsule().strokeBorder(Color.stashInk, lineWidth: 1.5))

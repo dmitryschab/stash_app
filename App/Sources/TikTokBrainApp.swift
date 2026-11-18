@@ -395,7 +395,7 @@ struct RootView: View {
                 .tint(.stashInk)
             if splashStalled {
                 VStack(spacing: StashSpacing.item) {
-                    Micro(text: "Still checking your account…", size: 10, tracking: 1.4)
+                    Micro(text: "Still checking your account…", size: 12)
                     StashPrimaryButton(title: "Try again") {
                         Task { await session.refreshQuota() }
                     }
@@ -580,7 +580,7 @@ private struct ImportSyncPill: View {
             Button(action: open) {
                 HStack(spacing: 9) {
                     leading
-                    Micro(text: text, size: 9.5, tracking: 0.9, color: .stashOnInk)
+                    Micro(text: text, size: 11, color: .stashOnInk)
                         .lineLimit(1)
                         // "TRANSCRIPTS 959 OF 959" fits with ~7 pt to spare on a 393 pt phone; a
                         // four-digit library would not, so it gives a little before it truncates.
@@ -756,7 +756,7 @@ struct StashTabBar: View {
                     Image(systemName: tab.symbol)
                         .font(.system(size: 17, weight: .semibold))
                     if labelsAlwaysOn {
-                        Micro(text: tab.label, size: 8.5, tracking: 0.7, color: labelColor(for: tab))
+                        Micro(text: tab.label, size: 11, color: labelColor(for: tab))
                             .lineLimit(1)
                     }
                     Circle()

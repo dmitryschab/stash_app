@@ -428,7 +428,7 @@ struct MusicView: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Micro(text: sorting.rawValue, size: 9.5, tracking: 0.8, color: .stashInk.opacity(0.65))
+                Micro(text: sorting.rawValue, size: 11, color: .stashInk.opacity(0.65))
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.system(size: 10, weight: .black))
                     .foregroundStyle(Color.stashInk.opacity(0.65))
@@ -548,10 +548,10 @@ private struct SleeveTile: View {
         VStack(spacing: 7) {
             SleeveArt(title: item.title, artist: item.artist, artwork: artwork, strip: strip)
             HStack {
-                Micro(text: item.coverageLabel, size: 9.5, tracking: 1.1,
+                Micro(text: item.coverageLabel, size: 11,
                       color: item.isWhole ? .categoryOther : .stashInk.opacity(0.62))
                 Spacer()
-                Micro(text: item.clipsLabel, size: 9.5, tracking: 1.1, color: .stashInk.opacity(0.62))
+                Micro(text: item.clipsLabel, size: 11, color: .stashInk.opacity(0.62))
             }
             .padding(.horizontal, 2)
         }
@@ -647,7 +647,7 @@ struct SleeveArt: View {
                             .minimumScaleFactor(0.5)
                             .lineLimit(3)
                             .foregroundStyle(style.foreground)
-                        Micro(text: artist, size: 9.5, tracking: 1.8,
+                        Micro(text: artist, size: 11,
                               color: style.foreground.opacity(0.75))
                             .lineLimit(1)
                     }
@@ -766,7 +766,7 @@ struct AlbumDetailView: View {
         HStack {
             StashBackButton()
             Spacer()
-            Micro(text: "Album", size: 10, tracking: 1.8, color: .stashOnAccent)
+            Micro(text: "Album", size: 12, color: .stashOnAccent)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 7)
                 .background(SleeveArt(title: album.title, artist: album.artist).chipColor, in: Capsule())
@@ -782,9 +782,9 @@ struct AlbumDetailView: View {
                 .multilineTextAlignment(.center)
             Micro(
                 text: album.artist + (album.year.map { " · \($0)" } ?? ""),
-                size: 10, tracking: 1.8, color: .stashInk.opacity(0.62)
+                size: 12, color: .stashInk.opacity(0.62)
             )
-            Micro(text: coverageLine, size: 9.5, tracking: 1.2, color: .categoryRecipe)
+            Micro(text: coverageLine, size: 11, color: .categoryRecipe)
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
@@ -804,7 +804,7 @@ struct AlbumDetailView: View {
 
     private var savesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Micro(text: "From your TikToks · \(album.saves.count)", size: 10, tracking: 2, color: .categoryRecipe)
+            Micro(text: "From your TikToks · \(album.saves.count)", size: 12, color: .categoryRecipe)
             ForEach(Array(album.saves.enumerated()), id: \.element.id) { index, save in
                 Link(destination: save.video.url) {
                     HStack(spacing: 11) {
@@ -863,7 +863,7 @@ struct AlbumDetailView: View {
         if let collectionID = album.collectionID {
             VStack(alignment: .leading, spacing: 4) {
                 Micro(text: "Tracklist" + (album.trackCount.map { " · \($0)" } ?? ""),
-                      size: 10, tracking: 2, color: .stashInk.opacity(0.62))
+                      size: 12, color: .stashInk.opacity(0.62))
                 if let tracklist {
                     VStack(spacing: 0) {
                         ForEach(Array(tracklist.enumerated()), id: \.offset) { index, name in
@@ -910,7 +910,7 @@ struct AlbumDetailView: View {
             Spacer(minLength: 0)
             if let save {
                 Link(destination: save.video.url) {
-                    Micro(text: "▶\u{FE0E} Clip", size: 9.5, tracking: 1, color: .categoryRecipe)
+                    Micro(text: "▶\u{FE0E} Clip", size: 11, color: .categoryRecipe)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Capsule().strokeBorder(Color.categoryRecipe, lineWidth: 1.2))
@@ -1010,7 +1010,7 @@ struct MusicListDetailView: View {
         HStack {
             StashBackButton()
             Spacer()
-            Micro(text: "Selection", size: 10, tracking: 1.8, color: .stashOnAccent)
+            Micro(text: "Selection", size: 12, color: .stashOnAccent)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 7)
                 .background(SleeveArt(title: list.title, artist: list.subtitle).chipColor, in: Capsule())
@@ -1024,10 +1024,10 @@ struct MusicListDetailView: View {
                 .font(.archivo(27, .black))
                 .foregroundStyle(Color.stashInk)
                 .multilineTextAlignment(.center)
-            Micro(text: bylines, size: 10, tracking: 1.8, color: .stashInk.opacity(0.62))
+            Micro(text: bylines, size: 12, color: .stashInk.opacity(0.62))
             Micro(text: "\(list.picks.count) releases · saved in "
                   + list.video.bookmarkedAt.formatted(.dateTime.month(.wide)),
-                  size: 9.5, tracking: 1.2, color: .categoryRecipe)
+                  size: 11, color: .categoryRecipe)
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
@@ -1040,7 +1040,7 @@ struct MusicListDetailView: View {
 
     private var picksSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Micro(text: "In this video · \(list.picks.count)", size: 10, tracking: 2, color: .categoryRecipe)
+            Micro(text: "In this video · \(list.picks.count)", size: 12, color: .categoryRecipe)
             let sleeves = sleeves
             ForEach(Array(list.picks.enumerated()), id: \.offset) { index, pick in
                 row(index: index, pick: pick, sleeve: sleeves[index])
@@ -1079,7 +1079,7 @@ struct MusicListDetailView: View {
                                 .font(.archivo(13.5, .bold))
                                 .foregroundStyle(Color.stashInk)
                                 .lineLimit(2)
-                            Micro(text: subtitle(for: pick), size: 9.5, tracking: 1.2,
+                            Micro(text: subtitle(for: pick), size: 11,
                                   color: .stashInk.opacity(0.62))
                                 .lineLimit(1)
                         }
@@ -1179,7 +1179,7 @@ struct MusicListDetailView: View {
         Link(destination: list.video.url) {
             HStack(spacing: 9) {
                 Image(systemName: "play.fill").font(.system(size: 12, weight: .bold))
-                Micro(text: "Open the clip", size: 10, tracking: 1.4, color: .stashInk)
+                Micro(text: "Open the clip", size: 12, color: .stashInk)
             }
             .foregroundStyle(Color.stashInk)
             .frame(maxWidth: .infinity)

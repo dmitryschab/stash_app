@@ -124,19 +124,23 @@ extension Font {
     }
 }
 
-/// An uppercase Archivo micro-label with wide tracking — the design's smallest voice.
+/// The app's label voice: Archivo semibold in sentence case, a step under the body. It was
+/// tracked capitals until the whole app took the sentence case Haul already spoke.
 struct Micro: View {
     let text: String
-    var size: CGFloat = 10
-    var tracking: CGFloat = 1.6
+    var size: CGFloat = 12
     var color: Color = .stashInk.opacity(0.62)
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.archivo(size, .heavy))
-            .tracking(tracking)
+        Text(text)
+            .font(.archivo(size, .semibold))
             .foregroundStyle(color)
     }
+}
+
+extension String {
+    /// "quick dinners" reads "Quick dinners": topics and tags are stored lowercase.
+    var sentenceCased: String { prefix(1).uppercased() + dropFirst() }
 }
 
 extension EnvironmentValues {
@@ -154,10 +158,11 @@ struct StashWordmarkRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Micro(text: "STASH", size: 11, tracking: 3.4, color: .stashInk)
+            // The wordmark is the one place capitals and tracking stay.
+            Text("STASH").font(.archivo(11, .heavy)).tracking(3.4).foregroundStyle(Color.stashInk)
             Spacer()
             if !trailing.isEmpty {
-                Micro(text: trailing, size: 11, tracking: 1.4, color: .stashInk.opacity(0.62))
+                Micro(text: trailing, size: 13, color: .stashInk.opacity(0.62))
             }
             if let openSearch {
                 Button(action: openSearch) {
@@ -207,9 +212,8 @@ struct StashPrimaryButton: View {
                 if let systemImage {
                     Image(systemName: systemImage).font(.system(size: 15, weight: .semibold))
                 }
-                Text(title.uppercased())
-                    .font(.archivo(13, .heavy))
-                    .tracking(0.8)
+                Text(title)
+                    .font(.archivo(17, .heavy))
             }
             .foregroundStyle(Color.stashOnInk)
             .frame(maxWidth: .infinity)
@@ -501,7 +505,7 @@ extension Video {
         }
         if music.count > 1 { return "\(music.count) releases" }
         if let codeNote, !codeNote.techTags.isEmpty {
-            return codeNote.techTags.prefix(3).joined(separator: " · ")
+            return codeNote.techTags.prefix(3).joined(separator: ", ")
         }
         if !author.isEmpty { return "@\(author)" }
         return topics.prefix(2).joined(separator: " · ")
@@ -555,7 +559,7 @@ struct CategoryBadge: View {
     let category: Category
 
     var body: some View {
-        Micro(text: category.singular, size: 10, tracking: 1.8, color: category.color.onJewel)
+        Micro(text: category.singular, size: 12, color: category.color.onJewel)
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
             .background(category.color, in: Capsule())
@@ -631,7 +635,7 @@ enum StashLegal {
 /// One month's run of saves. Lists are newest-first, so consecutive grouping is enough.
 struct MonthRun<Item>: Identifiable {
     let id: String
-    /// Section heading — "MARCH", or "MARCH '24" once the year is not this one.
+    /// Section heading — "March", or "March '24" once the year is not this one.
     let title: String
     let year: Int
     let month: Int
@@ -648,7 +652,7 @@ func monthRuns<Item>(_ items: [Item], date: (Item) -> Date) -> [MonthRun<Item>] 
         guard let year = parts.year, let month = parts.month else { continue }
         let id = "\(year)-\(month)"
         if out.last?.id != id {
-            var title = calendar.monthSymbols[month - 1].uppercased()
+            var title = calendar.monthSymbols[month - 1]
             if year != currentYear { title += " '\(String(year % 100))" }
             out.append(MonthRun(id: id, title: title, year: year, month: month, items: []))
         }
@@ -673,7 +677,7 @@ func timeRailEntries<Item>(for runs: [MonthRun<Item>]) -> [TimeRailEntry] {
     var out: [TimeRailEntry] = []
     for run in runs {
         if run.year == currentYear {
-            out.append(TimeRailEntry(label: calendar.shortMonthSymbols[run.month - 1].uppercased(), target: run.id))
+            out.append(TimeRailEntry(label: calendar.shortMonthSymbols[run.month - 1], target: run.id))
         } else if !seenYears.contains(run.year) {
             seenYears.insert(run.year)
             out.append(TimeRailEntry(label: "'\(String(run.year % 100))", target: run.id))
@@ -701,8 +705,7 @@ struct TimeRail: View {
                 } label: {
                     Micro(
                         text: entry.label,
-                        size: 9.5,
-                        tracking: 0.8,
+                        size: 11,
                         color: scrubTarget == entry.target ? .stashInk : .stashInk.opacity(0.62)
                     )
                 }
@@ -752,7 +755,7 @@ struct TimeRail: View {
     }
 }
 
-/// A thin outlined capsule chip — an icon plus an uppercase micro label — used for
+/// A thin outlined capsule chip — an icon plus a label — used for
 /// reassurance and sync-status lines (e.g. the connect flow).
 struct InfoChip: View {
     let text: String
@@ -762,7 +765,7 @@ struct InfoChip: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: systemImage).font(.system(size: 11, weight: .bold))
-            Micro(text: text, size: 10, tracking: 1.4, color: tint)
+            Micro(text: text, size: 12, color: tint)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 14)
@@ -924,7 +927,7 @@ struct SkeletonShelf: View {
                     Divider().overlay(Color.stashInk.opacity(0.12))
                 }
                 if count > Self.visible {
-                    Micro(text: "+\(count - Self.visible) more sorting", size: 9.5, tracking: 1.2, color: tint.asType)
+                    Micro(text: "+\(count - Self.visible) more sorting", size: 11, color: tint.asType)
                         .padding(.top, 8)
                 }
             }
@@ -954,8 +957,8 @@ struct MapBar: View {
                 }
             }
             .frame(height: 6)
-            Micro(text: shares.prefix(4).map { "\($0.category.displayName) ~\($0.count)" }.joined(separator: " · "),
-                  size: 9.5, tracking: 1, color: ink)
+            Micro(text: shares.prefix(4).map { "\($0.category.displayName) ~\($0.count)" }.joined(separator: "   "),
+                  size: 11, color: ink)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .ignore)

@@ -103,7 +103,7 @@ struct LatelyEvidenceView: View {
 
     private func heading(kicker: String, title: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Micro(text: kicker.uppercased(), size: 11, tracking: 1.8,
+            Micro(text: kicker, size: 13,
                   color: .stashInk.opacity(0.62))
             Text(title)
                 .font(.archivo(27, .heavy))
@@ -124,7 +124,7 @@ struct LatelyEvidenceView: View {
     @ViewBuilder
     private func section(_ title: String, _ saves: [Video]) -> some View {
         if !saves.isEmpty {
-            Micro(text: title.uppercased(), size: 10, tracking: 1.6,
+            Micro(text: title, size: 12,
                   color: .stashInk.opacity(0.62))
                 .padding(.top, 8)
             rows(saves)

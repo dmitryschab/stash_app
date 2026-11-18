@@ -126,7 +126,7 @@ struct PaywallView: View {
                     Text("\(store.displayPrice) per month")
                         .font(.archivo(20, .heavy))
                         .foregroundStyle(Color.stashInk)
-                    Micro(text: "Cancel any time", size: 10, tracking: 1.8,
+                    Micro(text: "Cancel any time", size: 12,
                           color: .stashInk.opacity(0.62))
                 }
             }
@@ -172,7 +172,7 @@ struct PaywallView: View {
             error = nil
             Task { error = await store.restore() }
         } label: {
-            Micro(text: "Restore purchases", size: 10, tracking: 1.8,
+            Micro(text: "Restore purchases", size: 12,
                   color: .stashInk.opacity(0.62))
                 .minTapTarget()
         }
@@ -201,15 +201,14 @@ struct PaywallView: View {
     /// Without these, an account that declines to subscribe is an account with no exit and no
     /// way to delete itself — which is a 5.1.1(v) rejection, not a UX opinion.
     private var accountLinks: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 28) {
             Button { session.signOut() } label: {
-                Micro(text: "Sign out", size: 10, tracking: 1.8, color: .stashInk.opacity(0.62))
+                Micro(text: "Sign out", size: 12, color: .stashInk.opacity(0.62))
                     .minTapTarget()
             }
             .buttonStyle(.plain)
-            Text("·").foregroundStyle(Color.stashInk.opacity(0.3))
             Button { confirmingDelete = true } label: {
-                Micro(text: "Delete account", size: 10, tracking: 1.8,
+                Micro(text: "Delete account", size: 12,
                       color: .stashInk.opacity(0.62))
                     .minTapTarget()
             }

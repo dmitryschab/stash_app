@@ -90,7 +90,7 @@ struct VideoDetailView: View {
             if let category = video.category {
                 CategoryBadge(category: category)
             } else if video.unavailable {
-                Micro(text: "Unavailable", size: 10, tracking: 1.8, color: Color.categoryOther.asType)
+                Micro(text: "Unavailable", size: 12, color: Color.categoryOther.asType)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 7)
                     .background(Capsule().strokeBorder(Color.categoryOther, lineWidth: 1.5))
@@ -183,7 +183,7 @@ struct VideoDetailView: View {
     /// A section break has to out-measure the 18pt gap between the rows inside a section,
     /// or the screen reads as one undivided list.
     private func sectionHeader(_ text: String) -> some View {
-        Micro(text: text, size: 11, tracking: 2, color: tint.asType)
+        Micro(text: text, size: 13, color: tint.asType)
             .padding(.top, 34)
     }
 
@@ -312,7 +312,7 @@ struct VideoDetailView: View {
         let text = code.summary.isEmpty ? video.summary : code.summary
         if !text.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Micro(text: "The point", size: 10, tracking: 2.2, color: tint.onJewel.opacity(0.7))
+                Micro(text: "The point", size: 12, color: tint.onJewel.opacity(0.7))
                 Text(text)
                     .font(.archivo(15, .heavy))
                     .foregroundStyle(tint.onJewel)
@@ -337,7 +337,7 @@ struct VideoDetailView: View {
 
     private func contrastColumn(_ label: String, _ text: String, highlighted: Bool) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Micro(text: label, size: 9.5, tracking: 1.8,
+            Micro(text: label, size: 11,
                   color: highlighted ? tint : .stashInk.opacity(0.62))
             Text(text)
                 .font(.archivo(12.5))
@@ -650,9 +650,8 @@ struct VideoDetailView: View {
             HStack(spacing: 9) {
                 Image(systemName: video.category == .film ? "arrow.up.right.square" : "play.rectangle")
                     .font(.system(size: 15, weight: .semibold))
-                Text(video.category == .film ? "WATCH ON TIKTOK" : "OPEN IN TIKTOK")
-                    .font(.archivo(13, .heavy))
-                    .tracking(0.8)
+                Text(video.category == .film ? "Watch on TikTok" : "Open in TikTok")
+                    .font(.archivo(17, .heavy))
             }
             .foregroundStyle(Color.stashOnInk)
             .frame(maxWidth: .infinity)

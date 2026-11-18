@@ -87,9 +87,8 @@ struct DataDownloadGuideView: View {
     private var openTikTokButton: some View {
         Link(destination: URL(string: "https://www.tiktok.com/setting/download-your-data")!) {
             HStack(spacing: 8) {
-                Text("Open TikTok settings".uppercased())
-                    .font(.archivo(12, .heavy))
-                    .tracking(1.2)
+                Text("Open TikTok settings")
+                    .font(.archivo(14, .semibold))
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 12, weight: .bold))
             }
@@ -143,7 +142,7 @@ private let calloutInk = Color(light: 0x201A12, dark: 0x1D0E06)
 /// read like any other step.
 private func guideFormatCallout(title: String, body: String) -> some View {
     VStack(alignment: .leading, spacing: 6) {
-        Micro(text: "The one setting that matters", size: 10, tracking: 1.8,
+        Micro(text: "The one setting that matters", size: 12,
               color: calloutInk.opacity(0.7))
         Text(title)
             .font(.archivo(22, .heavy))
@@ -160,7 +159,7 @@ private func guideFormatCallout(title: String, body: String) -> some View {
 
 private func guideSection(_ title: String, steps: [String]) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-        Micro(text: title, size: 11, tracking: 2, color: .categoryCoding)
+        Micro(text: title, size: 13, color: .categoryCoding)
         ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
             HStack(alignment: .top, spacing: 12) {
                 Text("\(index + 1)")
@@ -210,7 +209,7 @@ struct InstagramSavesGuideView: View {
                         "In Instagram: Profile → ☰ → Accounts Center",
                         "Your information and permissions → Export your information → Create export",
                         "Pick your profile → Export to device",
-                        "Customize information: tick only Saved · Date range: All time · Format: JSON → Start export",
+                        "Customize information: tick only Saved; Date range: All time; Format: JSON → Start export",
                     ]).padding(.top, 22)
 
                     waitCard.padding(.top, 18)
