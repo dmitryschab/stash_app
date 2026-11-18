@@ -43,7 +43,7 @@ struct FocusPickerView: View {
             }
             if refused {
                 Micro(text: "Three keeps every tab labelled; add more in Settings", size: 9.5, tracking: 1.2,
-                      color: .categoryOther)
+                      color: Color.categoryOther.asType)
                     .transition(.opacity)
             }
             Spacer(minLength: 0)
@@ -51,7 +51,7 @@ struct FocusPickerView: View {
                 .disabled(picks.isEmpty)
                 .opacity(picks.isEmpty ? 0.5 : 1)
             Button { onDone([]) } label: {
-                Micro(text: "Skip", size: 11, tracking: 1.7, color: .stashInk.opacity(0.55))
+                Micro(text: "Skip", size: 11, tracking: 1.7, color: .stashInk.opacity(0.62))
                     .frame(maxWidth: .infinity)
                     .minTapTarget()
             }

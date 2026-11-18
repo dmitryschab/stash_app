@@ -37,7 +37,7 @@ struct FilmSection: View {
     }
 
     private var sectionHeader: some View {
-        Micro(text: films.count == 1 ? "Film" : "\(films.count) films", size: 11, tracking: 2, color: tint)
+        Micro(text: films.count == 1 ? "Film" : "\(films.count) films", size: 11, tracking: 2, color: tint.asType)
             .padding(.top, 20)
     }
 
@@ -120,7 +120,7 @@ struct FilmSection: View {
             .overlay {
                 Text(title)
                     .font(.archivo(13, .heavy))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(tint.asType)
                     .multilineTextAlignment(.center)
                     .lineLimit(4)
                     .padding(8)

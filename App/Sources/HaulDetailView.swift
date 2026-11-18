@@ -123,7 +123,7 @@ struct HaulDetailView: View {
                 .padding(.top, 14)
             Text(artworkSource)
                 .font(.archivo(11))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 6)
             Text(pick.name)
@@ -258,14 +258,14 @@ struct HaulDetailView: View {
             .padding(.top, 6)
             Text("Checking stores in \(countryName)…")
                 .font(.archivo(12))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .padding(.top, 8)
             mentionedPrice
         case .offers(let offers, let checkedAt) where !offers.isEmpty:
             offerCard(offers)
             Text(priceNote(checkedAt: checkedAt))
                 .font(.archivo(11))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
             refreshStatus
@@ -292,7 +292,7 @@ struct HaulDetailView: View {
                  message: "Try the store searches below or choose another country.")
             Text(priceNote(checkedAt: checkedAt))
                 .font(.archivo(11))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .padding(.top, 8)
             retryButton
         case .unavailable:
@@ -315,7 +315,7 @@ struct HaulDetailView: View {
             if !pick.price.isEmpty {
                 Text("Mentioned in video: \(pick.price)")
                     .font(.archivo(12))
-                    .foregroundStyle(Color.stashInk.opacity(0.6))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .padding(.top, 8)
             }
         }
@@ -331,7 +331,7 @@ struct HaulDetailView: View {
         if isRefreshing {
             Text("Refreshing prices…")
                 .font(.archivo(11))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .padding(.top, 5)
         } else if offerStore.refreshFailed(name: pick.name, country: country) {
             Text("Couldn’t refresh prices. The last offers are still available.")
@@ -422,7 +422,7 @@ struct HaulDetailView: View {
                 .foregroundStyle(Color.stashInk)
             Text(shopLine(offer))
                 .font(.archivo(11))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
         }
         .fixedSize(horizontal: false, vertical: true)
     }

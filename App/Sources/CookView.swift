@@ -243,7 +243,7 @@ struct TopicPicker: View {
             if shown.isEmpty {
                 Text("No topic matched.")
                     .font(.archivo(14, .semibold))
-                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .padding(.horizontal, 20)
                     .padding(.top, 28)
                 Spacer()
@@ -302,7 +302,7 @@ struct TopicPicker: View {
                 if trimmed.isEmpty, hiddenCount > 0 {
                     Text("\(hiddenCount) more topics sit on one save each — search to find them.")
                         .font(.archivo(12, .medium))
-                        .foregroundStyle(Color.stashInk.opacity(0.45))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .padding(.vertical, 18)
                 }
             }
@@ -391,7 +391,7 @@ struct RecipeDetailView: View {
                         .padding(.top, 16)
                     Text(byline)
                         .font(.archivo(12, .semibold))
-                        .foregroundStyle(Color.stashInk.opacity(0.5))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .padding(.top, 6)
                     // Read straight out of the log rather than held in state: finishing Cook
                     // Mode flips `isCooking`, which re-runs this body with the stamp in place.

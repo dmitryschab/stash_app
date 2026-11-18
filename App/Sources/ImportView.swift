@@ -37,7 +37,7 @@ enum BoxStatus {
         case .unknown: .stashInk.opacity(0.45)
         case .checking: .categoryMusic
         case .online: .categoryCoding
-        case .offline: .categoryOther
+        case .offline: Color.categoryOther.asType
         }
     }
 
@@ -164,6 +164,9 @@ struct ImportView: View {
             }
             Text("Import")
                 .font(.archivo(40, .heavy))
+                // One word, one line: at the largest text sizes the title shrinks to fit before it breaks.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
                 .foregroundStyle(Color.stashInk)
                 .padding(.top, 4)
         }
@@ -474,7 +477,7 @@ struct ImportView: View {
             if let pasteNotice {
                 Text(pasteNotice)
                     .font(.archivo(12, .semibold))
-                    .foregroundStyle(Color.categoryOther)
+                    .foregroundStyle(Color.categoryOther.asType)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
@@ -614,8 +617,8 @@ struct ImportView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(count(category))")
                             .font(.archivo(26, .heavy))
-                            .foregroundStyle(Color.stashOnAccent)
-                        Micro(text: category.displayName, size: 10, tracking: 1.4, color: .stashOnAccent)
+                            .foregroundStyle(category.color.onJewel)
+                        Micro(text: category.displayName, size: 10, tracking: 1.4, color: category.color.onJewel)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
@@ -628,9 +631,9 @@ struct ImportView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 12, weight: .bold))
-                        Micro(text: "Needs a look", size: 10, tracking: 1.4, color: .categoryOther)
+                        Micro(text: "Needs a look", size: 10, tracking: 1.4, color: Color.categoryOther.asType)
                     }
-                    .foregroundStyle(Color.categoryOther)
+                    .foregroundStyle(Color.categoryOther.asType)
                     Spacer()
                     Text("\(flagged)")
                         .font(.archivo(15, .heavy))
@@ -708,96 +711,102 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if offersTikTok { TikTokConnectSection(storefront: tiktokStorefront) }
-                accountSection
-                subscriptionSection
-                if let quota = session.quota { quotaSection(quota) }
-                tabBarSection
-                Section("Music") {
-                    Picker("Open releases in", selection: $musicService) {
-                        Text("Ask on first tap").tag("")
-                        ForEach(MusicService.allCases) { Text($0.label).tag($0.rawValue) }
-                    }
-                }
-                #if DEBUG
-                Section("Stash cloud") {
-                    field("Base URL", text: $boxBaseURL, placeholder: BoxDefaults.baseURL, disableAutocaps: true)
-                    field("Chat model", text: $chatModel, placeholder: BoxDefaults.chatModel)
-                    field("Whisper model", text: $whisperModel, placeholder: BoxDefaults.whisperModel)
-                }
-                Section {
-                    Text("Analysis and transcription run on the Stash cloud by default. Point the base URL at your own model box for local development — models are pinned server-side either way.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                #endif
-                // Every action here needs a real TikTok video id, and the seeded demo library's
-                // ids are invented — on a reviewer's account these are buttons that can only
-                // fail, and re-analyze would spend budget rewriting the curated sample.
-                if StashSession.shared.isDemoAccount {
-                    Section("Library") {
-                        Text("This is a demo library, so the analysis actions are off. Import your own TikTok export to enable them.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                Section("Library") {
-                    NavigationLink { ArchiveView() } label: {
-                        LabeledContent("Archive", value: "\(videos.filter(\.isArchived).count)")
-                    }
-                    Button {
-                        controller.reanalyzeLibrary()
-                    } label: {
-                        if controller.isImporting, let p = controller.progress {
-                            Text("Working… \(p.done)/\(p.total)")
-                        } else {
-                            Text("Re-analyze library (\(videos.count) videos)")
+                Group {
+                    if offersTikTok { TikTokConnectSection(storefront: tiktokStorefront) }
+                    accountSection
+                    subscriptionSection
+                    if let quota = session.quota { quotaSection(quota) }
+                    tabBarSection
+                    Section("Music") {
+                        Picker("Open releases in", selection: $musicService) {
+                            Text("Ask on first tap").tag("")
+                            ForEach(MusicService.allCases) { Text($0.label).tag($0.rawValue) }
                         }
                     }
-                    .disabled(controller.isImporting)
-                    Text("Re-runs classification on every saved video against the current categories, using text already fetched — no re-download. Costs a few cents and can take several minutes.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    Button {
-                        controller.backfillTranscripts()
-                    } label: {
-                        Text("Fetch missing transcripts (\(missingTranscripts))")
+                    #if DEBUG
+                    Section("Stash cloud") {
+                        field("Base URL", text: $boxBaseURL, placeholder: BoxDefaults.baseURL, disableAutocaps: true)
+                        field("Chat model", text: $chatModel, placeholder: BoxDefaults.chatModel)
+                        field("Whisper model", text: $whisperModel, placeholder: BoxDefaults.whisperModel)
                     }
-                    .disabled(controller.isImporting || missingTranscripts == 0)
-                    Text("Most saves were never transcribed, so their summaries come from the caption alone. This fetches the audio transcript and re-analyzes each one with it. It spends one unit of your budget per video, and transcription is rate-limited hourly, so run it again until the count reaches zero.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    Button {
-                        controller.backfillVisualText()
-                    } label: {
-                        Text("Read on-screen text (\(missingVisualText))")
+                    Section {
+                        Text("Analysis and transcription run on the Stash cloud by default. Point the base URL at your own model box for local development — models are pinned server-side either way.")
+                            .font(.archivo(13))
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(controller.isImporting || missingVisualText == 0)
-                    Text("Reads the words burned into each video's frames — often the real content on TikTok — and re-analyzes with them. Reading is done on your device, but each video has to be fetched through Stash first, so this spends one unit of your budget per video.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    #endif
+                    // Every action here needs a real TikTok video id, and the seeded demo library's
+                    // ids are invented — on a reviewer's account these are buttons that can only
+                    // fail, and re-analyze would spend budget rewriting the curated sample.
+                    if StashSession.shared.isDemoAccount {
+                        Section("Library") {
+                            Text("This is a demo library, so the analysis actions are off. Import your own TikTok export to enable them.")
+                                .font(.archivo(13))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                    Section("Library") {
+                        NavigationLink { ArchiveView() } label: {
+                            LabeledContent("Archive", value: "\(videos.filter(\.isArchived).count)")
+                        }
+                        Button {
+                            controller.reanalyzeLibrary()
+                        } label: {
+                            if controller.isImporting, let p = controller.progress {
+                                Text("Working… \(p.done)/\(p.total)")
+                            } else {
+                                Text("Re-analyze library (\(videos.count) videos)")
+                            }
+                        }
+                        .disabled(controller.isImporting)
+                        Text("Re-runs classification on every saved video against the current categories, using text already fetched — no re-download. Costs a few cents and can take several minutes.")
+                            .font(.archivo(13))
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            controller.backfillTranscripts()
+                        } label: {
+                            Text("Fetch missing transcripts (\(missingTranscripts))")
+                        }
+                        .disabled(controller.isImporting || missingTranscripts == 0)
+                        Text("Most saves were never transcribed, so their summaries come from the caption alone. This fetches the audio transcript and re-analyzes each one with it. It spends one unit of your budget per video, and transcription is rate-limited hourly, so run it again until the count reaches zero.")
+                            .font(.archivo(13))
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            controller.backfillVisualText()
+                        } label: {
+                            Text("Read on-screen text (\(missingVisualText))")
+                        }
+                        .disabled(controller.isImporting || missingVisualText == 0)
+                        Text("Reads the words burned into each video's frames — often the real content on TikTok — and re-analyzes with them. Reading is done on your device, but each video has to be fetched through Stash first, so this spends one unit of your budget per video.")
+                            .font(.archivo(13))
+                            .foregroundStyle(.secondary)
+                    }
+                    }
+                    legalSection
+                    #if DEBUG
+                    Section("Developer") {
+                        Toggle("Force on-device import", isOn: $forceLocalImport)
+                        Text("Cloud import is the default — the box processes the whole library in the background. Enable this to run the on-device pipeline instead (local-box development).")
+                            .font(.archivo(13))
+                            .foregroundStyle(.secondary)
+                    }
+                    #endif
                 }
-                }
-                legalSection
-                #if DEBUG
-                Section("Developer") {
-                    Toggle("Force on-device import", isOn: $forceLocalImport)
-                    Text("Cloud import is the default — the box processes the whole library in the background. Enable this to run the on-device pipeline instead (local-box development).")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                #endif
+                .listRowBackground(Color.stashSurface)
             }
+            .stashForm()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             // A sheet under this one would fail to present; the picker waits (PipelineCenter.screenBusy).
             .onAppear { controller.screenDidAppear() }
             .onDisappear { controller.screenDidDisappear() }
+            // The bar draws its title and button in the system face unless handed the text.
             .toolbar {
+                ToolbarItem(placement: .principal) { Text("Settings").font(.archivo(17, .bold)) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button { dismiss() } label: { Text("Done").font(.archivo(16, .semibold)) }
                 }
             }
             .task {
@@ -851,9 +860,8 @@ struct SettingsView: View {
                     Text(subscriptionStatus).foregroundStyle(.secondary)
                 }
             }
-            .tint(.primary)
             Text("Opens the Stash Pro page, where you can subscribe, see the price and renewal terms, or restore a purchase.")
-                .font(.footnote)
+                .font(.archivo(13))
                 .foregroundStyle(.secondary)
         }
     }
@@ -889,7 +897,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(tab.label)
                             Text(pinned ? "Always on — Import and Settings live here" : tab.blurb)
-                                .font(.footnote)
+                                .font(.archivo(13))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -897,7 +905,6 @@ struct SettingsView: View {
                             .foregroundStyle(isOn ? Color.accentColor : .secondary)
                     }
                 }
-                .tint(.primary)
                 // Pinned can never come off; the rest can always come off, and can only go on
                 // while there is a slot left.
                 .disabled(pinned || (!isOn && full))
@@ -906,10 +913,9 @@ struct SettingsView: View {
             // Seven toggles with no default is a bar the user can quietly make worse and has no
             // way back from; the recommended set is one row away.
             Button("Reset to recommended") { slotsRaw = TabSlots.encode(TabSlots.fallback) }
-                .tint(.primary)
                 .disabled(slots == TabSlots.fallback)
             Text("Up to \(TabSlots.maximum) sections fit on the bar. Whatever you leave off keeps its saves — anything with its own shelf goes back to Library.")
-                .font(.footnote)
+                .font(.archivo(13))
                 .foregroundStyle(.secondary)
         }
     }
@@ -936,15 +942,16 @@ struct SettingsView: View {
                 }
             }
             Text("Writes one JSON file with everything Stash holds about you: your imports, results and budget from the server, plus every save on this iPhone with its transcript and on-screen text.")
-                .font(.footnote)
+                .font(.archivo(13))
                 .foregroundStyle(.secondary)
             Button("Sign out") { session.signOut() }
             Button(role: .destructive) { confirmDelete = true } label: {
-                if isDeleting { Text("Deleting…") } else { Text("Delete account") }
+                // The role's system red reads 3.3:1 on the cream row; the app's brick red, 4.8:1.
+                Text(isDeleting ? "Deleting…" : "Delete account").foregroundStyle(Color.categoryRecipe)
             }
             .disabled(isDeleting)
             if let accountError {
-                Text(accountError).font(.footnote).foregroundStyle(Color.categoryRecipe)
+                Text(accountError).font(.archivo(13)).foregroundStyle(Color.categoryRecipe)
             }
         }
     }
@@ -956,7 +963,7 @@ struct SettingsView: View {
             Link("Terms of service", destination: StashLegal.terms)
             Link("Privacy policy", destination: StashLegal.privacy)
             Text("The privacy policy names everything Stash holds and the providers that process it: Groq for speech-to-text, OpenRouter and Cloudflare for the first sort and photo posts, AWS for hosting and analysis.")
-                .font(.footnote)
+                .font(.archivo(13))
                 .foregroundStyle(.secondary)
         }
     }
@@ -974,7 +981,7 @@ struct SettingsView: View {
             Text(quota.isOnTrial
                  ? "The free trial is spent first, then the initial budget. Importing a video, fetching its transcript and reading its on-screen text each cost one unit."
                  : "The initial budget is spent first. Importing a video, fetching its transcript and reading its on-screen text each cost one unit.")
-                .font(.footnote)
+                .font(.archivo(13))
                 .foregroundStyle(.secondary)
         }
     }
@@ -1115,26 +1122,33 @@ struct ArchiveView: View {
     var body: some View {
         let archived = self.archived
         Form {
-            Section {
-                Button("Retry all (\(archived.count))") { controller.retryArchived(manual: true) }
-                    .disabled(archived.isEmpty || controller.isImporting)
-            } footer: {
-                Text("Saves Stash couldn't read. Failed ones retry automatically up to 3 times; retries don't use your budget. Deleted or private TikToks stay here until they come back.")
-            }
-            Section {
-                ForEach(archived, id: \.videoID) { video in
-                    NavigationLink { VideoDetailView(video: video) } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(video.rowTitle).lineLimit(1)
-                            Text(video.unavailable ? "Unavailable on TikTok" : "Couldn't classify")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+            Group {
+                Section {
+                    Button("Retry all (\(archived.count))") { controller.retryArchived(manual: true) }
+                        .disabled(archived.isEmpty || controller.isImporting)
+                } footer: {
+                    Text("Saves Stash couldn't read. Failed ones retry automatically up to 3 times; retries don't use your budget. Deleted or private TikToks stay here until they come back.")
+                }
+                Section {
+                    ForEach(archived, id: \.videoID) { video in
+                        NavigationLink { VideoDetailView(video: video) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(video.rowTitle).lineLimit(1)
+                                Text(video.unavailable ? "Unavailable on TikTok" : "Couldn't classify")
+                                    .font(.archivo(13))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
+            .listRowBackground(Color.stashSurface)
         }
+        .stashForm()
         .navigationTitle("Archive")
+        .toolbar {
+            ToolbarItem(placement: .principal) { Text("Archive").font(.archivo(17, .bold)) }
+        }
         .navigationBarTitleDisplayMode(.inline)
     }
 }

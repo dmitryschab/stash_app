@@ -283,9 +283,9 @@ struct MindMapView: View {
                 drawText(&gc, "YOU", at: p, size: 12 * camera.zoom, color: .stashOnInk.opacity(opacity), tracking: 1.5)
             case 1:
                 drawText(&gc, n.label, at: CGPoint(x: p.x, y: p.y - 6 * camera.zoom),
-                         size: 9.5 * camera.zoom, color: .stashOnAccent.opacity(opacity), tracking: 1)
+                         size: 9.5 * camera.zoom, color: n.color.onJewel.opacity(opacity), tracking: 1)
                 drawText(&gc, "\(n.count)", at: CGPoint(x: p.x, y: p.y + 7 * camera.zoom),
-                         size: 10 * camera.zoom, color: .stashOnAccent.opacity(opacity))
+                         size: 10 * camera.zoom, color: n.color.onJewel.opacity(opacity))
             default:
                 // label tiers: far views shed topic labels (free declutter)
                 if !dimmed, labelTier == 2 || selected {
@@ -364,7 +364,7 @@ struct MindMapView: View {
                 .foregroundStyle(Color.stashInk)
             Text("Import and process some videos to grow your mind map.")
                 .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
         }
     }
 }

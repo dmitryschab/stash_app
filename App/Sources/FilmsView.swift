@@ -541,7 +541,7 @@ private struct ListCard: View {
                 .multilineTextAlignment(.leading)
             Text(subline)
                 .font(.archivo(11.5))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .lineLimit(1)
             HStack(spacing: 4) {
                 ForEach(films.prefix(Self.fan)) { film in
@@ -668,7 +668,7 @@ private struct FilmPageView: View {
                         .foregroundStyle(Color.stashInk)
                     Text(detail)
                         .font(.archivo(11.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right")
@@ -716,7 +716,7 @@ private struct FilmPageView: View {
                 if !video.author.isEmpty {
                     Text("@\(video.author)")
                         .font(.archivo(11.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
             }

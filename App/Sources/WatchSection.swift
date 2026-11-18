@@ -34,7 +34,7 @@ struct WatchSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !compact {
-                Micro(text: "Watch", size: 11, tracking: 2, color: tint)
+                Micro(text: "Watch", size: 11, tracking: 2, color: tint.asType)
                     .padding(.top, 20)
             }
 
@@ -80,7 +80,7 @@ struct WatchSection: View {
                         .foregroundStyle(Color.stashInk)
                     Text((video.author.isEmpty ? platform : "@\(video.author)") + " · plays here")
                         .font(.archivo(12))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -197,7 +197,7 @@ struct WatchSection: View {
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(Color.stashInk.opacity(0.3))
             Micro(text: "Sample video · no playback", size: 10.5, tracking: 1.4,
-                  color: .stashInk.opacity(0.45))
+                  color: .stashInk.opacity(0.62))
         }
         .frame(maxWidth: .infinity)
         .frame(height: 200)

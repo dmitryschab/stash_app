@@ -90,7 +90,7 @@ struct CategoryView: View {
     private var emptyState: some View {
         Text("Nothing filed under \(category.displayName.lowercased()) yet.")
             .font(.archivo(14, .semibold))
-            .foregroundStyle(Color.stashInk.opacity(0.55))
+            .foregroundStyle(Color.stashInk.opacity(0.62))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

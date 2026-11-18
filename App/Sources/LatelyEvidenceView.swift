@@ -104,7 +104,7 @@ struct LatelyEvidenceView: View {
     private func heading(kicker: String, title: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Micro(text: kicker.uppercased(), size: 11, tracking: 1.8,
-                  color: .stashInk.opacity(0.5))
+                  color: .stashInk.opacity(0.62))
             Text(title)
                 .font(.archivo(27, .heavy))
                 .foregroundStyle(Color.stashInk)
@@ -125,7 +125,7 @@ struct LatelyEvidenceView: View {
     private func section(_ title: String, _ saves: [Video]) -> some View {
         if !saves.isEmpty {
             Micro(text: title.uppercased(), size: 10, tracking: 1.6,
-                  color: .stashInk.opacity(0.45))
+                  color: .stashInk.opacity(0.62))
                 .padding(.top, 8)
             rows(saves)
         }
@@ -149,7 +149,7 @@ struct LatelyEvidenceView: View {
                     .multilineTextAlignment(.leading)
                 Text(video.bookmarkedAt.formatted(.dateTime.month(.abbreviated).day().year()))
                     .font(.archivo(12.5))
-                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
             }
             Spacer(minLength: 0)
             Image(systemName: "arrow.up.right")

@@ -39,20 +39,22 @@ extension Color {
     }
 
     // Category jewel tones (brightened on dark).
-    static let categoryRecipe = Color(light: 0xC43A26, dark: 0xDD4E33)   // brick red
+    // Every value here reads 4.5:1 both as small type on the page and under its `onJewel` text,
+    // except the four light jewels in light mode, which `asType` deepens for type.
+    static let categoryRecipe = Color(light: 0xC13926, dark: 0xDD4E33)   // brick red
     static let categoryFitness = Color(light: 0xE0661F, dark: 0xF27C35)  // orange
-    static let categoryStyle = Color(light: 0xC0367F, dark: 0xDB4F98)    // magenta
+    static let categoryStyle = Color(light: 0xBA337A, dark: 0xDB4F98)    // magenta
     static let categoryTravel = Color(light: 0x1C8AA8, dark: 0x30A7C6)   // teal
     static let categoryHome = Color(light: 0x6F8A1E, dark: 0x88A63A)     // olive
-    static let categoryLearning = Color(light: 0x5A3EC0, dark: 0x745AE0) // indigo
-    static let categoryMusic = Color(light: 0x2743C7, dark: 0x4A63E7)    // cobalt
+    static let categoryLearning = Color(light: 0x5A3EC0, dark: 0x846DE8) // indigo
+    static let categoryMusic = Color(light: 0x2743C7, dark: 0x5F77EC)    // cobalt
     static let categoryCoding = Color(light: 0x1A6F52, dark: 0x2A9271)   // forest green
     static let categoryFilm = Color(light: 0x1F6BA8, dark: 0x3389C6)     // steel blue
     static let categoryOther = Color(light: 0xC98A12, dark: 0xC98A12)    // amber
 
     /// Haul's accent. Not a category jewel — Haul is a query across all thirteen, so it takes a
     /// tone none of them uses: tanned leather, the colour of a shop rather than a subject.
-    static let stashHaul = Color(light: 0x7A4A22, dark: 0xA9713C)        // saddle tan
+    static let stashHaul = Color(light: 0x7A4A22, dark: 0xAB733E)        // saddle tan
 
     /// Lately's two tones. Like Haul these are not category jewels — a Lately card is about a
     /// relationship across categories, so borrowing one subject's colour would claim the story
@@ -67,6 +69,32 @@ extension Color {
     static let stashInk = Color(light: 0x201A12, dark: 0xF1E8D2)        // primary text + tab bar
     static let stashOnInk = Color(light: 0xF7F1E1, dark: 0x201A12)      // text on the ink pill
     static let stashOnAccent = Color(light: 0xF7F1E1, dark: 0x1D0E06)   // text on jewel cards
+    static let stashCream = Color(hex: 0xF7F1E1)   // text on a fill that stays dark in both themes
+
+    // Pairings. Orange, teal, olive and amber are too light for cream in light mode: 2.6–3.6:1
+    // under cream text and 2.5–3.4:1 as small type on the page, against a 4.5:1 floor.
+    private static let lightJewels: [(jewel: Color, type: Color)] = {
+        let table: [(jewel: Color, type: Color)] = [
+            (.categoryFitness, Color(light: 0xB04C0D, dark: 0xF27C35)),
+            (.categoryTravel, Color(light: 0x16748E, dark: 0x30A7C6)),
+            (.categoryHome, Color(light: 0x5A7116, dark: 0x88A63A)),
+            (.categoryOther, Color(light: 0x8F610A, dark: 0xC98A12)),
+        ]
+        // Both lookups below lean on Color equality holding for these statics.
+        assert(table[3].jewel == Color.categoryOther && table[3].jewel != Color.categoryRecipe)
+        return table
+    }()
+
+    /// Text and glyphs on this colour as a fill: dark ink on the four light jewels in both
+    /// themes (dark mode already set it there), `stashOnAccent` on everything else.
+    var onJewel: Color {
+        Self.lightJewels.contains { $0.jewel == self } ? Color(hex: 0x1D0E06) : .stashOnAccent
+    }
+
+    /// This colour as type or a glyph on the page: the four light jewels deepened for cream.
+    var asType: Color {
+        Self.lightJewels.first { $0.jewel == self }?.type ?? self
+    }
 }
 
 // MARK: - Spacing
@@ -159,6 +187,9 @@ struct StashHeader: View {
             StashWordmarkRow(trailing: trailing)
             Text(title)
                 .font(.archivo(40, .heavy))
+                // One word, one line: at the largest text sizes the title shrinks to fit before it breaks.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
                 .foregroundStyle(Color.stashInk)
         }
     }
@@ -202,6 +233,21 @@ extension View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(Color.stashInk.opacity(0.9), lineWidth: 1.5)
             )
+    }
+}
+
+/// A system `Form` in the app's own paper, ink and face, for Settings and the Archive under
+/// it. Rows take `stashSurface` from `.listRowBackground` on the form's content, which a
+/// modifier out here cannot reach.
+extension View {
+    func stashForm() -> some View {
+        scrollContentBackground(.hidden)
+            .background(Color.stashBackground)
+            .tint(Color.stashInk)
+            .font(.archivo(15))
+            // The second colour is what `.secondary` resolves to inside: 62% is the lightest
+            // ink that still reads 4.5:1 on cream.
+            .foregroundStyle(Color.stashInk, Color.stashInk.opacity(0.62))
     }
 }
 
@@ -353,10 +399,10 @@ extension StageState {
     var tint: Color {
         switch self {
         case .pending: .stashInk.opacity(0.4)
-        case .running: .categoryOther
+        case .running: Color.categoryOther.asType
         case .done: .categoryCoding
         case .failed: .categoryRecipe
-        case .awaitingBox: .categoryOther
+        case .awaitingBox: Color.categoryOther.asType
         case .skipped: .stashInk.opacity(0.4)
         }
     }
@@ -494,7 +540,7 @@ struct Thumbnail: View {
                 tint
                 Image(systemName: category?.symbol ?? "photo")
                     .font(.system(size: size * 0.38, weight: .semibold))
-                    .foregroundStyle(Color.stashOnAccent)
+                    .foregroundStyle(tint.onJewel)
             }
         }
         .frame(width: size, height: size)
@@ -509,7 +555,7 @@ struct CategoryBadge: View {
     let category: Category
 
     var body: some View {
-        Micro(text: category.singular, size: 10, tracking: 1.8, color: .stashOnAccent)
+        Micro(text: category.singular, size: 10, tracking: 1.8, color: category.color.onJewel)
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
             .background(category.color, in: Capsule())
@@ -544,7 +590,7 @@ struct StashEmptyState: View {
                 .foregroundStyle(Color.stashInk)
             Text(waitingOnTikTok ? waitingMessage : message)
                 .font(.archivo(13))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
             if offersImport {
@@ -878,7 +924,7 @@ struct SkeletonShelf: View {
                     Divider().overlay(Color.stashInk.opacity(0.12))
                 }
                 if count > Self.visible {
-                    Micro(text: "+\(count - Self.visible) more sorting", size: 9.5, tracking: 1.2, color: tint)
+                    Micro(text: "+\(count - Self.visible) more sorting", size: 9.5, tracking: 1.2, color: tint.asType)
                         .padding(.top, 8)
                 }
             }

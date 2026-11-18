@@ -43,7 +43,7 @@ struct TikTokConnectSection: View {
                         .lineLimit(1)
                 }
                 if let note = syncNote(connection) {
-                    Text(note).font(.footnote).foregroundStyle(.secondary)
+                    Text(note).font(.archivo(13)).foregroundStyle(.secondary)
                 }
                 Button { disconnect() } label: {
                     if isWorking { Text("Disconnecting…") } else { Text("Disconnect") }
@@ -56,10 +56,10 @@ struct TikTokConnectSection: View {
                 .disabled(isWorking)
             } else {
                 Text("TikTok sync is available in the EEA and the UK.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.archivo(13)).foregroundStyle(.secondary)
             }
             if let failure {
-                Text(failure).font(.footnote).foregroundStyle(Color.categoryRecipe)
+                Text(failure).font(.archivo(13)).foregroundStyle(Color.categoryRecipe)
             }
         }
     }

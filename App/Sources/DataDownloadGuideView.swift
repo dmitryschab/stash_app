@@ -122,10 +122,10 @@ struct DataDownloadGuideView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "lock")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
             Text("Stash reads only your Favorite Videos list from the export. Everything else in the file is ignored and never leaves your phone.")
                 .font(.archivo(12.5))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .lineSpacing(3)
         }
     }
@@ -252,10 +252,10 @@ struct InstagramSavesGuideView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "lock")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
             Text("Stash reads only your saved reels from the export — saved photo posts are skipped. Everything else in the file is ignored and never leaves your phone.")
                 .font(.archivo(12.5))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .lineSpacing(3)
         }
     }

@@ -46,7 +46,7 @@ struct WelcomeView: View {
                     "Import your TikTok saves and Stash reads the first \($0) for free — no card, nothing to cancel."
                 } ?? "Import your TikTok saves and Stash reads the first batch for free — no card, nothing to cancel.")
                     .font(.archivo(14))
-                    .foregroundStyle(Color.stashInk.opacity(0.6))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
                     .frame(maxWidth: 310)
@@ -64,7 +64,7 @@ struct WelcomeView: View {
 
                 Text("[Terms of Use](https://stash.dmitrijs.dev/terms) · [Privacy Policy](https://stash.dmitrijs.dev/privacy)")
                     .font(.archivo(12, .semibold))
-                    .foregroundStyle(Color.stashInk.opacity(0.5))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .tint(Color.stashInk)
                     .multilineTextAlignment(.center)
                     .padding(.top, 18)
@@ -112,7 +112,7 @@ struct WelcomeView: View {
                 }
                 Text(body)
                     .font(.archivo(13))
-                    .foregroundStyle(Color.stashInk.opacity(0.6))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -125,7 +125,7 @@ struct WelcomeView: View {
     /// but ours, and that disagreement is a rejection.
     private var afterCard: some View {
         VStack(spacing: 6) {
-            Micro(text: "After that", size: 9.5, tracking: 2, color: .stashInk.opacity(0.5))
+            Micro(text: "After that", size: 9.5, tracking: 2, color: .stashInk.opacity(0.62))
             Text(Subscription.shared.displayPrice.isEmpty
                  ? "Stash Pro keeps it going, monthly, cancel any time."
                  : "Stash Pro keeps it going — \(Subscription.shared.displayPrice) a month, cancel any time.")
@@ -135,7 +135,7 @@ struct WelcomeView: View {
                 .lineSpacing(3)
             Text("Your saves stay readable either way.")
                 .font(.archivo(12))
-                .foregroundStyle(Color.stashInk.opacity(0.5))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
         }
         .padding(.vertical, 16)
         .padding(.horizontal, 20)

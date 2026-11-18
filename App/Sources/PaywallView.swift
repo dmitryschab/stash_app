@@ -48,7 +48,7 @@ struct PaywallView: View {
                     .padding(.top, 20)
                 Text("Everything you save, read back as recipes, track lists and summaries you can search.")
                     .font(.archivo(14))
-                    .foregroundStyle(Color.stashInk.opacity(0.6))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
                     .frame(maxWidth: 300)
@@ -117,7 +117,7 @@ struct PaywallView: View {
             if store.loadFailed && store.displayPrice.isEmpty {
                 Text("The App Store is not answering right now. Check your connection and try again.")
                     .font(.archivo(13))
-                    .foregroundStyle(Color.stashInk.opacity(0.6))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .multilineTextAlignment(.center)
             } else if store.displayPrice.isEmpty {
                 ProgressView().tint(.stashInk)
@@ -193,7 +193,7 @@ struct PaywallView: View {
     private var legalLine: some View {
         Text("[Terms of Use](https://stash.dmitrijs.dev/terms) · [Privacy Policy](https://stash.dmitrijs.dev/privacy)")
             .font(.archivo(12, .semibold))
-            .foregroundStyle(Color.stashInk.opacity(0.55))
+            .foregroundStyle(Color.stashInk.opacity(0.62))
             .tint(Color.stashInk)
             .multilineTextAlignment(.center)
     }

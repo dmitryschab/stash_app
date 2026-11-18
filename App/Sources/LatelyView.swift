@@ -82,11 +82,13 @@ struct LatelyView: View {
             StashWordmarkRow(trailing: period)
             Text("Lately.")
                 .font(.archivo(33, .heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
                 .foregroundStyle(Color.stashInk)
                 .padding(.top, 2)
             Text("A few connections in your saves.")
                 .font(.archivo(13, .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.55))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
             if store.hasProposal { refreshControl }
         }
         .padding(.top, 8)
@@ -166,25 +168,25 @@ struct LatelyView: View {
         let evidence = interest.evidenceIDs.compactMap { byID[$0] }
         return VStack(alignment: .leading, spacing: 0) {
             cardHeader(historical ? "YOU WERE EXPLORING" : "YOUR CURRENT RABBIT HOLE",
-                       card: card, on: .stashOnAccent)
+                       card: card, on: .stashCream)
             NavigationLink {
                 LatelyEvidenceView(card: card, videos: byID)
             } label: {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(interest.displayTheme)
                         .font(.archivo(27, .heavy))
-                        .foregroundStyle(Color.stashOnAccent)
+                        .foregroundStyle(Color.stashCream)
                         .multilineTextAlignment(.leading)
                         .modifier(TopicHeadline())
                         .padding(.top, 9)
                     Text(explanation(interest))
                         .font(.archivo(13, .semibold))
-                        .foregroundStyle(Color.stashOnAccent.opacity(0.82))
+                        .foregroundStyle(Color.stashCream.opacity(0.82))
                         .multilineTextAlignment(.leading)
                         .padding(.top, 4)
                     thumbnails(evidence.prefix(3), border: .stashLatelyNow)
                         .padding(.top, 14)
-                    cta("Explore the thread", on: .stashOnAccent)
+                    cta("Explore the thread", on: .stashCream)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -319,7 +321,7 @@ struct LatelyView: View {
                     .multilineTextAlignment(.leading)
                 Text(dated.formatted(.dateTime.month(.abbreviated).day().year()))
                     .font(.archivo(11.5))
-                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
             }
             Spacer(minLength: 0)
         }

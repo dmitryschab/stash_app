@@ -90,7 +90,7 @@ struct VideoDetailView: View {
             if let category = video.category {
                 CategoryBadge(category: category)
             } else if video.unavailable {
-                Micro(text: "Unavailable", size: 10, tracking: 1.8, color: .categoryOther)
+                Micro(text: "Unavailable", size: 10, tracking: 1.8, color: Color.categoryOther.asType)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 7)
                     .background(Capsule().strokeBorder(Color.categoryOther, lineWidth: 1.5))
@@ -107,9 +107,9 @@ struct VideoDetailView: View {
         Link(destination: video.url) {
             Image(systemName: "arrow.up.right")
                 .font(.system(size: 12, weight: .heavy))
-                .foregroundStyle(tint)
+                .foregroundStyle(tint.asType)
                 .frame(width: 30, height: 30)
-                .overlay(Circle().strokeBorder(tint, lineWidth: 1.5))
+                .overlay(Circle().strokeBorder(tint.asType, lineWidth: 1.5))
                 .minTapTarget()
         }
         .accessibilityLabel("Open in \(TikTokLink.isInstagram(video.url) ? "Instagram" : "TikTok")")
@@ -154,7 +154,7 @@ struct VideoDetailView: View {
                 .padding(.top, 16)
             Text(byline)
                 .font(.archivo(12.5, .semibold))
-                .foregroundStyle(Color.stashInk.opacity(0.5))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .padding(.top, 8)
             // The coding page says it in "The point" instead.
             if codingPage == nil, !video.summary.isEmpty || !video.caption.isEmpty {
@@ -167,7 +167,7 @@ struct VideoDetailView: View {
             if codingPage == nil, !video.topics.isEmpty {
                 Text(video.topics.map { "#\($0)" }.joined(separator: " "))
                     .font(.archivo(12, .semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(tint.asType)
                     .padding(.top, 10)
             }
         }
@@ -183,7 +183,7 @@ struct VideoDetailView: View {
     /// A section break has to out-measure the 18pt gap between the rows inside a section,
     /// or the screen reads as one undivided list.
     private func sectionHeader(_ text: String) -> some View {
-        Micro(text: text, size: 11, tracking: 2, color: tint)
+        Micro(text: text, size: 11, tracking: 2, color: tint.asType)
             .padding(.top, 34)
     }
 
@@ -215,7 +215,7 @@ struct VideoDetailView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text("\(index + 1)")
                             .font(.archivo(19, .heavy))
-                            .foregroundStyle(tint)
+                            .foregroundStyle(tint.asType)
                             .frame(width: 22, alignment: .leading)
                         Text(step)
                             .font(.archivo(14))
@@ -254,7 +254,7 @@ struct VideoDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(pickByline(pick))
                             .font(.archivo(12.5))
-                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                            .foregroundStyle(Color.stashInk.opacity(0.62))
                     }
                     Spacer(minLength: 0)
                     if let link = pick.link {
@@ -312,10 +312,10 @@ struct VideoDetailView: View {
         let text = code.summary.isEmpty ? video.summary : code.summary
         if !text.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Micro(text: "The point", size: 10, tracking: 2.2, color: .stashOnAccent.opacity(0.7))
+                Micro(text: "The point", size: 10, tracking: 2.2, color: tint.onJewel.opacity(0.7))
                 Text(text)
                     .font(.archivo(15, .heavy))
-                    .foregroundStyle(Color.stashOnAccent)
+                    .foregroundStyle(tint.onJewel)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -374,7 +374,7 @@ struct VideoDetailView: View {
                             Rectangle().fill(tint)
                             Image(systemName: "checkmark")
                                 .font(.system(size: 11, weight: .black))
-                                .foregroundStyle(Color.stashOnAccent)
+                                .foregroundStyle(tint.onJewel)
                         }
                     }
                     .frame(width: 18, height: 18)
@@ -394,7 +394,7 @@ struct VideoDetailView: View {
                     Spacer(minLength: 0)
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(tint)
+                        .foregroundStyle(tint.asType)
                         .padding(.top, 2)
                 }
                 .padding(.vertical, 9)
@@ -416,7 +416,7 @@ struct VideoDetailView: View {
                     if shape == .howto {
                         Text("\(index + 1)")
                             .font(.archivo(19, .heavy))
-                            .foregroundStyle(tint)
+                            .foregroundStyle(tint.asType)
                             .frame(width: 22, alignment: .leading)
                     } else {
                         Rectangle().fill(tint).frame(width: 8, height: 8)
@@ -429,7 +429,7 @@ struct VideoDetailView: View {
                         if open, hasDetail {
                             Text(item.detail)
                                 .font(.archivo(12.5))
-                                .foregroundStyle(Color.stashInk.opacity(0.6))
+                                .foregroundStyle(Color.stashInk.opacity(0.62))
                                 .lineSpacing(2)
                                 .multilineTextAlignment(.leading)
                         }
@@ -496,13 +496,13 @@ struct VideoDetailView: View {
                                 .lineLimit(1)
                             Text(host(link))
                                 .font(.archivo(12))
-                                .foregroundStyle(Color.stashInk.opacity(0.55))
+                                .foregroundStyle(Color.stashInk.opacity(0.62))
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(tint)
+                            .foregroundStyle(tint.asType)
                     }
                     .padding(.vertical, 9)
                     .contentShape(Rectangle())
@@ -569,7 +569,7 @@ struct VideoDetailView: View {
                                 .lineLimit(1)
                             Text([tag, other.codeNote?.shelfLabel].compactMap { $0 }.joined(separator: " · "))
                                 .font(.archivo(12))
-                                .foregroundStyle(Color.stashInk.opacity(0.55))
+                                .foregroundStyle(Color.stashInk.opacity(0.62))
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -613,7 +613,7 @@ struct VideoDetailView: View {
                             if !pick.kind.isEmpty || !pick.price.isEmpty {
                                 Text([pick.kind, pick.price].filter { !$0.isEmpty }.joined(separator: " · "))
                                     .font(.archivo(12))
-                                    .foregroundStyle(Color.stashInk.opacity(0.55))
+                                    .foregroundStyle(Color.stashInk.opacity(0.62))
                             }
                         }
                         Spacer(minLength: 0)

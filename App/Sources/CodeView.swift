@@ -224,7 +224,7 @@ private struct CodeRow: View {
                     if !meta.isEmpty {
                         Text(meta)
                             .font(.archivo(12))
-                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                            .foregroundStyle(Color.stashInk.opacity(0.62))
                             .lineLimit(1)
                     }
                     if links > 0 { linkMark(links) }

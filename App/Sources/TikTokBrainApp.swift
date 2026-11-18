@@ -781,6 +781,11 @@ struct StashTabBar: View {
         }
         .animation(.spring(duration: 0.3, bounce: 0.2), value: selection)
         .opacity(held ? 0.3 : 1)
+        // The pill is a fixed height and each slot a fixed width, as on a system tab bar, so
+        // its labels stop growing where the longest still fits: past this "LIBRARY" truncated.
+        // shortcut: no Large Content Viewer on the slots, add it if the capped labels prove too
+        // small at accessibility sizes.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
     /// Whether every slot carries its label, or none do (see `tabs`).

@@ -391,7 +391,7 @@ struct SearchOverlay: View {
                 if let about = video.about, !about.isEmpty {
                     Text(about)
                         .font(.archivo(12.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
             }

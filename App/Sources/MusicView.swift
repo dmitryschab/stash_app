@@ -580,7 +580,7 @@ private struct SleeveStyle {
             outlined = true
         } else {
             background = Self.jewels[hash % Self.jewels.count]
-            foreground = .stashOnAccent
+            foreground = background.onJewel
             outlined = false
         }
     }
@@ -814,7 +814,7 @@ struct AlbumDetailView: View {
                             .overlay {
                                 Image(systemName: "play.fill")
                                     .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(Color.stashOnAccent)
+                                    .foregroundStyle(saveTint(index).onJewel)
                             }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(save.trackName)
@@ -823,7 +823,7 @@ struct AlbumDetailView: View {
                                 .lineLimit(1)
                             Text(saveByline(save))
                                 .font(.archivo(11.5))
-                                .foregroundStyle(Color.stashInk.opacity(0.55))
+                                .foregroundStyle(Color.stashInk.opacity(0.62))
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -874,7 +874,7 @@ struct AlbumDetailView: View {
                 } else {
                     Text("Fetching the tracklist…")
                         .font(.archivo(12.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.45))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .padding(.vertical, 10)
                         .task { await store.loadTracklist(collectionID) }
                 }
@@ -1058,7 +1058,7 @@ struct MusicListDetailView: View {
             HStack(spacing: 11) {
                 Text("\(index + 1)")
                     .font(.archivo(12, .black))
-                    .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.45))
+                    .foregroundStyle(pick.link != nil ? Color.categoryRecipe : Color.stashInk.opacity(0.62))
                     .frame(width: 18, alignment: .leading)
                 // The sleeve is the preview button: hear it before deciding to go looking for it.
                 pickArt(sleeve)
@@ -1135,7 +1135,7 @@ struct MusicListDetailView: View {
                                       size: 22)
                         Text("\(number + 1)")
                             .font(.archivo(11, .black))
-                            .foregroundStyle(Color.stashInk.opacity(0.45))
+                            .foregroundStyle(Color.stashInk.opacity(0.62))
                             .frame(width: 18, alignment: .leading)
                         Text(name)
                             .font(.archivo(13, .semibold))
@@ -1147,7 +1147,7 @@ struct MusicListDetailView: View {
             } else {
                 Text("Fetching the tracklist…")
                     .font(.archivo(12.5))
-                    .foregroundStyle(Color.stashInk.opacity(0.45))
+                    .foregroundStyle(Color.stashInk.opacity(0.62))
                     .padding(.vertical, 8)
             }
         }

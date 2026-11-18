@@ -59,7 +59,7 @@ struct SignInView: View {
                 .padding(.top, 20)
             Text("Stash turns the videos you bookmark on TikTok into a searchable library. Sign in to keep it yours.")
                 .font(.archivo(14))
-                .foregroundStyle(Color.stashInk.opacity(0.6))
+                .foregroundStyle(Color.stashInk.opacity(0.62))
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .frame(maxWidth: 300)
@@ -126,7 +126,7 @@ struct SignInView: View {
     private var cloudNote: some View {
         Text("\(tiktokStorefront == nil ? "Apple shares only an anonymous ID." : "Apple shares only an anonymous ID, TikTok your display name.") To sort your saves, Stash sends their audio to Groq for speech-to-text and their text to AWS Bedrock for analysis.")
             .font(.archivo(12))
-            .foregroundStyle(Color.stashInk.opacity(0.55))
+            .foregroundStyle(Color.stashInk.opacity(0.62))
             .multilineTextAlignment(.center)
             .lineSpacing(3)
             .frame(maxWidth: 320)
@@ -137,7 +137,7 @@ struct SignInView: View {
     private var consentLine: some View {
         Text("By continuing you agree to the [Terms](https://stash.dmitrijs.dev/terms) and [Privacy Policy](https://stash.dmitrijs.dev/privacy).")
             .font(.archivo(12, .semibold))
-            .foregroundStyle(Color.stashInk.opacity(0.55))
+            .foregroundStyle(Color.stashInk.opacity(0.62))
             .tint(Color.stashInk)
             .multilineTextAlignment(.center)
             .frame(maxWidth: 320)

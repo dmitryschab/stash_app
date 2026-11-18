@@ -193,8 +193,13 @@ struct LibraryView: View {
             StashWordmarkRow(trailing: "\(videos.count) saves")
             Text("Library")
                 .font(.archivo(40, .heavy))
+                // One word, one line: at the largest text sizes the title shrinks to fit before it breaks.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
                 .foregroundStyle(Color.stashInk)
-            HStack(spacing: 8) {
+            // A wrap, not a row: at the accessibility text sizes three capsules outgrow the
+            // width, and a row squeezed them until "IMPORT" broke mid-word.
+            FlexibleWrap(spacing: 8) {
                 // Raises the same flag the shell's status pill does rather than pushing on its
                 // own: two doors into one stack meant tapping the pill while Import was already
                 // showing pushed a second copy over the first.
@@ -219,7 +224,6 @@ struct LibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Settings")
-                Spacer(minLength: 0)
             }
             .padding(.top, 4)
         }
@@ -391,7 +395,7 @@ struct LibraryView: View {
                                     .lineLimit(1)
                                 Text("Not classified yet")
                                     .font(.archivo(12.5))
-                                    .foregroundStyle(Color.categoryOther)
+                                    .foregroundStyle(Color.categoryOther.asType)
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 0)
@@ -478,7 +482,7 @@ private struct ShelfArt: View {
                 tint
                 Image(systemName: video.category?.symbol ?? "photo")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.stashOnAccent)
+                    .foregroundStyle(tint.onJewel)
             }
         }
         .frame(width: width, height: height)
@@ -562,8 +566,8 @@ private struct JustSavedRow: View {
                     Circle().fill(tint).frame(width: 6, height: 6)
                     Micro(text: [video.category?.singular, intent.deskTitle.lowercased(), when]
                               .compactMap { $0 }.joined(separator: " · "),
-                          size: 9.5, tracking: 1.2, color: tint)
-                        .lineLimit(1)
+                          size: 9.5, tracking: 1.2, color: tint.asType)
+                        .lineLimit(2)
                 }
             }
             .frame(minHeight: 74)
@@ -600,7 +604,7 @@ private struct BuyShelfRow: View {
                     Text([pick.kind, video.author.isEmpty ? "" : "@\(video.author)"]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.archivo(11.5))
-                        .foregroundStyle(Color.stashInk.opacity(0.55))
+                        .foregroundStyle(Color.stashInk.opacity(0.62))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -654,11 +658,11 @@ struct LibraryRow: View {
                 } else {
                     HStack(spacing: 4) {
                         if let topic = video.topics.first {
-                            Micro(text: topic, size: 9.5, tracking: 1, color: tint)
+                            Micro(text: topic, size: 9.5, tracking: 1, color: tint.asType)
                         }
                         Text(meta)
                             .font(.archivo(11.5))
-                            .foregroundStyle(Color.stashInk.opacity(0.55))
+                            .foregroundStyle(Color.stashInk.opacity(0.62))
                             .lineLimit(1)
                     }
                 }
@@ -724,7 +728,7 @@ private struct IntentListView: View {
                     .padding(.top, 8)
                     Text(title)
                         .font(.archivo(28, .heavy))
-                        .foregroundStyle(tint)
+                        .foregroundStyle(tint.asType)
                         .padding(.top, 16)
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(sections, id: \.id) { section in
